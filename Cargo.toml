@@ -7,7 +7,7 @@ license = "MIT"
 authors = ["NLA AI Video Creator Contributors"]
 
 [dependencies]
-dioxus = { version = "0.6", features = ["desktop"] }
+dioxus = { version = "0.7", features = ["desktop"] }
 
 # We'll add more dependencies as needed:
 # serde = { version = "1.0", features = ["derive"] }

@@ -55,3 +55,14 @@ src/
 - Surface to the user frequently during iterative work
 - Don't make sweeping changes without check-ins
 - When making UI changes, describe what was changed so user knows what to look for when they build
+
+## Documentation
+
+**IMPORTANT: Always update PROJECT.md after making changes/progress.** This includes:
+- Marking completed features in the MVP checklist
+- Adding new decisions to the Decision Log
+- Updating the roadmap if milestones are reached
+- Documenting any architectural changes or new patterns established
+
+This keeps the project documentation as the living source of truth.
+

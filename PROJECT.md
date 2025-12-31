@@ -57,7 +57,7 @@ A purpose-built NLA editor that:
 
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
-| **UI Framework** | [Dioxus](https://dioxuslabs.com/) | Rust-native, cross-platform, reactive |
+| **UI Framework** | [Dioxus 0.7](https://dioxuslabs.com/) | Rust-native, cross-platform, reactive, hot-patching |
 | **Language** | Rust | Safety, performance, excellent FFI |
 | **Video Processing** | FFmpeg (external) | Industry standard, battle-tested |
 | **Async Runtime** | Tokio | De facto Rust async runtime |
@@ -290,6 +290,18 @@ my-project/
 ## 📦 MVP Feature Set
 
 ### Must Have (v0.1)
+
+- [x] **UI Shell** ✓
+  - Main application layout (title bar, panels, timeline, status bar)
+  - Charcoal monochrome color scheme with functional accent colors
+  - Consistent borders and typography
+  - Panel headers with matching heights
+
+- [x] **Panel System** ✓
+  - Resizable side panels (drag edge)
+  - Collapsible side panels (icon button → thin rail)
+  - Collapsible timeline (icon button → bottom rail with controls visible)
+  - Smooth animated collapse/expand transitions
 
 - [ ] **Project Management**
   - Create, open, save projects
