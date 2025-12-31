@@ -1,0 +1,47 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Dioxus
+/dist/
+/out/
+/.dioxus/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+
+# Logs
+*.log
+logs/
+
+# Project-specific (user assets - don't commit large media)
+# Individual projects will live in their own folders outside the repo
+# But if testing locally:
+/test-projects/
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
