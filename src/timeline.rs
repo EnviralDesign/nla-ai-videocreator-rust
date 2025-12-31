@@ -244,6 +244,7 @@ pub fn TimelinePanel(
                                         e.stop_propagation();
                                         on_seek_start.call(e);
                                     },
+                                    onclick: move |e| e.stop_propagation(),
                                 }
                             }
                         }
