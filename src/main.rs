@@ -3,6 +3,7 @@
 //! A local-first, AI-native Non-Linear Animation editor for generative video production.
 
 mod app;
+mod timeline;
 
 fn main() {
     // Launch the Dioxus desktop application

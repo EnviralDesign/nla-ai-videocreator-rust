@@ -298,10 +298,13 @@ my-project/
   - Panel headers with matching heights
 
 - [x] **Panel System** ✓
-  - Resizable side panels (drag edge)
+  - Resizable side panels (drag edge, instant feedback)
   - Collapsible side panels (icon button → thin rail)
   - Collapsible timeline (icon button → bottom rail with controls visible)
   - Smooth animated collapse/expand transitions
+  - Hover feedback on collapsed rails
+  - Click anywhere on collapsed rail/header to expand
+  - Drag state persists if mouse leaves window and returns
 
 - [ ] **Project Management**
   - Create, open, save projects
@@ -522,6 +525,8 @@ This allows:
 | Labels separate from filenames | Enables friendly display names + future "Export Parts" feature | ✅ Decided |
 | Audio scrubbing is essential | Without hearing audio while scrubbing, the tool is unusable for music-synced work | ✅ Decided |
 | UI fluidity is non-negotiable | Hover effects, smooth transitions, polished feel from day one | ✅ Decided |
+| Dioxus 0.7 (latest) | Hot-patching support, better signals, performance improvements | ✅ Decided |
+| Transitions disabled during drag | Instant resize feedback; transitions only for collapse/expand | ✅ Decided |
 
 ---
 

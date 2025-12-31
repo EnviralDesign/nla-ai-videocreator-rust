@@ -3,30 +3,31 @@
 //! This defines the main App component and the overall layout structure.
 
 use dioxus::prelude::*;
+use crate::timeline::TimelinePanel;
 
 // =============================================================================
 // COLOR SCHEME - Charcoal Monochrome with Functional Accents
 // =============================================================================
-const BG_DEEPEST: &str = "#09090b";
-const BG_BASE: &str = "#0a0a0b";
-const BG_ELEVATED: &str = "#141414";
-const BG_SURFACE: &str = "#1a1a1a";
-const BG_HOVER: &str = "#262626";
+pub const BG_DEEPEST: &str = "#09090b";
+pub const BG_BASE: &str = "#0a0a0b";
+pub const BG_ELEVATED: &str = "#141414";
+pub const BG_SURFACE: &str = "#1a1a1a";
+pub const BG_HOVER: &str = "#262626";
 
-const BORDER_SUBTLE: &str = "#1f1f1f";
-const BORDER_DEFAULT: &str = "#27272a";
-const BORDER_STRONG: &str = "#3f3f46";
-const BORDER_ACCENT: &str = "#3b82f6";
+pub const BORDER_SUBTLE: &str = "#1f1f1f";
+pub const BORDER_DEFAULT: &str = "#27272a";
+pub const BORDER_STRONG: &str = "#3f3f46";
+pub const BORDER_ACCENT: &str = "#3b82f6";
 
-const TEXT_PRIMARY: &str = "#fafafa";
-const TEXT_SECONDARY: &str = "#a1a1aa";
-const TEXT_MUTED: &str = "#71717a";
-const TEXT_DIM: &str = "#52525b";
+pub const TEXT_PRIMARY: &str = "#fafafa";
+pub const TEXT_SECONDARY: &str = "#a1a1aa";
+pub const TEXT_MUTED: &str = "#71717a";
+pub const TEXT_DIM: &str = "#52525b";
 
-const ACCENT_AUDIO: &str = "#3b82f6";
-const ACCENT_MARKER: &str = "#f97316";
-const ACCENT_KEYFRAME: &str = "#a855f7";
-const ACCENT_VIDEO: &str = "#22c55e";
+pub const ACCENT_AUDIO: &str = "#3b82f6";
+pub const ACCENT_MARKER: &str = "#f97316";
+pub const ACCENT_KEYFRAME: &str = "#a855f7";
+pub const ACCENT_VIDEO: &str = "#22c55e";
 
 // Panel dimensions
 const PANEL_MIN_WIDTH: f64 = 180.0;
@@ -49,6 +50,13 @@ pub fn App() -> Element {
     let mut timeline_height = use_signal(|| TIMELINE_DEFAULT_HEIGHT);
     let mut timeline_collapsed = use_signal(|| false);
     
+    // Timeline playback state
+    let mut current_time = use_signal(|| 0.0_f64);        // Current time in seconds
+    let mut duration = use_signal(|| 60.0_f64);           // Total duration in seconds
+    let mut zoom = use_signal(|| 100.0_f64);              // Pixels per second
+    let mut is_playing = use_signal(|| false);            // Playback state
+    let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
+    
     // Drag state
     let mut dragging = use_signal(|| None::<&'static str>);
     let mut drag_start_pos = use_signal(|| 0.0);
@@ -65,6 +73,7 @@ pub fn App() -> Element {
     let drag_cursor = match dragging() {
         Some("left") | Some("right") => "ew-resize",
         Some("timeline") => "ns-resize",
+        Some("playhead") => "ew-resize",
         _ => "default",
     };
     
@@ -126,6 +135,13 @@ pub fn App() -> Element {
                             let new_h = (drag_start_size() + delta).clamp(TIMELINE_MIN_HEIGHT, TIMELINE_MAX_HEIGHT);
                             timeline_height.set(new_h);
                         }
+                        "playhead" => {
+                            // Convert mouse x delta to time delta using zoom factor
+                            let delta_px = e.client_coordinates().x - drag_start_pos();
+                            let delta_time = delta_px / zoom();
+                            let new_time = (drag_start_size() + delta_time).clamp(0.0, duration());
+                            current_time.set(new_time);
+                        }
                         _ => {}
                     }
                 }
@@ -183,6 +199,24 @@ pub fn App() -> Element {
                         collapsed: timeline_collapsed(),
                         is_resizing: timeline_resizing,
                         on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
+                        // Timeline state
+                        current_time: current_time(),
+                        duration: duration(),
+                        zoom: zoom(),
+                        is_playing: is_playing(),
+                        scroll_offset: scroll_offset(),
+                        // Callbacks
+                        on_seek: move |t: f64| current_time.set(t.clamp(0.0, duration())),
+                        on_zoom_change: move |z: f64| zoom.set(z.clamp(20.0, 500.0)),
+                        on_play_pause: move |_| is_playing.set(!is_playing()),
+                        on_scroll: move |offset: f64| scroll_offset.set(offset),
+                        on_seek_start: move |e: MouseEvent| {
+                            dragging.set(Some("playhead"));
+                            drag_start_pos.set(e.client_coordinates().x);
+                            drag_start_size.set(current_time());
+                        },
+                        on_seek_end: move |_| dragging.set(None),
+                        is_seeking: dragging() == Some("playhead"),
                     }
                 }
 
@@ -428,123 +462,7 @@ fn PreviewPanel() -> Element {
     }
 }
 
-#[component]
-fn TimelinePanel(height: f64, collapsed: bool, is_resizing: bool, on_toggle: EventHandler<MouseEvent>) -> Element {
-    let icon = if collapsed { "▲" } else { "▼" };
-    
-    // Only apply transition when NOT resizing
-    let transition = if is_resizing { "none" } else { "height 0.2s ease, min-height 0.2s ease" };
-    
-    // Cursor for collapsed header
-    let header_cursor = if collapsed { "pointer" } else { "default" };
-    let header_class = if collapsed { "collapsed-rail" } else { "" };
-
-    rsx! {
-        div {
-            style: "
-                display: flex; flex-direction: column;
-                height: {height}px; min-height: {height}px;
-                background-color: {BG_ELEVATED};
-                transition: {transition};
-                overflow: hidden;
-            ",
-
-            // Header - clickable when collapsed to expand
-            div {
-                class: "{header_class}",
-                style: "
-                    display: flex; align-items: center; justify-content: space-between;
-                    height: 32px; padding: 0 14px;
-                    background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER_DEFAULT};
-                    flex-shrink: 0;
-                    cursor: {header_cursor};
-                ",
-                onclick: move |e| {
-                    if collapsed {
-                        on_toggle.call(e);
-                    }
-                },
-                
-                span { style: "font-size: 11px; font-weight: 500; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Timeline" }
-                
-                // Playback controls
-                div {
-                    style: "display: flex; align-items: center; gap: 4px;",
-                    onclick: move |e| e.stop_propagation(),  // Don't trigger expand when clicking controls
-                    PlaybackBtn { icon: "⏮" }
-                    PlaybackBtn { icon: "◀" }
-                    PlaybackBtn { icon: "▶", primary: true }
-                    PlaybackBtn { icon: "▶" }
-                    PlaybackBtn { icon: "⏭" }
-                }
-
-                div {
-                    style: "display: flex; align-items: center; gap: 12px;",
-                    span { style: "font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: {TEXT_DIM};", "00:00:00:00" }
-                    button {
-                        class: "collapse-btn",
-                        style: "width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: {TEXT_MUTED}; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
-                        onclick: move |e| {
-                            e.stop_propagation();
-                            on_toggle.call(e);
-                        },
-                        "{icon}"
-                    }
-                }
-            }
-
-            // Tracks
-            if !collapsed {
-                div {
-                    style: "flex: 1; display: flex; overflow: hidden;",
-                    div {
-                        style: "width: 140px; min-width: 140px; background-color: {BG_ELEVATED}; border-right: 1px solid {BORDER_DEFAULT};",
-                        TrackLabel { name: "Audio", color: ACCENT_AUDIO }
-                        TrackLabel { name: "Markers", color: ACCENT_MARKER }
-                        TrackLabel { name: "Keyframes", color: ACCENT_KEYFRAME }
-                        TrackLabel { name: "Video 1", color: ACCENT_VIDEO }
-                    }
-                    div {
-                        style: "flex: 1; display: flex; flex-direction: column; background-color: {BG_BASE}; overflow-x: auto;",
-                        TrackRow {}
-                        TrackRow {}
-                        TrackRow {}
-                        TrackRow {}
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn PlaybackBtn(icon: &'static str, #[props(default = false)] primary: bool) -> Element {
-    let bg = if primary { BG_HOVER } else { "transparent" };
-    rsx! {
-        button {
-            style: "width: 26px; height: 26px; border: none; border-radius: 4px; background-color: {bg}; color: {TEXT_MUTED}; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.12s ease;",
-            "{icon}"
-        }
-    }
-}
-
-#[component]
-fn TrackLabel(name: &'static str, color: &'static str) -> Element {
-    rsx! {
-        div {
-            style: "display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-bottom: 1px solid {BORDER_SUBTLE}; font-size: 12px; color: {TEXT_SECONDARY};",
-            div { style: "width: 3px; height: 16px; border-radius: 2px; background-color: {color};" }
-            span { "{name}" }
-        }
-    }
-}
-
-#[component]
-fn TrackRow() -> Element {
-    rsx! {
-        div { style: "height: 36px; border-bottom: 1px solid {BORDER_SUBTLE}; background-color: {BG_BASE};" }
-    }
-}
+// TimelinePanel, PlaybackBtn, TrackLabel, TrackRow moved to src/timeline.rs
 
 #[component]
 fn StatusBar() -> Element {
