@@ -1,0 +1,19 @@
+[application]
+name = "NLA AI Video Creator"
+default_platform = "desktop"
+
+[application.identifier]
+# Unique bundle identifier
+bundle = "dev.nlaai.videocreator"
+
+[desktop]
+# Window title
+title = "NLA AI Video Creator"
+# Initial window dimensions
+width = 1280
+height = 800
+# Window is resizable
+resizable = true
+
+[web]
+# We can add web config later if needed
