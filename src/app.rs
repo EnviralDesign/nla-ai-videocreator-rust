@@ -52,7 +52,7 @@ pub fn App() -> Element {
     
     // Timeline playback state
     let mut current_time = use_signal(|| 0.0_f64);        // Current time in seconds
-    let mut duration = use_signal(|| 60.0_f64);           // Total duration in seconds
+    let duration = use_signal(|| 60.0_f64);           // Total duration in seconds
     let mut zoom = use_signal(|| 100.0_f64);              // Pixels per second
     let mut is_playing = use_signal(|| false);            // Playback state
     let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
@@ -139,8 +139,10 @@ pub fn App() -> Element {
                             // Convert mouse x delta to time delta using zoom factor
                             let delta_px = e.client_coordinates().x - drag_start_pos();
                             let delta_time = delta_px / zoom();
-                            let new_time = (drag_start_size() + delta_time).clamp(0.0, duration());
-                            current_time.set(new_time);
+                            let raw_time = (drag_start_size() + delta_time).clamp(0.0, duration());
+                            // Snap to frame boundary (60fps)
+                            let snapped_time = (raw_time * 60.0).round() / 60.0;
+                            current_time.set(snapped_time);
                         }
                         _ => {}
                     }
@@ -206,7 +208,11 @@ pub fn App() -> Element {
                         is_playing: is_playing(),
                         scroll_offset: scroll_offset(),
                         // Callbacks
-                        on_seek: move |t: f64| current_time.set(t.clamp(0.0, duration())),
+                        on_seek: move |t: f64| {
+                            // Snap to frame boundary (60fps) and clamp to duration
+                            let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration());
+                            current_time.set(snapped);
+                        },
                         on_zoom_change: move |z: f64| zoom.set(z.clamp(20.0, 500.0)),
                         on_play_pause: move |_| is_playing.set(!is_playing()),
                         on_scroll: move |offset: f64| scroll_offset.set(offset),

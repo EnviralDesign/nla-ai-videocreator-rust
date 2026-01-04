@@ -48,9 +48,12 @@ pub fn TimelinePanel(
     let header_cursor = if collapsed { "pointer" } else { "default" };
     let header_class = if collapsed { "collapsed-rail" } else { "" };
     
+    // Frame rate constant
+    const FPS: f64 = 60.0;
+    
     // Format time as HH:MM:SS:FF (assuming 60 fps for now)
     let format_time = |t: f64| -> String {
-        let total_frames = (t * 60.0) as u32;
+        let total_frames = (t * FPS) as u32;
         let frames = total_frames % 60;
         let total_seconds = total_frames / 60;
         let seconds = total_seconds % 60;
@@ -65,8 +68,8 @@ pub fn TimelinePanel(
     // Calculate timeline content width based on duration and zoom
     let content_width = (duration * zoom) as i32;
     
-    // Calculate playhead position
-    let playhead_x = (current_time * zoom) - scroll_offset;
+    // Calculate playhead position in scroll space (snapped to frame for visual alignment)
+    let playhead_pos = ((current_time * FPS).round() / FPS) * zoom;
     
     // Constants
     let ruler_height = 24;
@@ -180,45 +183,112 @@ pub fn TimelinePanel(
                 }
             }
 
-            // Timeline content area
+            // Timeline content area - Robust hierarchical structure:
+            // ┌─────────────────────────────────────────────────────┐
+            // │ [Fixed Corner] │ [Scrollable Ruler + Playhead Head] │ <- ruler_height
+            // ├────────────────┼────────────────────────────────────┤
+            // │ [Fixed Labels] │ [Scrollable Tracks + Playhead Line]│ <- flex: 1
+            // │                │ ↔ horizontal scroll                │
+            // └────────────────┴────────────────────────────────────┘
+            //                  ^ scrollbar only here
             if !collapsed {
                 div {
-                    style: "flex: 1; display: flex; flex-direction: column; overflow: hidden;",
+                    style: "flex: 1; display: flex; overflow: hidden;",
                     
-                    // Ruler row
+                    // ═══════════════════════════════════════════════════════════════
+                    // LEFT COLUMN - Fixed width, never scrolls horizontally
+                    // ═══════════════════════════════════════════════════════════════
                     div {
-                        style: "display: flex; height: {ruler_height}px; flex-shrink: 0; border-bottom: 1px solid {BORDER_DEFAULT};",
+                        style: "
+                            width: {track_label_width}px; 
+                            min-width: {track_label_width}px;
+                            flex-shrink: 0;
+                            display: flex;
+                            flex-direction: column;
+                            background-color: {BG_ELEVATED};
+                            border-right: 1px solid {BORDER_DEFAULT};
+                            z-index: 20;
+                        ",
                         
-                        // Empty corner above track labels
+                        // Corner cell above track labels
                         div {
-                            style: "width: {track_label_width}px; min-width: {track_label_width}px; background-color: {BG_ELEVATED}; border-right: 1px solid {BORDER_DEFAULT};",
+                            style: "
+                                height: {ruler_height}px;
+                                flex-shrink: 0;
+                                border-bottom: 1px solid {BORDER_DEFAULT};
+                                background-color: {BG_ELEVATED};
+                            ",
                         }
                         
-                        // Ruler area (clickable to seek)
+                        // Track labels - scrolls vertically with tracks (via overflow: auto on this container if needed)
                         div {
-                            style: "flex: 1; position: relative; background-color: {BG_SURFACE}; overflow: hidden; cursor: pointer;",
-                            onclick: move |e| {
-                                // Don't seek if we were dragging the playhead
-                                if !is_seeking {
-                                    let x = e.element_coordinates().x + scroll_offset;
-                                    let t = x / zoom;
-                                    on_seek.call(t);
+                            style: "flex: 1; overflow-y: hidden; overflow-x: hidden;",
+                            TrackLabel { name: "Audio", color: ACCENT_AUDIO }
+                            TrackLabel { name: "Markers", color: ACCENT_MARKER }
+                            TrackLabel { name: "Keyframes", color: ACCENT_KEYFRAME }
+                            TrackLabel { name: "Video 1", color: ACCENT_VIDEO }
+                        }
+                    }
+                    
+                    // ═══════════════════════════════════════════════════════════════
+                    // RIGHT COLUMN - Single scrollable container for ruler + tracks
+                    // The ruler is sticky at top, everything scrolls horizontally together
+                    // ═══════════════════════════════════════════════════════════════
+                    div {
+                        style: "
+                            flex: 1;
+                            overflow-x: auto;
+                            overflow-y: auto;
+                            position: relative;
+                        ",
+                        
+                        // Inner content wrapper - sets the scrollable width
+                        div {
+                            style: "
+                                min-width: {content_width}px;
+                                display: flex;
+                                flex-direction: column;
+                                position: relative;
+                            ",
+                            
+                            // Ruler row - sticky at top, scrolls horizontally with content
+                            div {
+                                style: "
+                                    height: {ruler_height}px;
+                                    min-height: {ruler_height}px;
+                                    position: sticky;
+                                    top: 0;
+                                    z-index: 15;
+                                    background-color: {BG_SURFACE};
+                                    border-bottom: 1px solid {BORDER_DEFAULT};
+                                    cursor: pointer;
+                                ",
+                                // Click anywhere on ruler to seek AND start dragging
+                                onmousedown: move |e| {
+                                    e.prevent_default();
+                                    // element_coordinates gives position relative to this ruler element
+                                    // which is in scroll space (content coordinates)
+                                    let x = e.element_coordinates().x;
+                                    let t = (x / zoom).clamp(0.0, duration);
+                                    // Snap to frame and seek immediately
+                                    let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
+                                    on_seek.call(snapped);
+                                    // Start drag mode so continued mouse movement continues seeking
+                                    on_seek_start.call(e);
+                                },
+                                
+                                // Ruler ticks and labels (positioned in scroll space)
+                                TimeRuler {
+                                    duration: duration,
+                                    zoom: zoom,
+                                    scroll_offset: 0.0,  // No offset - we're in scroll space
                                 }
-                            },
-                            
-                            // Ruler ticks and labels
-                            TimeRuler {
-                                duration: duration,
-                                zoom: zoom,
-                                scroll_offset: scroll_offset,
-                            }
-                            
-                            // Playhead indicator on ruler
-                            if playhead_x >= 0.0 {
+                                
+                                // Playhead indicator on ruler (in scroll space)
                                 div {
                                     style: "
                                         position: absolute;
-                                        left: {playhead_x}px;
+                                        left: {playhead_pos}px;
                                         top: 0;
                                         width: 1px;
                                         height: 100%;
@@ -226,83 +296,47 @@ pub fn TimelinePanel(
                                         pointer-events: none;
                                     ",
                                 }
-                                // Playhead handle (triangle)
+                                // Playhead handle (triangle) - purely visual
                                 div {
                                     style: "
                                         position: absolute;
-                                        left: {playhead_x - 5.0}px;
+                                        left: {playhead_pos - 5.0}px;
                                         top: 0;
                                         width: 0;
                                         height: 0;
                                         border-left: 6px solid transparent;
                                         border-right: 6px solid transparent;
                                         border-top: 8px solid #ef4444;
-                                        cursor: ew-resize;
+                                        pointer-events: none;
                                     ",
-                                    onmousedown: move |e| {
-                                        e.prevent_default();
-                                        e.stop_propagation();
-                                        on_seek_start.call(e);
-                                    },
-                                    onclick: move |e| e.stop_propagation(),
                                 }
                             }
-                        }
-                    }
-                    
-                    // Tracks area - single scroll container for synced scrolling
-                    div {
-                        style: "flex: 1; display: flex; overflow: auto;",
-                        
-                        // Inner wrapper to keep labels and content side by side
-                        div {
-                            style: "display: flex; min-width: {content_width}px;",
                             
-                            // Track labels (inside scroll container so they scroll vertically together)
+                            // Track rows container
                             div {
                                 style: "
-                                    width: {track_label_width}px; 
-                                    min-width: {track_label_width}px; 
-                                    background-color: {BG_ELEVATED}; 
-                                    border-right: 1px solid {BORDER_DEFAULT};
-                                    position: sticky;
-                                    left: 0;
-                                    z-index: 5;
+                                    display: flex;
+                                    flex-direction: column;
+                                    position: relative;
                                 ",
-                                TrackLabel { name: "Audio", color: ACCENT_AUDIO }
-                                TrackLabel { name: "Markers", color: ACCENT_MARKER }
-                                TrackLabel { name: "Keyframes", color: ACCENT_KEYFRAME }
-                                TrackLabel { name: "Video 1", color: ACCENT_VIDEO }
-                            }
-                            
-                            // Track content area with playhead
-                            div {
-                                style: "flex: 1; position: relative; display: flex; flex-direction: column; background-color: {BG_BASE};",
                                 
-                                // Track rows container
+                                TrackRow { width: content_width }
+                                TrackRow { width: content_width }
+                                TrackRow { width: content_width }
+                                TrackRow { width: content_width }
+                                
+                                // Playhead line overlaying tracks (in scroll space)
                                 div {
-                                    style: "display: flex; flex-direction: column;",
-                                    TrackRow { width: content_width }
-                                    TrackRow { width: content_width }
-                                    TrackRow { width: content_width }
-                                    TrackRow { width: content_width }
-                                }
-                                
-                                // Playhead line overlaying tracks (use large min-height to always extend full height)
-                                if playhead_x >= 0.0 {
-                                    div {
-                                        style: "
-                                            position: absolute;
-                                            left: {playhead_x}px;
-                                            top: 0;
-                                            width: 1px;
-                                            min-height: 1000px;
-                                            height: 100%;
-                                            background-color: #ef4444;
-                                            pointer-events: none;
-                                            z-index: 10;
-                                        ",
-                                    }
+                                    style: "
+                                        position: absolute;
+                                        left: {playhead_pos}px;
+                                        top: 0;
+                                        width: 1px;
+                                        height: 100%;
+                                        background-color: #ef4444;
+                                        pointer-events: none;
+                                        z-index: 10;
+                                    ",
                                 }
                             }
                         }
@@ -314,6 +348,7 @@ pub fn TimelinePanel(
 }
 
 /// Time ruler with tick marks and labels
+/// All elements here use pointer-events: none so clicks pass through to parent
 #[component]
 fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
     // Calculate tick spacing based on zoom level
@@ -327,13 +362,66 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
         1.0
     };
     
+    // Frame rate for frame ticks
+    const FPS: f64 = 60.0;
+    
+    // Show frame ticks only at high zoom levels (when there's enough space)
+    // At 100px/s zoom, each frame is ~1.67px apart - too dense
+    // At 300px/s zoom, each frame is 5px apart - usable
+    // At 500px/s zoom, each frame is ~8.3px apart - comfortable
+    let show_frame_ticks = zoom >= 240.0;
+    
     // Generate tick positions
     let num_ticks = (duration / seconds_per_major_tick).ceil() as i32 + 1;
     
+    // Calculate visible time range for frame ticks
+    let visible_start_time = (scroll_offset / zoom).max(0.0);
+    let visible_end_time = ((scroll_offset + 2000.0) / zoom).min(duration);
+    
     rsx! {
+        // Entire ruler container ignores pointer events - clicks pass through
         div {
-            style: "position: absolute; left: 0; top: 0; width: 100%; height: 100%;",
+            style: "position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none;",
             
+            // Frame ticks (subtle, only at high zoom)
+            if show_frame_ticks {
+                {
+                    let start_frame = (visible_start_time * FPS).floor() as i32;
+                    let end_frame = (visible_end_time * FPS).ceil() as i32;
+                    
+                    rsx! {
+                        for frame in start_frame..=end_frame {
+                            {
+                                let frame_time = frame as f64 / FPS;
+                                let x = (frame_time * zoom) - scroll_offset;
+                                // Skip frame ticks that land on second boundaries
+                                let is_on_second = frame % 60 == 0;
+                                
+                                if !is_on_second && x >= -10.0 && x <= 2010.0 {
+                                    rsx! {
+                                        div {
+                                            key: "frame-{frame}",
+                                            style: "
+                                                position: absolute;
+                                                left: {x}px;
+                                                bottom: 0;
+                                                width: 1px;
+                                                height: 4px;
+                                                background-color: {BORDER_SUBTLE};
+                                                pointer-events: none;
+                                            ",
+                                        }
+                                    }
+                                } else {
+                                    rsx! {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Second/major ticks and labels
             for i in 0..num_ticks {
                 {
                     let t = i as f64 * seconds_per_major_tick;
@@ -344,31 +432,35 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
                     
                     if x >= -50.0 && x <= 2000.0 {  // Only render visible ticks
                         rsx! {
-                            // Major tick
+                            // Container for tick + label (key must be on first node)
                             div {
-                                key: "tick-{i}",
-                                style: "
-                                    position: absolute;
-                                    left: {x}px;
-                                    bottom: 0;
-                                    width: 1px;
-                                    height: 10px;
-                                    background-color: {BORDER_STRONG};
-                                ",
-                            }
-                            // Label
-                            div {
-                                key: "label-{i}",
-                                style: "
-                                    position: absolute;
-                                    left: {x + 4.0}px;
-                                    top: 3px;
-                                    font-size: 9px;
-                                    color: {TEXT_DIM};
-                                    font-family: 'SF Mono', Consolas, monospace;
-                                    user-select: none;
-                                ",
-                                "{label}"
+                                key: "tick-group-{i}",
+                                // Major tick (second boundary)
+                                div {
+                                    style: "
+                                        position: absolute;
+                                        left: {x}px;
+                                        bottom: 0;
+                                        width: 1px;
+                                        height: 10px;
+                                        background-color: {BORDER_STRONG};
+                                        pointer-events: none;
+                                    ",
+                                }
+                                // Label
+                                div {
+                                    style: "
+                                        position: absolute;
+                                        left: {x + 4.0}px;
+                                        top: 3px;
+                                        font-size: 9px;
+                                        color: {TEXT_DIM};
+                                        font-family: 'SF Mono', Consolas, monospace;
+                                        user-select: none;
+                                        pointer-events: none;
+                                    ",
+                                    "{label}"
+                                }
                             }
                         }
                     } else {
