@@ -96,13 +96,15 @@ Global application settings (not per-project):
 
 The timeline consists of layered tracks:
 
-| Track Type | Purpose |
-|------------|---------|
-| **Audio Track** | Holds imported audio files (music, voiceover, SFX) |
-| **Marker Track** | Holds keypoints/markers for timing (beat markers, scene breaks) |
-| **Keyframe Track** | Holds keyframe images at specific points |
-| **Video Track** | Holds generated or imported video segments |
-| **Text/Prompt Track** | *(Future)* Holds prompt segments tied to timeline regions |
+| Track Type | Purpose | Duplicatable |
+|------------|---------|--------------|
+| **Video Track** | Holds video clips, image clips (stills with duration), and generative visual content | Yes |
+| **Audio Track** | Holds audio clips and generative audio content | Yes |
+| **Marker Track** | Holds point-in-time markers (beat markers, scene breaks, notes) | No |
+
+> **Note:** Images are placed on Video tracks as stills with duration, following standard NLE conventions. There is no separate "Keyframe" track—reference images for generation are simply clips that overlap generative clips in time.
+> 
+> See [CONTENT_ARCHITECTURE.md](./CONTENT_ARCHITECTURE.md) for the full content and generation architecture.
 
 ### 4. Markers / Keypoints
 
@@ -306,69 +308,106 @@ my-project/
   - Click anywhere on collapsed rail/header to expand
   - Drag state persists if mouse leaves window and returns
 
-- [ ] **Project Management**
-  - Create, open, save projects
-  - Project settings (resolution, fps)
+- [ ] **Data Model & Project Management**
+  - [ ] Core data structures (Project, Track, Clip, Asset, Marker)
+  - [ ] Project save/load (JSON serialization)
+  - [ ] Project creation workflow (new project → folder)
+  - [ ] Project settings (resolution, fps)
+  - [ ] In-project asset storage (audio/, images/, video/, generated/)
 
 - [x] **Timeline Editor** (Foundation) ✓
   - [x] Horizontal scrolling timeline (robust hierarchical structure)
   - [x] Zoom in/out (pixel-based scaling)
-  - [x] Multiple track lanes (Audio, Markers, Keyframes, Video, synced w/ headers)
+  - [x] Multiple track lanes (synced w/ headers)
   - [x] Frame-snapped playhead (60fps visual alignment)
   - [x] Click-to-scrub interaction (click/drag anywhere on ruler to seek)
   - [x] Playback/Seek controls (Play, Pause, Step Frame)
   - [x] Frame ticks on ruler (subtle, at high zoom levels)
   - [x] Timecode display (HH:MM:SS:FF format)
+  - [ ] Dynamic track list (from project data, not hardcoded)
+  - [ ] Add/remove tracks UI
   - [ ] Audio playback integration
 
+- [ ] **Track System** (Revised Architecture)
+  - [ ] Video tracks — hold video clips, image clips (stills), generative clips
+  - [ ] Audio tracks — hold audio clips, generative audio clips
+  - [ ] Marker track — point-in-time markers (single, non-duplicatable)
+  - [ ] Default new project: Video 1, Audio 1, Markers
+  - [ ] User can add additional Video/Audio tracks
+
+- [ ] **Clip System**
+  - [ ] Place clips on tracks (drag from assets or timeline insertion)
+  - [ ] Resize clips (drag edges)
+  - [ ] Move clips (drag to reposition)
+  - [ ] Delete clips
+  - [ ] Clip thumbnail/waveform preview
+  - [ ] Visual distinction: standard clips vs generative clips (pending/generated)
+
+- [ ] **Asset System**
+  - [ ] Assets panel shows project assets (imported + generative)
+  - [ ] Import files (drag or menu) → copies to project folder
+  - [ ] Visual distinction: standard assets vs generative assets (⚙️ badge)
+  - [ ] Drag assets to timeline to create clips
+
+- [ ] **Generative Assets** (Core Innovation)
+  - [ ] "+ New Generative Video/Image/Audio" buttons in Assets panel
+  - [ ] Generative asset folder structure (generated/{type}/{id}/)
+  - [ ] Version management (v1, v2, ... in asset folder)
+  - [ ] Active version selection (stored in config.json or active.txt)
+  - [ ] Placeholder display for un-generated assets (dashed border, pending icon)
+  - [ ] Thumbnail updates after generation completes
+
+- [ ] **Markers**
+  - [ ] Click to add marker at playhead position
+  - [ ] Drag markers to reposition
+  - [ ] Delete markers
+  - [ ] Marker labels (optional)
+  - [ ] Marker colors (optional)
+
 - [ ] **Audio Track**
-  - Import MP3/WAV
-  - **Waveform visualization** (essential)
-  - Basic playback controls (play, pause, seek)
-  - **Audio scrubbing** — hear audio while dragging playhead (critical for usability)
-
-- [ ] **Marker Track**
-  - Click to add marker at playhead position
-  - Drag markers to reposition
-  - Delete markers
-  - Marker labels (optional)
-
-- [ ] **Keyframe Track**
-  - Add keyframe slots at marker positions
-  - Import images into keyframe slots
-  - Thumbnail preview in timeline
-
-- [ ] **Video Track**
-  - Import existing video segments
-  - Display video segments with duration
-  - Basic clip arrangement
-
-- [ ] **Provider System**
-  - ComfyUI adapter (generic workflow support)
-  - Provider configuration UI
-  - Health check / connection test
-
-- [ ] **Image Generation**
-  - Generate image via configured provider
-  - Prompt input UI
-  - Progress/status feedback
-  - Auto-save to keyframes folder
-
-- [ ] **FFmpeg Integration**
-  - Export final timeline to video file
-  - Assume FFmpeg on PATH
-  - Basic export settings
+  - [ ] Import MP3/WAV
+  - [ ] **Waveform visualization** (essential)
+  - [ ] Basic playback controls (play, pause, seek)
+  - [ ] **Audio scrubbing** — hear audio while dragging playhead (critical for usability)
 
 - [ ] **Selection & Attribute Editor**
-  - Track selection state (what's selected where)
-  - Context-sensitive attribute panel
-  - Multi-select support for same-type items
+  - [ ] Track/clip selection state
+  - [ ] Context-sensitive attribute panel
+  - [ ] Multi-select support for same-type items
+  - [ ] For generative clips: show provider picker, dynamic input fields, generate button
+  - [ ] For generative clips: version selector (if multiple versions exist)
+
+- [ ] **Smart Input Suggestions** (Timeline as Implicit Wiring)
+  - [ ] When configuring generative clip inputs, auto-surface overlapping assets
+  - [ ] "In Time Range" section at top of asset picker
+  - [ ] "Other Assets" section below
+  - [ ] Duration defaults to clip duration on timeline
+
+- [ ] **Provider System**
+  - [ ] Provider entry data model (output type, input schema, connection info)
+  - [ ] Provider configuration UI (add/edit/remove)
+  - [ ] Dynamic input schema rendering (text, image picker, number, etc.)
+  - [ ] Health check / connection test
+  - [ ] ComfyUI adapter (first provider)
+
+- [ ] **Generation Pipeline**
+  - [ ] Queue generation jobs (async, non-blocking)
+  - [ ] Progress/status feedback in UI
+  - [ ] Save generated files to asset folder (v1.mp4, etc.)
+  - [ ] Update asset's active version on completion
+  - [ ] Cascading: regenerating dependent uses active version of inputs
+
+- [ ] **FFmpeg Integration**
+  - [ ] Export final timeline to video file
+  - [ ] Assume FFmpeg on PATH
+  - [ ] Basic export settings
 
 ### Nice to Have (v0.2+)
 
-- [ ] I2V generation from keyframes
-- [ ] V2V transformation
+- [ ] I2V generation (image-to-video providers)
+- [ ] V2V transformation (video-to-video providers)
 - [ ] Video extension
+- [ ] Batch variations ("Generate 5 variations with different seeds")
 - [ ] Beat detection / auto-marker placement
 - [ ] Undo/redo
 - [ ] Provider presets library
@@ -376,11 +415,11 @@ my-project/
 - [ ] Replicate provider
 - [ ] Preview window with real-time playback
 - [ ] Multiple audio tracks with mute/solo
-- [ ] Multiple video tracks with mute/visibility toggle
-- [ ] Prompt track (prompts as timeline regions)
+- [ ] Multiple video tracks with visibility toggle
 - [ ] Audio generation providers
 - [ ] Rename/relabel clips and assets
 - [ ] Export Parts (individual clips with descriptive filenames)
+- [ ] Keyboard shortcuts
 
 ### Future Vision (v1.0+)
 
@@ -393,6 +432,7 @@ my-project/
 - [ ] LUT/color grading
 - [ ] Transitions and effects
 - [ ] Basic video transforms (translate, rotate, scale)
+- [ ] External asset references (outside project folder)
 
 > **Philosophy:** This is NOT meant to replace a full video editor. If users need fine-grained control, they export their timed/sequenced clips (nicely named!) and bring them into their editor of choice. We stay focused on the AI generation workflow.
 
@@ -495,6 +535,7 @@ nla-ai-videocreator-rust/
 ├── assets/                  # Static assets (icons, fonts)
 ├── workflows/               # Example ComfyUI workflows
 └── docs/                    # Additional documentation
+    └── CONTENT_ARCHITECTURE.md  # Content & generation architecture
 ```
 
 ### State Architecture
@@ -540,6 +581,12 @@ This allows:
 | Click-to-scrub Interaction | Click anywhere on ruler to seek; playhead follows cursor, not grabbed | ✅ Decided |
 | Hierarchical Timeline Layout | Fixed left column + scrollable right column; no JS scroll sync needed | ✅ Decided |
 | Playhead as Visual Indicator | Triangle handle is purely visual; interaction is on ruler bar | ✅ Decided |
+| Generative Assets as Explicit Creation | Users explicitly create generative assets via UI; they start "hollow" and get populated through generation | ✅ Decided |
+| Generative Assets Have Versions | Each generation creates a new version; user picks active version; dependent assets use active version | ✅ Decided |
+| Timeline as Implicit Wiring | Overlapping assets auto-surface as input suggestions; no explicit linking required | ✅ Decided |
+| Providers Grouped by Output Type | Video/Image/Audio; input requirements vary per provider via dynamic schema | ✅ Decided |
+| No Separate Keyframe Track | Images are clips on Video tracks; "keyframes" are just overlapping reference images | ✅ Decided |
+| In-Project Assets Only (MVP) | All assets must be in project folder; external refs are future enhancement | ✅ Decided |
 
 ---
 
@@ -622,5 +669,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2025-01-04*
+*Last updated: 2026-01-04*
 
