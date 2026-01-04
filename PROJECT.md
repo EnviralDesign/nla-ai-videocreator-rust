@@ -310,11 +310,13 @@ my-project/
   - Create, open, save projects
   - Project settings (resolution, fps)
 
-- [ ] **Timeline Editor**
-  - Horizontal scrolling timeline
-  - Zoom in/out
-  - Multiple track lanes (audio, markers, keyframes, video)
-  - Playhead with audio playback
+- [x] **Timeline Editor** (Foundation) ✓
+  - [x] Horizontal scrolling timeline (with synced headers)
+  - [x] Zoom in/out (pixel-based scaling)
+  - [x] Multiple track lanes (Audio, Markers, Keyframes, Video, synced w/ headers)
+  - [x] Draggable playhead with live timecode
+  - [x] Playback/Seek controls (Play, Pause, Step Frame)
+  - [ ] Audio playback integration
 
 - [ ] **Audio Track**
   - Import MP3/WAV
@@ -465,9 +467,9 @@ nla-ai-videocreator-rust/
 ├── Dioxus.toml
 ├── src/
 │   ├── main.rs              # App entry point
-│   ├── app.rs               # Root component
-│   ├── components/          # UI components
-│   │   ├── timeline/        # Timeline editor components
+│   ├── app.rs               # Root component & state
+│   ├── timeline.rs          # Timeline editor components
+│   ├── components/          # (Future) UI components
 │   │   ├── preview/         # Preview window
 │   │   ├── panels/          # Side panels (assets, attributes)
 │   │   └── common/          # Shared UI components
@@ -527,6 +529,10 @@ This allows:
 | UI fluidity is non-negotiable | Hover effects, smooth transitions, polished feel from day one | ✅ Decided |
 | Dioxus 0.7 (latest) | Hot-patching support, better signals, performance improvements | ✅ Decided |
 | Transitions disabled during drag | Instant resize feedback; transitions only for collapse/expand | ✅ Decided |
+| App-local Timeline State (Temp) | Kept state simple in app.rs until data model requirements mature | ✅ Decided |
+| Scroll-synced Track Labels | CSS sticky positioning for rock-solid sync vs JS event listeners | ✅ Decided |
+| Draggable Playhead | Real-time updating during drag for immediate feedback | ✅ Decided |
+| 1-Second Step Buttons | Frame-stepping felt too slow; 1s steps preferred for navigating | ✅ Decided |
 
 ---
 
@@ -609,5 +615,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2024-12-31*
+*Last updated: 2025-01-03*
 
