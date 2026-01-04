@@ -311,11 +311,14 @@ my-project/
   - Project settings (resolution, fps)
 
 - [x] **Timeline Editor** (Foundation) ✓
-  - [x] Horizontal scrolling timeline (with synced headers)
+  - [x] Horizontal scrolling timeline (robust hierarchical structure)
   - [x] Zoom in/out (pixel-based scaling)
   - [x] Multiple track lanes (Audio, Markers, Keyframes, Video, synced w/ headers)
-  - [x] Draggable playhead with live timecode
+  - [x] Frame-snapped playhead (60fps visual alignment)
+  - [x] Click-to-scrub interaction (click/drag anywhere on ruler to seek)
   - [x] Playback/Seek controls (Play, Pause, Step Frame)
+  - [x] Frame ticks on ruler (subtle, at high zoom levels)
+  - [x] Timecode display (HH:MM:SS:FF format)
   - [ ] Audio playback integration
 
 - [ ] **Audio Track**
@@ -533,6 +536,10 @@ This allows:
 | Scroll-synced Track Labels | CSS sticky positioning for rock-solid sync vs JS event listeners | ✅ Decided |
 | Draggable Playhead | Real-time updating during drag for immediate feedback | ✅ Decided |
 | 1-Second Step Buttons | Frame-stepping felt too slow; 1s steps preferred for navigating | ✅ Decided |
+| Frame-snapped Playhead | All seeking snaps to 60fps frame boundaries for accurate positioning | ✅ Decided |
+| Click-to-scrub Interaction | Click anywhere on ruler to seek; playhead follows cursor, not grabbed | ✅ Decided |
+| Hierarchical Timeline Layout | Fixed left column + scrollable right column; no JS scroll sync needed | ✅ Decided |
+| Playhead as Visual Indicator | Triangle handle is purely visual; interaction is on ruler bar | ✅ Decided |
 
 ---
 
@@ -615,5 +622,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2025-01-03*
+*Last updated: 2025-01-04*
 
