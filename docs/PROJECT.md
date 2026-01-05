@@ -308,12 +308,12 @@ my-project/
   - Click anywhere on collapsed rail/header to expand
   - Drag state persists if mouse leaves window and returns
 
-- [ ] **Data Model & Project Management**
-  - [ ] Core data structures (Project, Track, Clip, Asset, Marker)
-  - [ ] Project save/load (JSON serialization)
+- [x] **Data Model & Project Management** (Phase 1) ✓
+  - [x] Core data structures (Project, Track, Clip, Asset, Marker)
+  - [x] Project save/load (JSON serialization)
   - [ ] Project creation workflow (new project → folder)
-  - [ ] Project settings (resolution, fps)
-  - [ ] In-project asset storage (audio/, images/, video/, generated/)
+  - [x] Project settings (resolution, fps)
+  - [x] In-project asset storage (audio/, images/, video/, generated/)
 
 - [x] **Timeline Editor** (Foundation) ✓
   - [x] Horizontal scrolling timeline (robust hierarchical structure)
@@ -324,15 +324,15 @@ my-project/
   - [x] Playback/Seek controls (Play, Pause, Step Frame)
   - [x] Frame ticks on ruler (subtle, at high zoom levels)
   - [x] Timecode display (HH:MM:SS:FF format)
-  - [ ] Dynamic track list (from project data, not hardcoded)
+  - [x] Dynamic track list (from project data, not hardcoded)
   - [ ] Add/remove tracks UI
   - [ ] Audio playback integration
 
-- [ ] **Track System** (Revised Architecture)
-  - [ ] Video tracks — hold video clips, image clips (stills), generative clips
-  - [ ] Audio tracks — hold audio clips, generative audio clips
-  - [ ] Marker track — point-in-time markers (single, non-duplicatable)
-  - [ ] Default new project: Video 1, Audio 1, Markers
+- [x] **Track System** (Revised Architecture) ✓
+  - [x] Video tracks — hold video clips, image clips (stills), generative clips
+  - [x] Audio tracks — hold audio clips, generative audio clips
+  - [x] Marker track — point-in-time markers (single, non-duplicatable)
+  - [x] Default new project: Video 1, Audio 1, Markers
   - [ ] User can add additional Video/Audio tracks
 
 - [ ] **Clip System**

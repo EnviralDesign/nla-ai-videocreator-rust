@@ -8,10 +8,12 @@ authors = ["NLA AI Video Creator Contributors"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["desktop"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 
-# We'll add more dependencies as needed:
-# serde = { version = "1.0", features = ["derive"] }
-# serde_json = "1.0"
+# Future dependencies:
 # tokio = { version = "1", features = ["full"] }
 # reqwest = { version = "0.12", features = ["json"] }
 

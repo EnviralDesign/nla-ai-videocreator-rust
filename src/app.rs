@@ -42,6 +42,9 @@ const TIMELINE_COLLAPSED_HEIGHT: f64 = 32.0;  // Must match header height exactl
 /// Main application component
 #[component]
 pub fn App() -> Element {
+    // Project state - the core data model
+    let project = use_signal(|| crate::state::Project::default());
+    
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
     let mut left_collapsed = use_signal(|| false);
@@ -52,10 +55,12 @@ pub fn App() -> Element {
     
     // Timeline playback state
     let mut current_time = use_signal(|| 0.0_f64);        // Current time in seconds
-    let duration = use_signal(|| 60.0_f64);           // Total duration in seconds
     let mut zoom = use_signal(|| 100.0_f64);              // Pixels per second
     let mut is_playing = use_signal(|| false);            // Playback state
     let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
+    
+    // Derive duration from project
+    let duration = project.read().duration();
     
     // Drag state
     let mut dragging = use_signal(|| None::<&'static str>);
@@ -139,7 +144,7 @@ pub fn App() -> Element {
                             // Convert mouse x delta to time delta using zoom factor
                             let delta_px = e.client_coordinates().x - drag_start_pos();
                             let delta_time = delta_px / zoom();
-                            let raw_time = (drag_start_size() + delta_time).clamp(0.0, duration());
+                            let raw_time = (drag_start_size() + delta_time).clamp(0.0, duration);
                             // Snap to frame boundary (60fps)
                             let snapped_time = (raw_time * 60.0).round() / 60.0;
                             current_time.set(snapped_time);
@@ -152,7 +157,7 @@ pub fn App() -> Element {
             // Note: We intentionally don't clear drag on mouseleave so drag continues
             // if the user moves outside the window and back in while still holding mouse button
 
-            TitleBar {}
+            TitleBar { project_name: project.read().name.clone() }
 
             // Main content
             div {
@@ -201,16 +206,18 @@ pub fn App() -> Element {
                         collapsed: timeline_collapsed(),
                         is_resizing: timeline_resizing,
                         on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
+                        // Project data
+                        tracks: project.read().tracks.clone(),
                         // Timeline state
                         current_time: current_time(),
-                        duration: duration(),
+                        duration: duration,
                         zoom: zoom(),
                         is_playing: is_playing(),
                         scroll_offset: scroll_offset(),
                         // Callbacks
                         on_seek: move |t: f64| {
                             // Snap to frame boundary (60fps) and clamp to duration
-                            let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration());
+                            let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
                             current_time.set(snapped);
                         },
                         on_zoom_change: move |z: f64| zoom.set(z.clamp(20.0, 500.0)),
@@ -249,7 +256,7 @@ pub fn App() -> Element {
 }
 
 #[component]
-fn TitleBar() -> Element {
+fn TitleBar(project_name: String) -> Element {
     rsx! {
         div {
             style: "
@@ -259,7 +266,7 @@ fn TitleBar() -> Element {
                 user-select: none;
             ",
             span { style: "font-size: 13px; font-weight: 600; color: {TEXT_SECONDARY};", "NLA AI Video Creator" }
-            span { style: "font-size: 13px; color: {TEXT_MUTED};", "Untitled Project" }
+            span { style: "font-size: 13px; color: {TEXT_MUTED};", "{project_name}" }
             div {}
         }
     }

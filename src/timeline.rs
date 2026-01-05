@@ -13,8 +13,9 @@ use crate::app::{
     BG_BASE, BG_ELEVATED, BG_HOVER, BG_SURFACE,
     BORDER_DEFAULT, BORDER_STRONG, BORDER_SUBTLE,
     TEXT_DIM, TEXT_MUTED, TEXT_SECONDARY,
-    ACCENT_AUDIO, ACCENT_MARKER, ACCENT_KEYFRAME, ACCENT_VIDEO,
+    ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO,
 };
+use crate::state::{Track, TrackType};
 
 /// Main timeline panel component
 #[component]
@@ -23,6 +24,8 @@ pub fn TimelinePanel(
     collapsed: bool, 
     is_resizing: bool, 
     on_toggle: EventHandler<MouseEvent>,
+    // Project data
+    tracks: Vec<Track>,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -223,10 +226,22 @@ pub fn TimelinePanel(
                         // Track labels - scrolls vertically with tracks (via overflow: auto on this container if needed)
                         div {
                             style: "flex: 1; overflow-y: hidden; overflow-x: hidden;",
-                            TrackLabel { name: "Audio", color: ACCENT_AUDIO }
-                            TrackLabel { name: "Markers", color: ACCENT_MARKER }
-                            TrackLabel { name: "Keyframes", color: ACCENT_KEYFRAME }
-                            TrackLabel { name: "Video 1", color: ACCENT_VIDEO }
+                            for track in tracks.iter() {
+                                {
+                                    let color = match track.track_type {
+                                        TrackType::Video => ACCENT_VIDEO,
+                                        TrackType::Audio => ACCENT_AUDIO,
+                                        TrackType::Marker => ACCENT_MARKER,
+                                    };
+                                    rsx! {
+                                        TrackLabel { 
+                                            key: "{track.id}",
+                                            name: track.name.clone(), 
+                                            color: color 
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     
@@ -320,10 +335,12 @@ pub fn TimelinePanel(
                                     position: relative;
                                 ",
                                 
-                                TrackRow { width: content_width }
-                                TrackRow { width: content_width }
-                                TrackRow { width: content_width }
-                                TrackRow { width: content_width }
+                                for track in tracks.iter() {
+                                    TrackRow { 
+                                        key: "{track.id}",
+                                        width: content_width 
+                                    }
+                                }
                                 
                                 // Playhead line overlaying tracks (in scroll space)
                                 div {
@@ -492,7 +509,7 @@ fn PlaybackBtn(
 
 /// Track label in the sidebar
 #[component]
-pub fn TrackLabel(name: &'static str, color: &'static str) -> Element {
+pub fn TrackLabel(name: String, color: &'static str) -> Element {
     rsx! {
         div {
             style: "display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-bottom: 1px solid {BORDER_SUBTLE}; font-size: 12px; color: {TEXT_SECONDARY};",
