@@ -96,7 +96,7 @@ impl Track {
 // =============================================================================
 
 /// A clip placed on a track
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clip {
     /// Unique identifier
     pub id: Uuid,
@@ -334,6 +334,29 @@ impl Project {
         let id = clip.id;
         self.clips.push(clip);
         id
+    }
+
+    /// Create and add a clip from an asset at the specified time
+    /// Places on first compatible track (Video track for video/image, Audio for audio)
+    pub fn add_clip_from_asset(&mut self, asset_id: Uuid, start_time: f64, duration: f64) -> Option<Uuid> {
+        // Find the asset to determine what track type to use
+        let asset = self.assets.iter().find(|a| a.id == asset_id)?;
+        
+        let target_track_type = if asset.is_video() || asset.is_image() {
+            TrackType::Video
+        } else if asset.is_audio() {
+            TrackType::Audio
+        } else {
+            return None; // Can't place this asset type
+        };
+        
+        // Find first matching track
+        let track = self.tracks.iter().find(|t| t.track_type == target_track_type)?;
+        let track_id = track.id;
+        
+        // Create the clip
+        let clip = Clip::new(asset_id, track_id, start_time, duration);
+        Some(self.add_clip(clip))
     }
 
     /// Add a marker to the project

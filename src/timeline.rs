@@ -26,6 +26,8 @@ pub fn TimelinePanel(
     on_toggle: EventHandler<MouseEvent>,
     // Project data
     tracks: Vec<Track>,
+    clips: Vec<crate::state::Clip>,
+    assets: Vec<crate::state::Asset>,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -384,7 +386,12 @@ pub fn TimelinePanel(
                                 for track in tracks.iter() {
                                     TrackRow { 
                                         key: "{track.id}",
-                                        width: content_width 
+                                        width: content_width,
+                                        track_id: track.id,
+                                        track_type: track.track_type.clone(),
+                                        clips: clips.clone(),
+                                        assets: assets.clone(),
+                                        zoom: zoom,
                                     }
                                 }
                                 
@@ -581,10 +588,92 @@ pub fn TrackLabel(
 
 /// Track row content area
 #[component]
-pub fn TrackRow(width: i32) -> Element {
+pub fn TrackRow(
+    width: i32,
+    track_id: uuid::Uuid,
+    track_type: TrackType,
+    clips: Vec<crate::state::Clip>,
+    assets: Vec<crate::state::Asset>,
+    zoom: f64,  // pixels per second
+) -> Element {
+    // Filter clips for this track
+    let track_clips: Vec<_> = clips.iter()
+        .filter(|c| c.track_id == track_id)
+        .collect();
+    
+    // Color based on track type
+    let clip_color = match track_type {
+        TrackType::Video => ACCENT_VIDEO,
+        TrackType::Audio => ACCENT_AUDIO,
+        TrackType::Marker => ACCENT_MARKER,
+    };
+    
     rsx! {
         div { 
-            style: "height: 36px; min-width: {width}px; border-bottom: 1px solid {BORDER_SUBTLE}; background-color: {BG_BASE};" 
+            style: "
+                height: 36px; min-width: {width}px; 
+                border-bottom: 1px solid {BORDER_SUBTLE}; 
+                background-color: {BG_BASE};
+                position: relative;
+            ",
+            
+            // Render each clip
+            for clip in track_clips.iter() {
+                {
+                    let left = (clip.start_time * zoom) as i32;
+                    let clip_width = (clip.duration * zoom).max(20.0) as i32;  // Min width 20px
+                    
+                    // Find asset name
+                    let asset_name = assets.iter()
+                        .find(|a| a.id == clip.asset_id)
+                        .map(|a| a.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    
+                    // Check if asset is generative
+                    let is_generative = assets.iter()
+                        .find(|a| a.id == clip.asset_id)
+                        .map(|a| a.is_generative())
+                        .unwrap_or(false);
+                    
+                    let border_style = if is_generative {
+                        format!("1px dashed {}", clip_color)
+                    } else {
+                        format!("1px solid {}", clip_color)
+                    };
+                    
+                    rsx! {
+                        div {
+                            key: "{clip.id}",
+                            style: "
+                                position: absolute;
+                                left: {left}px;
+                                top: 2px;
+                                width: {clip_width}px;
+                                height: 32px;
+                                background-color: {BG_ELEVATED};
+                                border: {border_style};
+                                border-radius: 4px;
+                                display: flex;
+                                align-items: center;
+                                padding: 0 6px;
+                                overflow: hidden;
+                                cursor: grab;
+                                user-select: none;
+                            ",
+                            // Color indicator bar
+                            div {
+                                style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
+                            }
+                            // Clip name
+                            span {
+                                style: "font-size: 10px; color: {TEXT_SECONDARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
+                                if is_generative { "✨ " } else { "" }
+                                "{asset_name}"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

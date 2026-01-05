@@ -335,13 +335,14 @@ my-project/
   - [x] Default new project: Video 1, Audio 1, Markers
   - [x] User can add additional Video/Audio tracks
 
-- [ ] **Clip System**
+- [ ] **Clip System** — In Progress
+  - [x] Render clips on timeline tracks (positioned by start_time, sized by duration)
+  - [x] Visual distinction: standard clips vs generative clips (dashed border, ✨ prefix)
   - [ ] Place clips on tracks (drag from assets or timeline insertion)
   - [ ] Resize clips (drag edges)
   - [ ] Move clips (drag to reposition)
   - [ ] Delete clips
   - [ ] Clip thumbnail/waveform preview
-  - [ ] Visual distinction: standard clips vs generative clips (pending/generated)
 
 - [x] **Asset System** (Phase 2A) ✓
   - [x] Assets panel shows project assets (imported + generative)

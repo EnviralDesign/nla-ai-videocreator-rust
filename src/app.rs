@@ -202,6 +202,11 @@ pub fn App() -> Element {
                         on_delete: move |id| {
                             project.write().remove_asset(id);
                         },
+                        on_add_to_timeline: move |asset_id| {
+                            // Add clip at current playhead position with default 2-second duration
+                            let time = current_time();
+                            project.write().add_clip_from_asset(asset_id, time, 2.0);
+                        },
                     }
                 }
 
@@ -233,6 +238,8 @@ pub fn App() -> Element {
                         on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
                         // Project data
                         tracks: project.read().tracks.clone(),
+                        clips: project.read().clips.clone(),
+                        assets: project.read().assets.clone(),
                         // Timeline state
                         current_time: current_time(),
                         duration: duration,
@@ -749,6 +756,7 @@ fn AssetsPanelContent(
     assets: Vec<crate::state::Asset>,
     on_import: EventHandler<crate::state::Asset>,
     on_delete: EventHandler<uuid::Uuid>,
+    on_add_to_timeline: EventHandler<uuid::Uuid>,
 ) -> Element {
     rsx! {
         div {
@@ -909,6 +917,7 @@ fn AssetsPanelContent(
                         AssetItem { 
                             asset: asset.clone(),
                             on_delete: move |id| on_delete.call(id),
+                            on_add_to_timeline: move |id| on_add_to_timeline.call(id),
                         }
                     }
                 }
@@ -922,6 +931,7 @@ fn AssetsPanelContent(
 fn AssetItem(
     asset: crate::state::Asset,
     on_delete: EventHandler<uuid::Uuid>,
+    on_add_to_timeline: EventHandler<uuid::Uuid>,
 ) -> Element {
     let mut show_menu = use_signal(|| false);
     let mut menu_pos = use_signal(|| (0.0, 0.0));
@@ -963,6 +973,7 @@ fn AssetItem(
                     padding: 8px; margin-bottom: 4px;
                     background-color: {BG_SURFACE}; border: {border_style}; border-radius: 4px;
                     cursor: grab; transition: background-color 0.1s ease;
+                    user-select: none;
                 ",
                 oncontextmenu: move |e| {
                     e.prevent_default();
@@ -1004,6 +1015,23 @@ fn AssetItem(
                                 box-shadow: 0 4px 12px rgba(0,0,0,0.3);
                                 z-index: 1000; font-size: 12px;
                             ",
+                            // Add to timeline option
+                            div {
+                                style: "
+                                    padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                                    transition: background-color 0.1s ease;
+                                ",
+                                onclick: move |_| {
+                                    on_add_to_timeline.call(asset_id);
+                                    show_menu.set(false);
+                                },
+                                "➕ Add to Timeline"
+                            }
+                            // Divider
+                            div {
+                                style: "height: 1px; background-color: {BORDER_SUBTLE}; margin: 4px 0;",
+                            }
+                            // Delete option
                             div {
                                 style: "
                                     padding: 6px 12px; color: #ef4444; cursor: pointer;

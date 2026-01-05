@@ -163,6 +163,16 @@ impl Asset {
         self.kind.is_generative()
     }
 
+    /// Check if this is a video asset (including generative video)
+    pub fn is_video(&self) -> bool {
+        matches!(self.kind, AssetKind::Video { .. } | AssetKind::GenerativeVideo { .. })
+    }
+
+    /// Check if this is an image asset (including generative image)  
+    pub fn is_image(&self) -> bool {
+        matches!(self.kind, AssetKind::Image { .. } | AssetKind::GenerativeImage { .. })
+    }
+
     /// Check if this asset can be placed on a video track
     pub fn is_visual(&self) -> bool {
         self.kind.is_visual()
