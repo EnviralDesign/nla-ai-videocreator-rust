@@ -199,6 +199,9 @@ pub fn App() -> Element {
                         on_import: move |asset| {
                             project.write().add_asset(asset);
                         },
+                        on_delete: move |id| {
+                            project.write().remove_asset(id);
+                        },
                     }
                 }
 
@@ -745,6 +748,7 @@ fn StatusBar() -> Element {
 fn AssetsPanelContent(
     assets: Vec<crate::state::Asset>,
     on_import: EventHandler<crate::state::Asset>,
+    on_delete: EventHandler<uuid::Uuid>,
 ) -> Element {
     rsx! {
         div {
@@ -800,6 +804,91 @@ fn AssetsPanelContent(
                 "📁 Import Files..."
             }
             
+            // Generative asset buttons
+            div {
+                style: "
+                    display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px;
+                    padding: 8px; background-color: {BG_SURFACE}; border-radius: 6px;
+                    border: 1px solid {BORDER_SUBTLE};
+                ",
+                div { 
+                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;",
+                    "✨ New Generative"
+                }
+                div {
+                    style: "display: flex; gap: 4px;",
+                    
+                    // Generative Video button
+                    button {
+                        style: "
+                            flex: 1; padding: 6px 8px;
+                            background: transparent; border: 1px dashed {ACCENT_VIDEO};
+                            border-radius: 4px; color: {ACCENT_VIDEO}; font-size: 11px;
+                            cursor: pointer; transition: all 0.15s ease;
+                        ",
+                        onclick: {
+                            let on_import = on_import.clone();
+                            move |_| {
+                                // Generate unique ID for this generative asset
+                                let id = uuid::Uuid::new_v4();
+                                let folder = std::path::PathBuf::from(format!("generated/video/{}", id));
+                                let asset = crate::state::Asset::new_generative_video(
+                                    format!("Gen Video {}", &id.to_string()[..8]),
+                                    folder
+                                );
+                                on_import.call(asset);
+                            }
+                        },
+                        "🎬 Video"
+                    }
+                    
+                    // Generative Image button
+                    button {
+                        style: "
+                            flex: 1; padding: 6px 8px;
+                            background: transparent; border: 1px dashed {ACCENT_VIDEO};
+                            border-radius: 4px; color: {ACCENT_VIDEO}; font-size: 11px;
+                            cursor: pointer; transition: all 0.15s ease;
+                        ",
+                        onclick: {
+                            let on_import = on_import.clone();
+                            move |_| {
+                                let id = uuid::Uuid::new_v4();
+                                let folder = std::path::PathBuf::from(format!("generated/image/{}", id));
+                                let asset = crate::state::Asset::new_generative_image(
+                                    format!("Gen Image {}", &id.to_string()[..8]),
+                                    folder
+                                );
+                                on_import.call(asset);
+                            }
+                        },
+                        "🖼️ Image"
+                    }
+                    
+                    // Generative Audio button
+                    button {
+                        style: "
+                            flex: 1; padding: 6px 8px;
+                            background: transparent; border: 1px dashed {ACCENT_AUDIO};
+                            border-radius: 4px; color: {ACCENT_AUDIO}; font-size: 11px;
+                            cursor: pointer; transition: all 0.15s ease;
+                        ",
+                        onclick: {
+                            let on_import = on_import.clone();
+                            move |_| {
+                                let id = uuid::Uuid::new_v4();
+                                let folder = std::path::PathBuf::from(format!("generated/audio/{}", id));
+                                let asset = crate::state::Asset::new_generative_audio(
+                                    format!("Gen Audio {}", &id.to_string()[..8]),
+                                    folder
+                                );
+                                on_import.call(asset);
+                            }
+                        },
+                        "🔊 Audio"
+                    }
+                }
+            }
             // Asset list
             div {
                 style: "flex: 1; overflow-y: auto;",
@@ -817,7 +906,10 @@ fn AssetsPanelContent(
                     }
                 } else {
                     for asset in assets.iter() {
-                        AssetItem { asset: asset.clone() }
+                        AssetItem { 
+                            asset: asset.clone(),
+                            on_delete: move |id| on_delete.call(id),
+                        }
                     }
                 }
             }
@@ -827,15 +919,21 @@ fn AssetsPanelContent(
 
 /// Individual asset item in the list
 #[component]
-fn AssetItem(asset: crate::state::Asset) -> Element {
+fn AssetItem(
+    asset: crate::state::Asset,
+    on_delete: EventHandler<uuid::Uuid>,
+) -> Element {
+    let mut show_menu = use_signal(|| false);
+    let mut menu_pos = use_signal(|| (0.0, 0.0));
+
     // Icon based on asset type
     let icon = match &asset.kind {
         crate::state::AssetKind::Video { .. } => "🎬",
         crate::state::AssetKind::Image { .. } => "🖼️",
         crate::state::AssetKind::Audio { .. } => "🔊",
-        crate::state::AssetKind::GenerativeVideo { .. } => "⚙️🎬",
-        crate::state::AssetKind::GenerativeImage { .. } => "⚙️🖼️",
-        crate::state::AssetKind::GenerativeAudio { .. } => "⚙️🔊",
+        crate::state::AssetKind::GenerativeVideo { .. } => "✨🎬",
+        crate::state::AssetKind::GenerativeImage { .. } => "✨🖼️",
+        crate::state::AssetKind::GenerativeAudio { .. } => "✨🔊",
     };
     
     // Color accent based on type
@@ -845,33 +943,82 @@ fn AssetItem(asset: crate::state::Asset) -> Element {
         crate::state::AssetKind::Image { .. } | crate::state::AssetKind::GenerativeImage { .. } => ACCENT_VIDEO,
     };
     
-    // Generative assets have a special border style
+    // Generative assets have a subtle dashed border
     let border_style = if asset.is_generative() {
-        format!("1px dashed {}", accent)
+        format!("1px dashed {}", BORDER_DEFAULT)  // Subtle dashed, not accent-colored
     } else {
         format!("1px solid {}", BORDER_SUBTLE)
     };
+
+    let asset_id = asset.id;
+    let asset_name = asset.name.clone();
     
     rsx! {
         div {
-            style: "
-                display: flex; align-items: center; gap: 8px;
-                padding: 8px; margin-bottom: 4px;
-                background-color: {BG_SURFACE}; border: {border_style}; border-radius: 4px;
-                cursor: grab; transition: background-color 0.1s ease;
-            ",
-            // Type indicator
+            style: "position: relative;",
+            
             div {
-                style: "width: 3px; height: 24px; border-radius: 2px; background-color: {accent};",
+                style: "
+                    display: flex; align-items: center; gap: 8px;
+                    padding: 8px; margin-bottom: 4px;
+                    background-color: {BG_SURFACE}; border: {border_style}; border-radius: 4px;
+                    cursor: grab; transition: background-color 0.1s ease;
+                ",
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    let coords = e.client_coordinates();
+                    menu_pos.set((coords.x, coords.y));
+                    show_menu.set(true);
+                },
+                // Type indicator
+                div {
+                    style: "width: 3px; height: 24px; border-radius: 2px; background-color: {accent};",
+                }
+                // Icon
+                span { style: "font-size: 14px;", "{icon}" }
+                // Name
+                span { 
+                    style: "flex: 1; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                    "{asset_name}" 
+                }
             }
-            // Icon
-            span { style: "font-size: 14px;", "{icon}" }
-            // Name
-            span { 
-                style: "flex: 1; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                "{asset.name}" 
+            
+            // Context menu for this asset
+            if show_menu() {
+                // Backdrop
+                div {
+                    style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999;",
+                    onclick: move |_| show_menu.set(false),
+                }
+                // Menu
+                {
+                    let (x, y) = menu_pos();
+                    rsx! {
+                        div {
+                            style: "
+                                position: fixed; 
+                                left: min({x}px, calc(100vw - 140px)); 
+                                top: min({y}px, calc(100vh - 50px));
+                                background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                                border-radius: 6px; padding: 4px 0; min-width: 120px;
+                                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                                z-index: 1000; font-size: 12px;
+                            ",
+                            div {
+                                style: "
+                                    padding: 6px 12px; color: #ef4444; cursor: pointer;
+                                    transition: background-color 0.1s ease;
+                                ",
+                                onclick: move |_| {
+                                    on_delete.call(asset_id);
+                                    show_menu.set(false);
+                                },
+                                "🗑 Delete"
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
-

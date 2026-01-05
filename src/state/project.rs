@@ -318,6 +318,17 @@ impl Project {
         id
     }
 
+    /// Remove an asset by ID (also removes any clips using this asset)
+    pub fn remove_asset(&mut self, id: Uuid) -> bool {
+        // Remove any clips that reference this asset
+        self.clips.retain(|c| c.asset_id != id);
+        
+        // Remove the asset
+        let len = self.assets.len();
+        self.assets.retain(|a| a.id != id);
+        self.assets.len() < len
+    }
+
     /// Add a clip to the project
     pub fn add_clip(&mut self, clip: Clip) -> Uuid {
         let id = clip.id;

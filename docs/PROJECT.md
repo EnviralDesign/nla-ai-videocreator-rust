@@ -350,12 +350,12 @@ my-project/
   - [ ] Drag assets to timeline to create clips
   - [ ] Copy imported files to project folder
 
-- [ ] **Generative Assets** (Core Innovation)
-  - [ ] "+ New Generative Video/Image/Audio" buttons in Assets panel
-  - [ ] Generative asset folder structure (generated/{type}/{id}/)
+- [ ] **Generative Assets** (Core Innovation) — In Progress
+  - [x] "+ New Generative Video/Image/Audio" buttons in Assets panel
+  - [x] Generative asset folder structure (generated/{type}/{id}/)
+  - [x] Placeholder display for un-generated assets (dashed border, ⚙️ icon)
   - [ ] Version management (v1, v2, ... in asset folder)
   - [ ] Active version selection (stored in config.json or active.txt)
-  - [ ] Placeholder display for un-generated assets (dashed border, pending icon)
   - [ ] Thumbnail updates after generation completes
 
 - [ ] **Markers**
