@@ -26,7 +26,7 @@ pub const TEXT_DIM: &str = "#52525b";
 
 pub const ACCENT_AUDIO: &str = "#3b82f6";
 pub const ACCENT_MARKER: &str = "#f97316";
-pub const ACCENT_KEYFRAME: &str = "#a855f7";
+
 pub const ACCENT_VIDEO: &str = "#22c55e";
 
 // Panel dimensions
@@ -69,6 +69,10 @@ pub fn App() -> Element {
     
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
+
+    // Dialog state
+    let mut show_new_project_dialog = use_signal(|| false);
+    let mut new_project_name = use_signal(|| "My Project".to_string());
 
     // Read current values
     let left_w = if left_collapsed() { PANEL_COLLAPSED_WIDTH } else { left_width() };
@@ -162,14 +166,19 @@ pub fn App() -> Element {
             // Note: We intentionally don't clear drag on mouseleave so drag continues
             // if the user moves outside the window and back in while still holding mouse button
 
-            TitleBar { project_name: project.read().name.clone() }
+            TitleBar { 
+                project_name: project.read().name.clone(),
+                on_new_project: move |_| {
+                    show_new_project_dialog.set(true);
+                }
+            }
 
             // Main content
             div {
                 class: "main-content",
                 style: "display: flex; flex: 1; overflow: hidden;",
 
-                // Left panel
+                // Left panel - Assets
                 SidePanel {
                     title: "Assets",
                     width: left_w,
@@ -183,6 +192,14 @@ pub fn App() -> Element {
                         drag_start_pos.set(e.client_coordinates().x);
                         drag_start_size.set(left_width());
                     },
+                    
+                    // Assets panel content
+                    AssetsPanelContent {
+                        assets: project.read().assets.clone(),
+                        on_import: move |asset| {
+                            project.write().add_asset(asset);
+                        },
+                    }
                 }
 
                 // Center
@@ -262,6 +279,19 @@ pub fn App() -> Element {
                         drag_start_pos.set(e.client_coordinates().x);
                         drag_start_size.set(right_width());
                     },
+                    
+                    // Attributes panel placeholder content
+                    div {
+                        style: "padding: 12px;",
+                        div {
+                            style: "
+                                display: flex; align-items: center; justify-content: center;
+                                height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                                color: {TEXT_DIM}; font-size: 12px;
+                            ",
+                            "No selection"
+                        }
+                    }
                 }
             }
 
@@ -280,7 +310,9 @@ pub fn App() -> Element {
                 // The actual menu
                 div {
                     style: "
-                        position: fixed; left: {x}px; top: {y}px;
+                        position: fixed; 
+                        left: min({x}px, calc(100vw - 150px)); 
+                        top: min({y}px, calc(100vh - 120px));
                         background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
                         border-radius: 6px; padding: 4px 0; min-width: 140px;
                         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
@@ -321,6 +353,135 @@ pub fn App() -> Element {
                                     },
                                     "🗑 Delete \"{track_name}\""
                                 }
+
+                                div {
+                                    style: "height: 1px; background-color: {BORDER_SUBTLE}; margin: 2px 0;",
+                                }
+
+                                div {
+                                    style: "
+                                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                                        transition: background-color 0.1s ease;
+                                    ",
+                                    onmouseenter: move |_| {},
+                                    onclick: move |_| {
+                                        project.write().move_track_up(track_id);
+                                        context_menu.set(None);
+                                    },
+                                    "↑ Move Up"
+                                }
+
+                                div {
+                                    style: "
+                                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                                        transition: background-color 0.1s ease;
+                                    ",
+                                    onmouseenter: move |_| {},
+                                    onclick: move |_| {
+                                        project.write().move_track_down(track_id);
+                                        context_menu.set(None);
+                                    },
+                                    "↓ Move Down"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            // New Project Modal
+            if show_new_project_dialog() {
+                div {
+                    style: "
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        background-color: rgba(0, 0, 0, 0.5);
+                        display: flex; align-items: center; justify-content: center;
+                        z-index: 2000;
+                    ",
+                    // Close on backdrop click
+                    onclick: move |_| show_new_project_dialog.set(false),
+                    
+                    // Modal content
+                    div {
+                        style: "
+                            width: 400px;
+                            background-color: {BG_ELEVATED};
+                            border: 1px solid {BORDER_DEFAULT};
+                            border-radius: 8px;
+                            padding: 24px;
+                            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                        ",
+                        onclick: move |e| e.stop_propagation(), // Prevent closing when clicking inside
+                        
+                        h3 { 
+                            style: "margin: 0 0 16px 0; font-size: 16px; color: {TEXT_PRIMARY};",
+                            "Create New Project" 
+                        }
+                        
+                        div {
+                            style: "margin-bottom: 20px;",
+                            label { 
+                                style: "display: block; margin-bottom: 8px; font-size: 12px; color: {TEXT_SECONDARY};",
+                                "Project Name" 
+                            }
+                            input {
+                                style: "
+                                    width: 100%; padding: 8px 12px;
+                                    background-color: {BG_BASE}; 
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 4px;
+                                    color: {TEXT_PRIMARY};
+                                    font-size: 14px;
+                                    outline: none;
+                                ",
+                                value: "{new_project_name}",
+                                oninput: move |e| new_project_name.set(e.value()),
+                                autofocus: true,
+                            }
+                            div {
+                                style: "margin-top: 8px; font-size: 11px; color: {TEXT_DIM};",
+                                "Project will be created in ./projects/{new_project_name}"
+                            }
+                        }
+                        
+                        div {
+                            style: "display: flex; justify-content: flex-end; gap: 12px;",
+                            button {
+                                style: "
+                                    padding: 8px 16px; border-radius: 4px; border: 1px solid {BORDER_DEFAULT};
+                                    background: transparent; color: {TEXT_SECONDARY}; cursor: pointer;
+                                ",
+                                onclick: move |_| show_new_project_dialog.set(false),
+                                "Cancel"
+                            }
+                            button {
+                                style: "
+                                    padding: 8px 16px; border-radius: 4px; border: none;
+                                    background-color: {ACCENT_AUDIO}; color: white; cursor: pointer;
+                                    font-weight: 500;
+                                ",
+                                onclick: move |_| {
+                                    let name = new_project_name();
+                                    let sanitized = name.trim();
+                                    if sanitized.is_empty() { return; }
+                                    
+                                    // Simple path logic for MVP: ./projects/{name}
+                                    let cwd = std::env::current_dir().unwrap_or_default();
+                                    let folder = cwd.join("projects").join(sanitized);
+                                    
+                                    match crate::state::Project::create_in(&folder, sanitized) {
+                                        Ok(new_proj) => {
+                                            project.set(new_proj);
+                                            show_new_project_dialog.set(false);
+                                        },
+                                        Err(e) => {
+                                            println!("Error creating project: {}", e);
+                                            // Future: show error toast
+                                        }
+                                    }
+                                },
+                                "Create Project"
                             }
                         }
                     }
@@ -331,7 +492,8 @@ pub fn App() -> Element {
 }
 
 #[component]
-fn TitleBar(project_name: String) -> Element {
+
+fn TitleBar(project_name: String, on_new_project: EventHandler<MouseEvent>) -> Element {
     rsx! {
         div {
             style: "
@@ -340,9 +502,26 @@ fn TitleBar(project_name: String) -> Element {
                 background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER_DEFAULT};
                 user-select: none;
             ",
-            span { style: "font-size: 13px; font-weight: 600; color: {TEXT_SECONDARY};", "NLA AI Video Creator" }
+            div {
+                style: "display: flex; align-items: center; gap: 20px;",
+                span { style: "font-size: 13px; font-weight: 600; color: {TEXT_SECONDARY};", "NLA AI Video Creator" }
+                
+                // Simple File > New Project button for now (can expand to full menu later)
+                button {
+                    class: "collapse-btn", // Reusing hover style
+                    style: "
+                        background: transparent; border: none; color: {TEXT_PRIMARY}; 
+                        font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+                    ",
+                    onclick: move |e| on_new_project.call(e),
+                    "New Project"
+                }
+            }
+            
             span { style: "font-size: 13px; color: {TEXT_MUTED};", "{project_name}" }
-            div {}
+            
+            // Right side spacer (balance)
+            div { style: "width: 150px;" } 
         }
     }
 }
@@ -356,6 +535,7 @@ fn SidePanel(
     is_resizing: bool,
     on_toggle: EventHandler<MouseEvent>,
     on_resize_start: EventHandler<MouseEvent>,
+    children: Element,  // Custom content for this panel
 ) -> Element {
     let is_left = side == "left";
     // Arrow points toward the resize edge when expanded, away when collapsed
@@ -485,15 +665,8 @@ fn SidePanel(
                 // Content (only when expanded)
                 if !collapsed {
                     div {
-                        style: "flex: 1; padding: 12px; overflow-y: auto;",
-                        div {
-                            style: "
-                                display: flex; align-items: center; justify-content: center;
-                                height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
-                                color: {TEXT_DIM}; font-size: 12px;
-                            ",
-                            "{title}"
-                        }
+                        style: "flex: 1; overflow-y: auto;",
+                        {children}
                     }
                 }
             }
@@ -566,3 +739,139 @@ fn StatusBar() -> Element {
         }
     }
 }
+
+/// Assets panel content - displays project assets and import functionality
+#[component]
+fn AssetsPanelContent(
+    assets: Vec<crate::state::Asset>,
+    on_import: EventHandler<crate::state::Asset>,
+) -> Element {
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column; height: 100%; padding: 8px;",
+            
+            // Import button
+            button {
+                style: "
+                    width: 100%; padding: 8px 12px; margin-bottom: 8px;
+                    background-color: {BG_SURFACE}; border: 1px dashed {BORDER_DEFAULT};
+                    border-radius: 6px; color: {TEXT_SECONDARY}; font-size: 12px;
+                    cursor: pointer; transition: all 0.15s ease;
+                ",
+                onclick: move |_| {
+                    // Use rfd for native file dialog
+                    if let Some(paths) = rfd::FileDialog::new()
+                        .add_filter("Media Files", &["mp4", "mov", "avi", "mp3", "wav", "png", "jpg", "jpeg", "gif", "webp"])
+                        .add_filter("Video", &["mp4", "mov", "avi", "mkv", "webm"])
+                        .add_filter("Audio", &["mp3", "wav", "ogg", "flac"])
+                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                        .set_title("Import Assets")
+                        .pick_files()
+                    {
+                        for path in paths {
+                            // Determine asset type from extension
+                            let ext = path.extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            
+                            let name = path.file_stem()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("Untitled")
+                                .to_string();
+                            
+                            let asset = match ext.as_str() {
+                                "mp4" | "mov" | "avi" | "mkv" | "webm" => {
+                                    crate::state::Asset::new_video(name, path)
+                                }
+                                "mp3" | "wav" | "ogg" | "flac" => {
+                                    crate::state::Asset::new_audio(name, path)
+                                }
+                                "png" | "jpg" | "jpeg" | "gif" | "webp" => {
+                                    crate::state::Asset::new_image(name, path)
+                                }
+                                _ => continue, // Skip unknown types
+                            };
+                            
+                            on_import.call(asset);
+                        }
+                    }
+                },
+                "📁 Import Files..."
+            }
+            
+            // Asset list
+            div {
+                style: "flex: 1; overflow-y: auto;",
+                
+                if assets.is_empty() {
+                    div {
+                        style: "
+                            display: flex; flex-direction: column; align-items: center; justify-content: center;
+                            height: 120px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                            color: {TEXT_DIM}; font-size: 12px; text-align: center; padding: 12px;
+                        ",
+                        div { style: "font-size: 24px; margin-bottom: 8px;", "📂" }
+                        "No assets yet"
+                        div { style: "font-size: 10px; color: {TEXT_DIM}; margin-top: 4px;", "Import files or create generative assets" }
+                    }
+                } else {
+                    for asset in assets.iter() {
+                        AssetItem { asset: asset.clone() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Individual asset item in the list
+#[component]
+fn AssetItem(asset: crate::state::Asset) -> Element {
+    // Icon based on asset type
+    let icon = match &asset.kind {
+        crate::state::AssetKind::Video { .. } => "🎬",
+        crate::state::AssetKind::Image { .. } => "🖼️",
+        crate::state::AssetKind::Audio { .. } => "🔊",
+        crate::state::AssetKind::GenerativeVideo { .. } => "⚙️🎬",
+        crate::state::AssetKind::GenerativeImage { .. } => "⚙️🖼️",
+        crate::state::AssetKind::GenerativeAudio { .. } => "⚙️🔊",
+    };
+    
+    // Color accent based on type
+    let accent = match &asset.kind {
+        crate::state::AssetKind::Video { .. } | crate::state::AssetKind::GenerativeVideo { .. } => ACCENT_VIDEO,
+        crate::state::AssetKind::Audio { .. } | crate::state::AssetKind::GenerativeAudio { .. } => ACCENT_AUDIO,
+        crate::state::AssetKind::Image { .. } | crate::state::AssetKind::GenerativeImage { .. } => ACCENT_VIDEO,
+    };
+    
+    // Generative assets have a special border style
+    let border_style = if asset.is_generative() {
+        format!("1px dashed {}", accent)
+    } else {
+        format!("1px solid {}", BORDER_SUBTLE)
+    };
+    
+    rsx! {
+        div {
+            style: "
+                display: flex; align-items: center; gap: 8px;
+                padding: 8px; margin-bottom: 4px;
+                background-color: {BG_SURFACE}; border: {border_style}; border-radius: 4px;
+                cursor: grab; transition: background-color 0.1s ease;
+            ",
+            // Type indicator
+            div {
+                style: "width: 3px; height: 24px; border-radius: 2px; background-color: {accent};",
+            }
+            // Icon
+            span { style: "font-size: 14px;", "{icon}" }
+            // Name
+            span { 
+                style: "flex: 1; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                "{asset.name}" 
+            }
+        }
+    }
+}
+

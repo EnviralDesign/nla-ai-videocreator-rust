@@ -311,7 +311,7 @@ my-project/
 - [x] **Data Model & Project Management** (Phase 1) ✓
   - [x] Core data structures (Project, Track, Clip, Asset, Marker)
   - [x] Project save/load (JSON serialization)
-  - [ ] Project creation workflow (new project → folder)
+  - [x] Project creation workflow (new project → folder)
   - [x] Project settings (resolution, fps)
   - [x] In-project asset storage (audio/, images/, video/, generated/)
 
@@ -343,11 +343,12 @@ my-project/
   - [ ] Clip thumbnail/waveform preview
   - [ ] Visual distinction: standard clips vs generative clips (pending/generated)
 
-- [ ] **Asset System**
-  - [ ] Assets panel shows project assets (imported + generative)
-  - [ ] Import files (drag or menu) → copies to project folder
-  - [ ] Visual distinction: standard assets vs generative assets (⚙️ badge)
+- [x] **Asset System** (Phase 2A) ✓
+  - [x] Assets panel shows project assets (imported + generative)
+  - [x] Import files via native file dialog
+  - [x] Visual distinction: standard assets vs generative assets (⚙️ badge, dashed border)
   - [ ] Drag assets to timeline to create clips
+  - [ ] Copy imported files to project folder
 
 - [ ] **Generative Assets** (Core Innovation)
   - [ ] "+ New Generative Video/Image/Audio" buttons in Assets panel
@@ -650,6 +651,52 @@ v1.0 - Public Release
 ## 📞 Contact
 
 *(To be filled in)*
+
+---
+
+## 📊 Current Status (2026-01-04)
+
+### Completed ✅
+| Area | Status | Notes |
+|------|--------|-------|
+| **UI Shell** | ✅ Complete | Title bar, panels, timeline, status bar |
+| **Panel System** | ✅ Complete | Resizable, collapsible, hover effects |
+| **Data Model** | ✅ Complete | Project, Track, Clip, Asset, Marker structs |
+| **Project Management** | ✅ Complete | New project dialog, create folder, save/load JSON |
+| **Timeline Foundation** | ✅ Complete | Scroll, zoom, playhead, ruler, timecode |
+| **Track System** | ✅ Complete | Video/Audio/Marker tracks, add/remove/reorder |
+| **Context Menus** | ✅ Complete | Custom right-click menus (delete, move up/down) |
+| **Window Config** | ✅ Complete | Custom title, no default menu bar |
+| **Asset Panel** | ✅ Complete | Display assets, import files via native dialog |
+
+### In Progress 🔄
+| Area | Status | Next Steps |
+|------|--------|------------|
+| **Clip System** | 🔲 Not Started | Place clips on tracks, resize, move |
+| **Audio Playback** | 🔲 Not Started | Waveform visualization, sync with timeline |
+| **File Copy** | 🔲 Not Started | Copy imported files into project folder |
+
+### Code Structure
+```
+src/
+├── main.rs          # Entry point, window config
+├── app.rs           # Main App component, UI shell, dialogs
+├── timeline.rs      # TimelinePanel, ruler, tracks, playback controls
+└── state/
+    ├── mod.rs       # Module exports
+    ├── asset.rs     # Asset, AssetKind (file & generative)
+    └── project.rs   # Project, Track, Clip, Marker, save/load
+```
+
+### Recent Changes (Session Log)
+- **2026-01-04:** Implemented custom context menus for track management
+- **2026-01-04:** Added "Move Up/Down" track reordering via context menu
+- **2026-01-04:** Fixed window title and removed default Win/Edit/Help menu bar
+- **2026-01-04:** Added viewport-constrained context menu positioning
+- **2026-01-04:** Implemented New Project modal dialog with folder creation
+- **2026-01-04:** Added track add/remove functionality with UI buttons
+- **2026-01-04:** Integrated Project data model with timeline (dynamic tracks)
+- **2026-01-04:** Created core data structures (Project, Track, Clip, Asset, Marker)
 
 ---
 

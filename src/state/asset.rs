@@ -7,8 +7,10 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 /// The kind of asset - either a simple file reference or a generative asset
+/// The kind of asset - either a simple file reference or a generative asset
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
+#[allow(dead_code)]
 pub enum AssetKind {
     /// A standard video file
     Video { 
@@ -48,6 +50,7 @@ pub enum AssetKind {
     },
 }
 
+#[allow(dead_code)]
 impl AssetKind {
     /// Returns true if this is a generative asset
     pub fn is_generative(&self) -> bool {
@@ -80,7 +83,7 @@ impl AssetKind {
 }
 
 /// An asset in the project
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Asset {
     /// Unique identifier
     pub id: Uuid,
@@ -90,6 +93,7 @@ pub struct Asset {
     pub kind: AssetKind,
 }
 
+#[allow(dead_code)]
 impl Asset {
     /// Create a new video asset from an imported file
     pub fn new_video(name: impl Into<String>, path: PathBuf) -> Self {

@@ -113,6 +113,7 @@ pub struct Clip {
 
 impl Clip {
     /// Create a new clip
+    #[allow(dead_code)]
     pub fn new(asset_id: Uuid, track_id: Uuid, start_time: f64, duration: f64) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -129,6 +130,7 @@ impl Clip {
     }
 
     /// Check if this clip overlaps with a time range
+    #[allow(dead_code)]
     pub fn overlaps(&self, start: f64, end: f64) -> bool {
         self.start_time < end && self.end_time() > start
     }
@@ -153,6 +155,7 @@ pub struct Marker {
 
 impl Marker {
     /// Create a new marker at the given time
+    #[allow(dead_code)]
     pub fn new(time: f64) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -163,6 +166,7 @@ impl Marker {
     }
 
     /// Create a marker with a label
+    #[allow(dead_code)]
     pub fn with_label(time: f64, label: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -219,8 +223,10 @@ impl Default for Project {
     }
 }
 
+#[allow(dead_code)]
 impl Project {
     /// Create a new project with default settings
+    #[allow(dead_code)]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -342,11 +348,34 @@ impl Project {
         self.markers.len() < len
     }
 
+    /// Move a track up in the list (visually higher)
+    pub fn move_track_up(&mut self, id: Uuid) -> bool {
+        if let Some(index) = self.tracks.iter().position(|t| t.id == id) {
+            if index > 0 {
+                self.tracks.swap(index, index - 1);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Move a track down in the list (visually lower)
+    pub fn move_track_down(&mut self, id: Uuid) -> bool {
+        if let Some(index) = self.tracks.iter().position(|t| t.id == id) {
+            if index < self.tracks.len() - 1 {
+                self.tracks.swap(index, index + 1);
+                return true;
+            }
+        }
+        false
+    }
+
     // =========================================================================
     // Save/Load
     // =========================================================================
 
     /// Save the project to its folder
+    #[allow(dead_code)]
     pub fn save(&self) -> io::Result<()> {
         let path = self.project_path.as_ref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Project path not set")
@@ -384,6 +413,7 @@ impl Project {
     }
 
     /// Create a new project in a folder
+    #[allow(dead_code)]
     pub fn create_in(folder: &Path, name: impl Into<String>) -> io::Result<Self> {
         let mut project = Project::new(name);
         project.project_path = Some(folder.to_path_buf());

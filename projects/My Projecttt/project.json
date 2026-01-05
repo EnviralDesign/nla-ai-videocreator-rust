@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "name": "My Projecttt",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0
+  },
+  "tracks": [
+    {
+      "id": "84d98474-bab2-4236-adce-1b6d3e59901d",
+      "name": "Video 1",
+      "track_type": "Video"
+    },
+    {
+      "id": "f4e46224-5425-490d-91cc-0ffba3db1a4b",
+      "name": "Audio 1",
+      "track_type": "Audio"
+    },
+    {
+      "id": "7990c28b-5ca3-45a2-bd2a-fa2d42ddfdfd",
+      "name": "Markers",
+      "track_type": "Marker"
+    }
+  ],
+  "assets": [],
+  "clips": [],
+  "markers": []
+}

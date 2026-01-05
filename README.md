@@ -1,5 +1,7 @@
 # NLA AI Video Creator
 
+![alt text](media/image.png)
+
 > **A local-first, AI-native Non-Linear Animation editor for generative video production.**
 
 Built with **Rust** and **Dioxus 0.7** for a fast, native desktop experience.
