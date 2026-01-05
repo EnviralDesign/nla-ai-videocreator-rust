@@ -14,6 +14,8 @@ width = 1280
 height = 800
 # Window is resizable
 resizable = true
+# Disable the default system menu bar (File/Edit/Help)
+disable_default_menu = true
 
 [web]
 # We can add web config later if needed

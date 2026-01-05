@@ -43,7 +43,7 @@ const TIMELINE_COLLAPSED_HEIGHT: f64 = 32.0;  // Must match header height exactl
 #[component]
 pub fn App() -> Element {
     // Project state - the core data model
-    let project = use_signal(|| crate::state::Project::default());
+    let mut project = use_signal(|| crate::state::Project::default());
     
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
@@ -66,6 +66,9 @@ pub fn App() -> Element {
     let mut dragging = use_signal(|| None::<&'static str>);
     let mut drag_start_pos = use_signal(|| 0.0);
     let mut drag_start_size = use_signal(|| 0.0);
+    
+    // Context menu state: (x, y, track_id) - None means no menu shown
+    let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
 
     // Read current values
     let left_w = if left_collapsed() { PANEL_COLLAPSED_WIDTH } else { left_width() };
@@ -154,6 +157,8 @@ pub fn App() -> Element {
                 }
             },
             onmouseup: move |_| dragging.set(None),
+            // Suppress the browser's default context menu - we'll use custom menus
+            oncontextmenu: move |e| e.prevent_default(),
             // Note: We intentionally don't clear drag on mouseleave so drag continues
             // if the user moves outside the window and back in while still holding mouse button
 
@@ -230,6 +235,16 @@ pub fn App() -> Element {
                         },
                         on_seek_end: move |_| dragging.set(None),
                         is_seeking: dragging() == Some("playhead"),
+                        // Track management
+                        on_add_video_track: move |_| {
+                            project.write().add_video_track();
+                        },
+                        on_add_audio_track: move |_| {
+                            project.write().add_audio_track();
+                        },
+                        on_track_context_menu: move |(x, y, track_id)| {
+                            context_menu.set(Some((x, y, track_id)));
+                        },
                     }
                 }
 
@@ -251,6 +266,66 @@ pub fn App() -> Element {
             }
 
             StatusBar {}
+            
+            // Context menu overlay
+            if let Some((x, y, track_id)) = context_menu() {
+                // Backdrop to catch clicks outside menu
+                div {
+                    style: "
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        z-index: 999;
+                    ",
+                    onclick: move |_| context_menu.set(None),
+                }
+                // The actual menu
+                div {
+                    style: "
+                        position: fixed; left: {x}px; top: {y}px;
+                        background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                        border-radius: 6px; padding: 4px 0; min-width: 140px;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        z-index: 1000; font-size: 12px;
+                    ",
+                    // Check if this is the Markers track (can't delete)
+                    {
+                        let is_markers = project.read().find_track(track_id)
+                            .map(|t| t.track_type == crate::state::TrackType::Marker)
+                            .unwrap_or(false);
+                        let track_name = project.read().find_track(track_id)
+                            .map(|t| t.name.clone())
+                            .unwrap_or_default();
+                        
+                        if is_markers {
+                            rsx! {
+                                div {
+                                    style: "
+                                        padding: 6px 12px; color: {TEXT_DIM};
+                                        cursor: not-allowed;
+                                    ",
+                                    "Cannot delete Markers track"
+                                }
+                            }
+                        } else {
+                            rsx! {
+                                div {
+                                    style: "
+                                        padding: 6px 12px; color: #ef4444; cursor: pointer;
+                                        transition: background-color 0.1s ease;
+                                    ",
+                                    onmouseenter: move |_| {
+                                        // Would need state for hover, skipping for now
+                                    },
+                                    onclick: move |_| {
+                                        project.write().remove_track(track_id);
+                                        context_menu.set(None);
+                                    },
+                                    "🗑 Delete \"{track_name}\""
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

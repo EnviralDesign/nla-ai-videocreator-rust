@@ -325,7 +325,7 @@ my-project/
   - [x] Frame ticks on ruler (subtle, at high zoom levels)
   - [x] Timecode display (HH:MM:SS:FF format)
   - [x] Dynamic track list (from project data, not hardcoded)
-  - [ ] Add/remove tracks UI
+  - [x] Add/remove tracks UI
   - [ ] Audio playback integration
 
 - [x] **Track System** (Revised Architecture) ✓
@@ -333,7 +333,7 @@ my-project/
   - [x] Audio tracks — hold audio clips, generative audio clips
   - [x] Marker track — point-in-time markers (single, non-duplicatable)
   - [x] Default new project: Video 1, Audio 1, Markers
-  - [ ] User can add additional Video/Audio tracks
+  - [x] User can add additional Video/Audio tracks
 
 - [ ] **Clip System**
   - [ ] Place clips on tracks (drag from assets or timeline insertion)

@@ -39,7 +39,11 @@ pub fn TimelinePanel(
     on_scroll: EventHandler<f64>,
     on_seek_start: EventHandler<MouseEvent>,
     on_seek_end: EventHandler<MouseEvent>,
-    is_seeking: bool,  // True when playhead is being dragged
+    is_seeking: bool,
+    // Track management
+    on_add_video_track: EventHandler<MouseEvent>,
+    on_add_audio_track: EventHandler<MouseEvent>,
+    on_track_context_menu: EventHandler<(f64, f64, uuid::Uuid)>,  // (x, y, track_id)
 ) -> Element {
     let icon = if collapsed { "▲" } else { "▼" };
     let play_icon = if is_playing { "⏸" } else { "▶" };
@@ -225,21 +229,63 @@ pub fn TimelinePanel(
                         
                         // Track labels - scrolls vertically with tracks (via overflow: auto on this container if needed)
                         div {
-                            style: "flex: 1; overflow-y: hidden; overflow-x: hidden;",
-                            for track in tracks.iter() {
-                                {
-                                    let color = match track.track_type {
-                                        TrackType::Video => ACCENT_VIDEO,
-                                        TrackType::Audio => ACCENT_AUDIO,
-                                        TrackType::Marker => ACCENT_MARKER,
-                                    };
-                                    rsx! {
-                                        TrackLabel { 
-                                            key: "{track.id}",
-                                            name: track.name.clone(), 
-                                            color: color 
+                            style: "flex: 1; overflow-y: hidden; overflow-x: hidden; display: flex; flex-direction: column;",
+                            
+                            // Existing track labels
+                            div {
+                                style: "flex: 1;",
+                                for track in tracks.iter() {
+                                    {
+                                        let color = match track.track_type {
+                                            TrackType::Video => ACCENT_VIDEO,
+                                            TrackType::Audio => ACCENT_AUDIO,
+                                            TrackType::Marker => ACCENT_MARKER,
+                                        };
+                                        let tid = track.id;
+                                        rsx! {
+                                            TrackLabel { 
+                                                key: "{track.id}",
+                                                name: track.name.clone(), 
+                                                color: color,
+                                                track_id: tid,
+                                                on_context_menu: move |data| on_track_context_menu.call(data),
+                                            }
                                         }
                                     }
+                                }
+                            }
+                            
+                            // Add track buttons
+                            div {
+                                style: "
+                                    display: flex; gap: 4px; padding: 8px 12px;
+                                    border-top: 1px solid {BORDER_SUBTLE};
+                                ",
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        flex: 1; height: 24px; border: 1px dashed {BORDER_DEFAULT}; 
+                                        border-radius: 4px; background: transparent; 
+                                        color: {TEXT_DIM}; font-size: 10px; cursor: pointer;
+                                        display: flex; align-items: center; justify-content: center;
+                                        gap: 4px;
+                                    ",
+                                    onclick: move |e| on_add_video_track.call(e),
+                                    span { style: "color: {ACCENT_VIDEO};", "+" }
+                                    "Video"
+                                }
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        flex: 1; height: 24px; border: 1px dashed {BORDER_DEFAULT}; 
+                                        border-radius: 4px; background: transparent; 
+                                        color: {TEXT_DIM}; font-size: 10px; cursor: pointer;
+                                        display: flex; align-items: center; justify-content: center;
+                                        gap: 4px;
+                                    ",
+                                    onclick: move |e| on_add_audio_track.call(e),
+                                    span { style: "color: {ACCENT_AUDIO};", "+" }
+                                    "Audio"
                                 }
                             }
                         }
@@ -509,10 +555,24 @@ fn PlaybackBtn(
 
 /// Track label in the sidebar
 #[component]
-pub fn TrackLabel(name: String, color: &'static str) -> Element {
+pub fn TrackLabel(
+    name: String, 
+    color: &'static str,
+    track_id: uuid::Uuid,
+    on_context_menu: EventHandler<(f64, f64, uuid::Uuid)>,
+) -> Element {
     rsx! {
         div {
-            style: "display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-bottom: 1px solid {BORDER_SUBTLE}; font-size: 12px; color: {TEXT_SECONDARY};",
+            style: "
+                display: flex; align-items: center; gap: 10px; height: 36px; 
+                padding: 0 12px; border-bottom: 1px solid {BORDER_SUBTLE}; 
+                font-size: 12px; color: {TEXT_SECONDARY}; cursor: context-menu;
+            ",
+            oncontextmenu: move |e| {
+                e.prevent_default();
+                let coords = e.client_coordinates();
+                on_context_menu.call((coords.x, coords.y, track_id));
+            },
             div { style: "width: 3px; height: 16px; border-radius: 2px; background-color: {color};" }
             span { "{name}" }
         }

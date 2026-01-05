@@ -287,6 +287,24 @@ impl Project {
         id
     }
 
+    /// Remove a track by ID (cannot remove the Markers track)
+    pub fn remove_track(&mut self, id: Uuid) -> bool {
+        // Find the track and check if it's the Markers track
+        if let Some(track) = self.tracks.iter().find(|t| t.id == id) {
+            if track.track_type == TrackType::Marker {
+                return false; // Cannot remove the Markers track
+            }
+        }
+        
+        // Remove any clips on this track
+        self.clips.retain(|c| c.track_id != id);
+        
+        // Remove the track
+        let len = self.tracks.len();
+        self.tracks.retain(|t| t.id != id);
+        self.tracks.len() < len
+    }
+
     /// Add an asset to the project
     pub fn add_asset(&mut self, asset: Asset) -> Uuid {
         let id = asset.id;
