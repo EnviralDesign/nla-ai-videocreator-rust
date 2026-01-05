@@ -67,6 +67,10 @@ pub fn App() -> Element {
     let mut drag_start_pos = use_signal(|| 0.0);
     let mut drag_start_size = use_signal(|| 0.0);
     
+    // Asset Drag & Drop state
+    let mut dragged_asset = use_signal(|| None::<uuid::Uuid>);
+    let mut mouse_pos = use_signal(|| (0.0, 0.0));
+    
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
 
@@ -87,6 +91,13 @@ pub fn App() -> Element {
         Some("timeline") => "ns-resize",
         Some("playhead") => "ew-resize",
         _ => "default",
+    };
+    
+    // Ghost asset for drag and drop
+    let drag_ghost_asset = if let Some(id) = dragged_asset() {
+        project.read().assets.iter().find(|a| a.id == id).cloned()
+    } else {
+        None
     };
     
     // Which panel is currently being resized? (to disable transitions during drag)
@@ -112,6 +123,7 @@ pub fn App() -> Element {
             .resize-handle:active {{ background-color: {BORDER_ACCENT} !important; }}
             .collapsed-rail {{ transition: background-color 0.15s ease; }}
             .collapsed-rail:hover {{ background-color: {BG_HOVER} !important; }}
+            .resize-handle-left:hover > div, .resize-handle-right:hover > div {{ opacity: 1 !important; }}
             "#
         }
 
@@ -129,6 +141,10 @@ pub fn App() -> Element {
             ",
             
             onmousemove: move |e| {
+                if dragged_asset().is_some() {
+                    mouse_pos.set((e.client_coordinates().x, e.client_coordinates().y));
+                }
+                
                 if let Some(target) = dragging() {
                     e.prevent_default();
                     match target {
@@ -160,11 +176,29 @@ pub fn App() -> Element {
                     }
                 }
             },
-            onmouseup: move |_| dragging.set(None),
+            onmouseup: move |_| {
+                dragging.set(None);
+                dragged_asset.set(None);
+            },
             // Suppress the browser's default context menu - we'll use custom menus
             oncontextmenu: move |e| e.prevent_default(),
             // Note: We intentionally don't clear drag on mouseleave so drag continues
             // if the user moves outside the window and back in while still holding mouse button
+
+            // Drag Ghost
+            if let Some(asset) = drag_ghost_asset {
+                div {
+                    style: "
+                        position: fixed; left: {mouse_pos().0 + 15.0}px; top: {mouse_pos().1 + 15.0}px;
+                        background-color: {BG_ELEVATED}; border: 1px solid {ACCENT_VIDEO};
+                        border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
+                        z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0.9;
+                        color: {TEXT_PRIMARY}; display: flex; align-items: center; gap: 6px;
+                    ",
+                    span { "📄" } // Generic icon for now
+                    "{asset.name}"
+                }
+            }
 
             TitleBar { 
                 project_name: project.read().name.clone(),
@@ -207,6 +241,7 @@ pub fn App() -> Element {
                             let time = current_time();
                             project.write().add_clip_from_asset(asset_id, time, 2.0);
                         },
+                        on_drag_start: move |id| dragged_asset.set(Some(id)),
                     }
                 }
 
@@ -271,6 +306,22 @@ pub fn App() -> Element {
                         },
                         on_track_context_menu: move |(x, y, track_id)| {
                             context_menu.set(Some((x, y, track_id)));
+                        },
+                        // Clip operations
+                        on_clip_delete: move |clip_id| {
+                            project.write().remove_clip(clip_id);
+                        },
+                        on_clip_move: move |(clip_id, new_start)| {
+                            project.write().move_clip(clip_id, new_start);
+                        },
+                        on_clip_resize: move |(clip_id, new_start, new_duration)| {
+                            project.write().resize_clip(clip_id, new_start, new_duration);
+                        },
+                        // Asset Drag & Drop
+                        dragged_asset: dragged_asset(),
+                        on_asset_drop: move |(track_id, time, asset_id)| {
+                            let clip = crate::state::Clip::new(asset_id, track_id, time, 2.0);
+                            project.write().add_clip(clip);
                         },
                     }
                 }
@@ -757,6 +808,7 @@ fn AssetsPanelContent(
     on_import: EventHandler<crate::state::Asset>,
     on_delete: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
+    on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
     rsx! {
         div {
@@ -918,6 +970,7 @@ fn AssetsPanelContent(
                             asset: asset.clone(),
                             on_delete: move |id| on_delete.call(id),
                             on_add_to_timeline: move |id| on_add_to_timeline.call(id),
+                            on_drag_start: move |id| on_drag_start.call(id),
                         }
                     }
                 }
@@ -932,6 +985,7 @@ fn AssetItem(
     asset: crate::state::Asset,
     on_delete: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
+    on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
     let mut show_menu = use_signal(|| false);
     let mut menu_pos = use_signal(|| (0.0, 0.0));
@@ -980,6 +1034,11 @@ fn AssetItem(
                     let coords = e.client_coordinates();
                     menu_pos.set((coords.x, coords.y));
                     show_menu.set(true);
+                },
+                onmousedown: move |e| {
+                    // Left click starts drag
+                    e.prevent_default(); // prevent browser default drag (we use our own)
+                    on_drag_start.call(asset_id);
                 },
                 // Type indicator
                 div {

@@ -46,6 +46,13 @@ pub fn TimelinePanel(
     on_add_video_track: EventHandler<MouseEvent>,
     on_add_audio_track: EventHandler<MouseEvent>,
     on_track_context_menu: EventHandler<(f64, f64, uuid::Uuid)>,  // (x, y, track_id)
+    // Clip operations
+    on_clip_delete: EventHandler<uuid::Uuid>,
+    on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
+    on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
+    // Asset Drag & Drop
+    dragged_asset: Option<uuid::Uuid>,
+    on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>, // (track_id, time, asset_id)
 ) -> Element {
     let icon = if collapsed { "▲" } else { "▼" };
     let play_icon = if is_playing { "⏸" } else { "▶" };
@@ -392,6 +399,11 @@ pub fn TimelinePanel(
                                         clips: clips.clone(),
                                         assets: assets.clone(),
                                         zoom: zoom,
+                                        on_clip_delete: move |id| on_clip_delete.call(id),
+                                        on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
+                                        on_clip_resize: move |(id, start, dur)| on_clip_resize.call((id, start, dur)),
+                                        dragged_asset: dragged_asset,
+                                        on_asset_drop: move |(tid, t, aid)| on_asset_drop.call((tid, t, aid)),
                                     }
                                 }
                                 
@@ -585,7 +597,6 @@ pub fn TrackLabel(
         }
     }
 }
-
 /// Track row content area
 #[component]
 pub fn TrackRow(
@@ -595,6 +606,11 @@ pub fn TrackRow(
     clips: Vec<crate::state::Clip>,
     assets: Vec<crate::state::Asset>,
     zoom: f64,  // pixels per second
+    on_clip_delete: EventHandler<uuid::Uuid>,
+    on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
+    on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
+    dragged_asset: Option<uuid::Uuid>,
+    on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>,
 ) -> Element {
     // Filter clips for this track
     let track_clips: Vec<_> = clips.iter()
@@ -608,70 +624,327 @@ pub fn TrackRow(
         TrackType::Marker => ACCENT_MARKER,
     };
     
+    // Check compatibility for drop
+    let can_drop = if let Some(asset_id) = dragged_asset {
+        assets.iter().find(|a| a.id == asset_id).map(|a| {
+            match track_type {
+                TrackType::Video => a.is_visual(),
+                TrackType::Audio => a.is_audio(),
+                TrackType::Marker => false,
+            }
+        }).unwrap_or(false)
+    } else { false };
+    
+    let bg_color = if can_drop { BG_HOVER } else { BG_BASE };
+    
     rsx! {
         div { 
             style: "
                 height: 36px; min-width: {width}px; 
                 border-bottom: 1px solid {BORDER_SUBTLE}; 
-                background-color: {BG_BASE};
+                background-color: {bg_color};
                 position: relative;
+                transition: background-color 0.2s;
             ",
+            oncontextmenu: move |e| e.prevent_default(),
+            onmouseup: move |e| {
+                if let Some(asset_id) = dragged_asset {
+                    if can_drop {
+                        e.prevent_default();
+                        // Calculate time from drop position
+                        let x = e.element_coordinates().x;
+                        let time = (x / zoom).max(0.0);
+                        let snapped = (time * 60.0).round() / 60.0;
+                        on_asset_drop.call((track_id, snapped, asset_id));
+                    }
+                }
+            },
             
             // Render each clip
             for clip in track_clips.iter() {
-                {
-                    let left = (clip.start_time * zoom) as i32;
-                    let clip_width = (clip.duration * zoom).max(20.0) as i32;  // Min width 20px
-                    
-                    // Find asset name
-                    let asset_name = assets.iter()
-                        .find(|a| a.id == clip.asset_id)
-                        .map(|a| a.name.clone())
-                        .unwrap_or_else(|| "Unknown".to_string());
-                    
-                    // Check if asset is generative
-                    let is_generative = assets.iter()
-                        .find(|a| a.id == clip.asset_id)
-                        .map(|a| a.is_generative())
-                        .unwrap_or(false);
-                    
-                    let border_style = if is_generative {
-                        format!("1px dashed {}", clip_color)
-                    } else {
-                        format!("1px solid {}", clip_color)
-                    };
-                    
-                    rsx! {
-                        div {
-                            key: "{clip.id}",
-                            style: "
-                                position: absolute;
-                                left: {left}px;
-                                top: 2px;
-                                width: {clip_width}px;
-                                height: 32px;
-                                background-color: {BG_ELEVATED};
-                                border: {border_style};
-                                border-radius: 4px;
-                                display: flex;
-                                align-items: center;
-                                padding: 0 6px;
-                                overflow: hidden;
-                                cursor: grab;
-                                user-select: none;
-                            ",
-                            // Color indicator bar
-                            div {
-                                style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
-                            }
-                            // Clip name
-                            span {
-                                style: "font-size: 10px; color: {TEXT_SECONDARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
-                                if is_generative { "✨ " } else { "" }
-                                "{asset_name}"
-                            }
+                ClipElement {
+                    key: "{clip.id}",
+                    clip: (*clip).clone(),
+                    assets: assets.clone(),
+                    zoom: zoom,
+                    clip_color: clip_color,
+                    on_delete: move |id| on_clip_delete.call(id),
+                    on_move: move |(id, time)| on_clip_move.call((id, time)),
+                    on_resize: move |(id, start, dur)| on_clip_resize.call((id, start, dur)),
+                }
+            }
+        }
+    }
+}
+
+/// Interactive clip element with drag, resize, and context menu support
+#[component]
+fn ClipElement(
+    clip: crate::state::Clip,
+    assets: Vec<crate::state::Asset>,
+    zoom: f64,
+    clip_color: &'static str,
+    on_delete: EventHandler<uuid::Uuid>,
+    on_move: EventHandler<(uuid::Uuid, f64)>,
+    on_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (id, new_start, new_duration)
+) -> Element {
+    let mut show_menu = use_signal(|| false);
+    let mut menu_pos = use_signal(|| (0.0, 0.0));
+    let mut drag_mode = use_signal(|| None::<&'static str>);  // None, "move", "resize-left", "resize-right"
+    let mut drag_start_x = use_signal(|| 0.0);
+    let mut drag_start_time = use_signal(|| 0.0);
+    let mut drag_start_duration = use_signal(|| 0.0);
+
+    let left = (clip.start_time * zoom) as i32;
+    let clip_width = (clip.duration * zoom).max(20.0) as i32;
+    
+    // Find asset name
+    let asset_name = assets.iter()
+        .find(|a| a.id == clip.asset_id)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+    
+    // Check if asset is generative
+    let is_generative = assets.iter()
+        .find(|a| a.id == clip.asset_id)
+        .map(|a| a.is_generative())
+        .unwrap_or(false);
+    
+    let border_style = if is_generative {
+        format!("1px dashed {}", clip_color)
+    } else {
+        format!("1px solid {}", clip_color)
+    };
+
+    let clip_id = clip.id;
+    let current_start = clip.start_time;
+    let current_duration = clip.duration;
+    
+    let is_active = drag_mode().is_some();
+    let cursor_style = match drag_mode() {
+        Some("resize-left") | Some("resize-right") => "ew-resize",
+        Some("move") => "grabbing",
+        _ => "grab",
+    };
+    let z_index = if is_active { "100" } else { "1" };
+    
+    rsx! {
+        // Main clip element
+        div {
+            style: "
+                position: absolute;
+                left: {left}px;
+                top: 2px;
+                width: {clip_width}px;
+                height: 32px;
+                background-color: {BG_ELEVATED};
+                border: {border_style};
+                border-radius: 4px;
+                display: flex;
+                align-items: center;
+                overflow: visible;
+                cursor: {cursor_style};
+                user-select: none;
+                z-index: {z_index};
+            ",
+            oncontextmenu: move |e| {
+                e.prevent_default();
+                e.stop_propagation();
+                let coords = e.client_coordinates();
+                menu_pos.set((coords.x, coords.y));
+                show_menu.set(true);
+            },
+            
+            // Left resize handle
+            div {
+                class: "resize-handle-left",
+                style: "
+                    position: absolute; left: -4px; top: 0; bottom: 0; width: 10px;
+                    cursor: ew-resize; z-index: 10;
+                    border-radius: 4px 0 0 4px;
+                ",
+                onmousedown: move |e| {
+                    if let Some(btn) = e.trigger_button() {
+                        if format!("{:?}", btn) == "Primary" {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            drag_mode.set(Some("resize-left"));
+                            drag_start_x.set(e.client_coordinates().x);
+                            drag_start_time.set(current_start);
+                            drag_start_duration.set(current_duration);
                         }
                     }
+                },
+                oncontextmenu: move |e| {
+                     e.prevent_default();
+                     e.stop_propagation();
+                     let coords = e.client_coordinates();
+                     menu_pos.set((coords.x, coords.y));
+                     show_menu.set(true);
+                },
+                // Visual bar on hover (simulated with CSS below)
+                 div {
+                    style: "
+                        position: absolute; left: 3px; top: 6px; bottom: 6px; width: 4px;
+                        background-color: rgba(255, 255, 255, 0.2); 
+                        border-radius: 2px;
+                        pointer-events: none;
+                        opacity: 0;
+                        transition: opacity 0.1s;
+                    ",
+                }
+            }
+            
+            // Center drag area (the main clip body)
+            div {
+                style: "
+                    flex: 1; height: 100%; display: flex; align-items: center;
+                    padding: 0 10px; overflow: hidden;
+                ",
+                onmousedown: move |e| {
+                    if let Some(btn) = e.trigger_button() {
+                        if format!("{:?}", btn) == "Primary" {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            drag_mode.set(Some("move"));
+                            drag_start_x.set(e.client_coordinates().x);
+                            drag_start_time.set(current_start);
+                        }
+                    }
+                },
+                oncontextmenu: move |e| {
+                     e.prevent_default();
+                     e.stop_propagation();
+                     let coords = e.client_coordinates();
+                     menu_pos.set((coords.x, coords.y));
+                     show_menu.set(true);
+                },
+                // Color indicator bar
+                div {
+                    style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
+                }
+                // Clip name
+                span {
+                    style: "font-size: 10px; color: {TEXT_SECONDARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;",
+                    if is_generative { "✨ " } else { "" }
+                    "{asset_name}"
+                }
+            }
+            
+            // Right resize handle
+            div {
+                class: "resize-handle-right",
+                style: "
+                    position: absolute; right: -4px; top: 0; bottom: 0; width: 10px;
+                    cursor: ew-resize; z-index: 10;
+                    border-radius: 0 4px 4px 0;
+                ",
+                onmousedown: move |e| {
+                    if let Some(btn) = e.trigger_button() {
+                        if format!("{:?}", btn) == "Primary" {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            drag_mode.set(Some("resize-right"));
+                            drag_start_x.set(e.client_coordinates().x);
+                            drag_start_time.set(current_start);
+                            drag_start_duration.set(current_duration);
+                        }
+                    }
+                },
+                oncontextmenu: move |e| {
+                     e.prevent_default();
+                     e.stop_propagation();
+                     let coords = e.client_coordinates();
+                     menu_pos.set((coords.x, coords.y));
+                     show_menu.set(true);
+                },
+                // Visual bar
+                div {
+                    style: "
+                        position: absolute; right: 3px; top: 6px; bottom: 6px; width: 4px;
+                        background-color: rgba(255, 255, 255, 0.2); 
+                        border-radius: 2px;
+                        pointer-events: none;
+                        opacity: 0;
+                        transition: opacity 0.1s;
+                    ",
+                }
+            }
+        }
+        
+        // Global drag/resize overlay - captures all mouse events when active
+        if drag_mode().is_some() {
+            div {
+                style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; cursor: {cursor_style};",
+                oncontextmenu: move |e| e.prevent_default(),
+                onmousemove: move |e| {
+                    let delta_x = e.client_coordinates().x - drag_start_x();
+                    let delta_time = delta_x / zoom;
+                    
+                    match drag_mode() {
+                        Some("move") => {
+                            let new_time = (drag_start_time() + delta_time).max(0.0);
+                            let snapped = (new_time * 60.0).round() / 60.0;
+                            on_move.call((clip_id, snapped));
+                        }
+                        Some("resize-left") => {
+                            // Moving left edge: changes start and duration inversely
+                            let new_start = (drag_start_time() + delta_time).max(0.0);
+                            let new_duration = drag_start_duration() - delta_time;
+                            if new_duration >= 0.1 {
+                                let snapped_start = (new_start * 60.0).round() / 60.0;
+                                let snapped_dur = (new_duration * 60.0).round() / 60.0;
+                                on_resize.call((clip_id, snapped_start, snapped_dur));
+                            }
+                        }
+                        Some("resize-right") => {
+                            // Moving right edge: only changes duration
+                            let new_duration = (drag_start_duration() + delta_time).max(0.1);
+                            let snapped_dur = (new_duration * 60.0).round() / 60.0;
+                            on_resize.call((clip_id, current_start, snapped_dur));
+                        }
+                        _ => {}
+                    }
+                },
+                onmouseup: move |_| {
+                    drag_mode.set(None);
+                },
+            }
+        }
+        
+        // Context menu overlay
+        if show_menu() {
+            // Backdrop to close menu
+            div {
+                style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9998;",
+                onclick: move |_| show_menu.set(false),
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    show_menu.set(false);
+                },
+            }
+            // Menu popup
+            div {
+                style: "
+                    position: fixed; 
+                    left: {menu_pos().0}px; 
+                    top: {menu_pos().1}px;
+                    background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                    border-radius: 6px; padding: 4px 0; min-width: 120px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    z-index: 9999; font-size: 12px;
+                ",
+                oncontextmenu: move |e| e.prevent_default(),
+                div {
+                    style: "
+                        padding: 6px 12px; color: #ef4444; cursor: pointer;
+                        transition: background-color 0.1s ease;
+                    ",
+                    onclick: move |_| {
+                        on_delete.call(clip_id);
+                        show_menu.set(false);
+                    },
+                    "🗑 Delete Clip"
                 }
             }
         }

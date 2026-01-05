@@ -338,17 +338,20 @@ my-project/
 - [ ] **Clip System** — In Progress
   - [x] Render clips on timeline tracks (positioned by start_time, sized by duration)
   - [x] Visual distinction: standard clips vs generative clips (dashed border, ✨ prefix)
-  - [ ] Place clips on tracks (drag from assets or timeline insertion)
-  - [ ] Resize clips (drag edges)
-  - [ ] Move clips (drag to reposition)
-  - [ ] Delete clips
+  - [x] Clip Interactions:
+    - [x] Move clips (drag body to reposition, frame-snapped 60fps)
+    - [x] Resize clips (drag left/right edges, min duration 0.1s)
+    - [x] Delete clips (right-click custom context menu)
+  - [x] Clip Creation:
+    - [x] "Add to Timeline" (context menu) — renders at playhead
+    - [x] Drag & Drop from Asset Panel — renders at drop position
   - [ ] Clip thumbnail/waveform preview
 
 - [x] **Asset System** (Phase 2A) ✓
   - [x] Assets panel shows project assets (imported + generative)
   - [x] Import files via native file dialog
   - [x] Visual distinction: standard assets vs generative assets (⚙️ badge, dashed border)
-  - [ ] Drag assets to timeline to create clips
+  - [x] Drag assets to timeline to create clips (with compatibility checks)
   - [ ] Copy imported files to project folder
 
 - [ ] **Generative Assets** (Core Innovation) — In Progress

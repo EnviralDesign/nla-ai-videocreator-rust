@@ -375,6 +375,25 @@ impl Project {
         self.clips.len() < len
     }
 
+    /// Move a clip to a new start time
+    pub fn move_clip(&mut self, id: Uuid, new_start_time: f64) -> bool {
+        if let Some(clip) = self.clips.iter_mut().find(|c| c.id == id) {
+            clip.start_time = new_start_time.max(0.0);
+            return true;
+        }
+        false
+    }
+
+    /// Resize a clip (change start and/or duration)
+    pub fn resize_clip(&mut self, id: Uuid, new_start: f64, new_duration: f64) -> bool {
+        if let Some(clip) = self.clips.iter_mut().find(|c| c.id == id) {
+            clip.start_time = new_start.max(0.0);
+            clip.duration = new_duration.max(0.1);  // Minimum 0.1 second
+            return true;
+        }
+        false
+    }
+
     /// Remove a marker by ID
     pub fn remove_marker(&mut self, id: Uuid) -> bool {
         let len = self.markers.len();
