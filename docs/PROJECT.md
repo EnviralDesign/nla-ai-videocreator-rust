@@ -341,7 +341,7 @@ my-project/
   - [x] Clip Interactions:
     - [x] Move clips (drag body to reposition, frame-snapped 60fps)
     - [x] Resize clips (drag left/right edges, min duration 0.1s)
-    - [x] Delete clips (right-click custom context menu)
+    - [x] Delete clips (right-click custom context menu, native menu suppressed)
   - [x] Clip Creation:
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
@@ -701,6 +701,8 @@ src/
 - **2026-01-04:** Added track add/remove functionality with UI buttons
 - **2026-01-04:** Integrated Project data model with timeline (dynamic tracks)
 - **2026-01-04:** Created core data structures (Project, Track, Clip, Asset, Marker)
+- **2026-01-04:** Implemented timeline clip interactions (Move, Resize, Delete, Drag & Drop)
+- **2026-01-04:** Refined resize handles and fixed context menus
 
 ---
 
