@@ -17,10 +17,10 @@ Built with **Rust** and **Dioxus 0.7** for a fast, native desktop experience.
 # Prerequisites: Rust 1.75+, Dioxus CLI, FFmpeg on PATH
 
 # Run in development mode
-dx serve
+cargo run
 
 # Build for release
-dx build --release
+cargo build --release
 ```
 
 See [docs/PROJECT.md](./docs/PROJECT.md) for full setup instructions.
