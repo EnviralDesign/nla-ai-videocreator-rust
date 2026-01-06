@@ -9,6 +9,8 @@
 
 mod project;
 mod asset;
+mod selection;
 
 pub use project::*;
 pub use asset::*;
+pub use selection::*;

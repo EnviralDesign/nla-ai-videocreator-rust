@@ -387,6 +387,7 @@ my-project/
     - [x] Move clips (drag body to reposition, frame-snapped 60fps)
     - [x] Resize clips (drag left/right edges, min duration 0.1s)
     - [x] Delete clips (right-click custom context menu, native menu suppressed)
+    - [x] Move clips between compatible tracks (context menu up/down)
   - [x] Clip Creation:
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
@@ -426,8 +427,10 @@ my-project/
   - [ ] **Audio scrubbing** — hear audio while dragging playhead (critical for usability)
 
 - [ ] **Selection & Attribute Editor**
-  - [ ] Track/clip selection state
-  - [ ] Context-sensitive attribute panel
+  - [x] Clip selection state (single)
+  - [x] Attribute panel for clip transforms (position/scale/rotation/opacity)
+  - [ ] Track selection state
+  - [ ] Asset selection state
   - [ ] Multi-select support for same-type items
   - [ ] For generative clips: show provider picker, dynamic input fields, generate button
   - [ ] For generative clips: version selector (if multiple versions exist)
@@ -458,10 +461,14 @@ my-project/
   - [ ] Basic export settings
 
 - [ ] **Preview Window** (Priority: High)
-  - [ ] **Canvas Compositor**: Rust-side blending engine supporting RGBA buffers
-  - [ ] **Transform Pipeline**: Structure to handle Scale/Rotate/Translate data per clip
-  - [ ] **Frame Server**: Logic to fetch/decode frames for specific timestamps
-  - [ ] **Frontend Ops**: Efficient buffer transfer to JS `<canvas>`
+  - [x] Clip transform data model (position/scale/rotation/opacity)
+  - [x] Preview render loop (playhead-driven frame requests)
+  - [x] Frame server v0: load stills + ffmpeg single-frame decode
+  - [x] Compositor v0: layer stack with opacity + basic scale/translate
+  - [x] Preview panel renders composited frame via cached PNG
+  - [ ] Transform pipeline v1: rotation + anchor/pivot support
+  - [ ] Canvas compositor + direct buffer upload (replace PNG cache)
+  - [ ] Frame caching/prefetch for smooth scrubbing
 
 ### Nice to Have (v0.2+)
 
@@ -734,7 +741,7 @@ v1.0 - Public Release
 |------|--------|------------|
 | **Clip System** | � In Progress | Placing clips works, previews next |
 | **Thumbnails** | ✅ Complete | Background generation & `nla://` protocol |
-| **Preview Engine** | 🔲 Planned | Design Canvas Compositor & Frame Server |
+| **Preview Engine** | 🟨 In Progress | v0 frame server + compositor wired; next: canvas buffer + caching |
 | **Audio Playback** | 🔲 Not Started | Waveform visualization, sync with timeline |
 | **File Copy** | 🔲 Not Started | Copy imported files into project folder |
 
@@ -751,6 +758,10 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Clip context menu now supports moving clips up/down to compatible tracks
+- **2026-01-06:** Attribute editor numeric fields commit on blur/Enter to avoid input jitter
+- **2026-01-06:** Added preview renderer v0 (ffmpeg frame extraction + compositing) and playhead-driven preview updates
+- **2026-01-06:** Added clip transforms + single-clip selection with transform editing in Attributes panel
 - **2026-01-06:** Startup modal now captures project resolution, FPS, and duration; location field moved to bottom with separator
 - **2026-01-06:** Added project duration to settings and extended timeline ruler ticks across full duration
 - **2026-01-06:** Fixed left-edge trim drift by anchoring to drag-start end time

@@ -3,6 +3,7 @@
 //! This defines the main App component and the overall layout structure.
 
 use dioxus::prelude::*;
+use std::time::{Duration, Instant};
 use crate::timeline::TimelinePanel;
 
 // =============================================================================
@@ -39,6 +40,8 @@ const TIMELINE_MAX_HEIGHT: f64 = 500.0;
 const TIMELINE_DEFAULT_HEIGHT: f64 = 220.0;
 const TIMELINE_COLLAPSED_HEIGHT: f64 = 32.0;  // Must match header height exactly
 const DEFAULT_CLIP_DURATION_SECONDS: f64 = 2.0;
+const PREVIEW_FPS: u64 = 24;
+const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
 
 /// Main application component
 #[component]
@@ -50,6 +53,10 @@ pub fn App() -> Element {
     let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
     let thumbnail_refresh_tick = use_signal(|| 0_u64);
     let thumbnail_cache_buster = use_signal(|| 0_u64);
+    let mut previewer = use_signal(|| std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(std::path::PathBuf::from("projects/default"))));
+    let preview_image_url = use_signal(|| None::<String>);
+    let preview_cache_buster = use_signal(|| 0_u64);
+    let mut preview_dirty = use_signal(|| true);
     
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
@@ -76,6 +83,7 @@ pub fn App() -> Element {
     // Asset Drag & Drop state
     let mut dragged_asset = use_signal(|| None::<uuid::Uuid>);
     let mut mouse_pos = use_signal(|| (0.0, 0.0));
+    let mut selection = use_signal(|| crate::state::SelectionState::default());
     
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
@@ -87,6 +95,77 @@ pub fn App() -> Element {
             loop {
                 interval.tick().await;
                 thumbnail_refresh_tick.set(thumbnail_refresh_tick() + 1);
+            }
+        }
+    });
+
+    use_future(move || {
+        let mut current_time = current_time.clone();
+        let mut is_playing = is_playing.clone();
+        let project = project.clone();
+        async move {
+            let mut last_tick = Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_millis(16)).await;
+                if !is_playing() {
+                    last_tick = Instant::now();
+                    continue;
+                }
+
+                let now = Instant::now();
+                let delta = now.saturating_duration_since(last_tick);
+                last_tick = now;
+
+                let duration = project.read().duration();
+                let next_time = (current_time() + delta.as_secs_f64()).min(duration);
+                let snapped = (next_time * 60.0).round() / 60.0;
+                current_time.set(snapped);
+
+                if next_time >= duration {
+                    is_playing.set(false);
+                }
+            }
+        }
+    });
+
+    use_future(move || {
+        let project = project.clone();
+        let current_time = current_time.clone();
+        let previewer = previewer.clone();
+        let mut preview_image_url = preview_image_url.clone();
+        let mut preview_cache_buster = preview_cache_buster.clone();
+        let mut preview_dirty = preview_dirty.clone();
+        async move {
+            let mut last_time = -1.0_f64;
+            loop {
+                tokio::time::sleep(Duration::from_millis(PREVIEW_FRAME_INTERVAL_MS)).await;
+
+                let time = current_time();
+                let dirty = preview_dirty();
+                if !dirty && (time - last_time).abs() < 0.0001 {
+                    continue;
+                }
+
+                let project_snapshot = project.read().clone();
+                let renderer = previewer.read().clone();
+                let render_result = tokio::task::spawn_blocking(move || {
+                    renderer.render_frame(&project_snapshot, time)
+                })
+                .await
+                .ok()
+                .flatten();
+
+                if let Some(path) = render_result {
+                    let url = crate::utils::get_local_file_url(&path);
+                    let next_buster = preview_cache_buster() + 1;
+                    preview_cache_buster.set(next_buster);
+                    preview_image_url.set(Some(format!("{}?v={}", url, next_buster)));
+                } else {
+                    preview_image_url.set(None);
+                }
+
+                preview_dirty.set(false);
+                last_time = time;
             }
         }
     });
@@ -267,6 +346,7 @@ pub fn App() -> Element {
                         thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         on_import: move |asset: crate::state::Asset| {
                             project.write().add_asset(asset.clone());
+                            preview_dirty.set(true);
                             let thumbs = thumbnailer.read().clone();
                             let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
                             // Spawn background task for thumbnail generation
@@ -281,6 +361,7 @@ pub fn App() -> Element {
                             let import_result = project.write().import_file(&path);
                             match import_result {
                                 Ok(asset_id) => {
+                                    preview_dirty.set(true);
                                     // Trigger thumbnail generation for the new asset
                                     if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                                         let thumbs = thumbnailer.read().clone();
@@ -325,6 +406,7 @@ pub fn App() -> Element {
                         },
                         on_delete: move |id| {
                             project.write().remove_asset(id);
+                            preview_dirty.set(true);
                         },
                         on_add_to_timeline: move |asset_id| {
                             // Add clip at current playhead position using asset duration when available
@@ -332,6 +414,7 @@ pub fn App() -> Element {
                             let duration = resolve_asset_duration_seconds(project, asset_id)
                                 .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
                             project.write().add_clip_from_asset(asset_id, time, duration);
+                            preview_dirty.set(true);
                         },
                         on_drag_start: move |id| dragged_asset.set(Some(id)),
                     }
@@ -342,7 +425,12 @@ pub fn App() -> Element {
                     class: "center-area",
                     style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
 
-                    PreviewPanel {}
+                    PreviewPanel {
+                        width: project.read().settings.width,
+                        height: project.read().settings.height,
+                        fps: project.read().settings.fps,
+                        preview_image_url: preview_image_url(),
+                    }
 
                     // Timeline resize handle
                     div {
@@ -396,9 +484,11 @@ pub fn App() -> Element {
                         // Track management
                         on_add_video_track: move |_| {
                             project.write().add_video_track();
+                            preview_dirty.set(true);
                         },
                         on_add_audio_track: move |_| {
                             project.write().add_audio_track();
+                            preview_dirty.set(true);
                         },
                         on_track_context_menu: move |(x, y, track_id)| {
                             context_menu.set(Some((x, y, track_id)));
@@ -406,12 +496,25 @@ pub fn App() -> Element {
                         // Clip operations
                         on_clip_delete: move |clip_id| {
                             project.write().remove_clip(clip_id);
+                            selection.write().remove_clip(clip_id);
+                            preview_dirty.set(true);
                         },
                         on_clip_move: move |(clip_id, new_start)| {
                             project.write().move_clip(clip_id, new_start);
+                            preview_dirty.set(true);
                         },
                         on_clip_resize: move |(clip_id, new_start, new_duration)| {
                             project.write().resize_clip(clip_id, new_start, new_duration);
+                            preview_dirty.set(true);
+                        },
+                        on_clip_move_track: move |(clip_id, direction)| {
+                            if project.write().move_clip_to_adjacent_track(clip_id, direction) {
+                                preview_dirty.set(true);
+                            }
+                        },
+                        selected_clips: selection.read().clip_ids.clone(),
+                        on_clip_select: move |clip_id| {
+                            selection.write().select_clip(clip_id);
                         },
                         // Asset Drag & Drop
                         dragged_asset: dragged_asset(),
@@ -420,6 +523,7 @@ pub fn App() -> Element {
                                 .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
                             let clip = crate::state::Clip::new(asset_id, track_id, time, duration);
                             project.write().add_clip(clip);
+                            preview_dirty.set(true);
                         },
                     }
                 }
@@ -440,16 +544,10 @@ pub fn App() -> Element {
                     },
                     
                     // Attributes panel placeholder content
-                    div {
-                        style: "padding: 12px;",
-                        div {
-                            style: "
-                                display: flex; align-items: center; justify-content: center;
-                                height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
-                                color: {TEXT_DIM}; font-size: 12px;
-                            ",
-                            "No selection"
-                        }
+                    AttributesPanelContent {
+                        project: project,
+                        selection: selection,
+                        preview_dirty: preview_dirty,
                     }
                 }
             }
@@ -508,6 +606,8 @@ pub fn App() -> Element {
                                     },
                                     onclick: move |_| {
                                         project.write().remove_track(track_id);
+                                        selection.write().clear();
+                                        preview_dirty.set(true);
                                         context_menu.set(None);
                                     },
                                     "🗑 Delete \"{track_name}\""
@@ -525,6 +625,7 @@ pub fn App() -> Element {
                                     onmouseenter: move |_| {},
                                     onclick: move |_| {
                                         project.write().move_track_up(track_id);
+                                        preview_dirty.set(true);
                                         context_menu.set(None);
                                     },
                                     "↑ Move Up"
@@ -538,6 +639,7 @@ pub fn App() -> Element {
                                     onmouseenter: move |_| {},
                                     onclick: move |_| {
                                         project.write().move_track_down(track_id);
+                                        preview_dirty.set(true);
                                         context_menu.set(None);
                                     },
                                     "↓ Move Down"
@@ -558,7 +660,9 @@ pub fn App() -> Element {
                             Ok(new_proj) => {
                                 // Initialize thumbnailer with new project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(new_proj.project_path.clone().unwrap())));
+                                previewer.set(std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(new_proj.project_path.clone().unwrap())));
                                 project.set(new_proj);
+                                preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },
@@ -570,7 +674,9 @@ pub fn App() -> Element {
                             Ok(loaded_proj) => {
                                 // Initialize thumbnailer with loaded project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(loaded_proj.project_path.clone().unwrap())));
+                                previewer.set(std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(loaded_proj.project_path.clone().unwrap())));
                                 project.set(loaded_proj);
+                                preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },
@@ -1454,7 +1560,270 @@ fn SidePanel(
 }
 
 #[component]
-fn PreviewPanel() -> Element {
+fn NumericField(
+    label: &'static str,
+    value: f32,
+    step: &'static str,
+    clamp_min: Option<f32>,
+    clamp_max: Option<f32>,
+    on_commit: EventHandler<f32>,
+) -> Element {
+    let mut text = use_signal(|| format!("{:.2}", value));
+
+    let make_commit = || {
+        let mut text = text.clone();
+        let on_commit = on_commit.clone();
+        move || {
+            let mut parsed = parse_f32_input(&text(), value);
+            if let Some(min) = clamp_min {
+                parsed = parsed.max(min);
+            }
+            if let Some(max) = clamp_max {
+                parsed = parsed.min(max);
+            }
+            on_commit.call(parsed);
+            text.set(format!("{:.2}", parsed));
+        }
+    };
+
+    let mut commit_on_blur = make_commit();
+    let mut commit_on_key = make_commit();
+
+    let on_blur = move |_| {
+        commit_on_blur();
+    };
+
+    let on_keydown = move |e: KeyboardEvent| {
+        if e.key() == Key::Enter {
+            commit_on_key();
+        }
+    };
+
+    let text_value = text();
+
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column; gap: 4px;",
+            span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
+            input {
+                r#type: "number",
+                step: "{step}",
+                value: "{text_value}",
+                oninput: move |e| text.set(e.value()),
+                onblur: on_blur,
+                onkeydown: on_keydown,
+            }
+        }
+    }
+}
+
+#[component]
+fn AttributesPanelContent(
+    project: Signal<crate::state::Project>,
+    selection: Signal<crate::state::SelectionState>,
+    preview_dirty: Signal<bool>,
+) -> Element {
+    let selection_state = selection.read();
+    let selected_count = selection_state.clip_ids.len();
+    let selected_clip_id = selection_state.primary_clip();
+    drop(selection_state);
+
+    if selected_count == 0 {
+        return rsx! {
+            div {
+                style: "padding: 12px;",
+                div {
+                    style: "
+                        display: flex; align-items: center; justify-content: center;
+                        height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                        color: {TEXT_DIM}; font-size: 12px;
+                    ",
+                    "No selection"
+                }
+            }
+        };
+    }
+
+    if selected_count > 1 {
+        return rsx! {
+            div {
+                style: "padding: 12px;",
+                div {
+                    style: "
+                        display: flex; align-items: center; justify-content: center;
+                        height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                        color: {TEXT_DIM}; font-size: 12px;
+                    ",
+                    "{selected_count} items selected"
+                }
+            }
+        };
+    }
+
+    let Some(clip_id) = selected_clip_id else {
+        return rsx! {
+            div {
+                style: "padding: 12px;",
+                div {
+                    style: "
+                        display: flex; align-items: center; justify-content: center;
+                        height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                        color: {TEXT_DIM}; font-size: 12px;
+                    ",
+                    "Selection missing"
+                }
+            }
+        };
+    };
+
+    let project_read = project.read();
+    let clip = match project_read.clips.iter().find(|c| c.id == clip_id) {
+        Some(clip) => clip.clone(),
+        None => {
+            drop(project_read);
+            return rsx! {
+                div {
+                    style: "padding: 12px;",
+                    div {
+                        style: "
+                            display: flex; align-items: center; justify-content: center;
+                            height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                            color: {TEXT_DIM}; font-size: 12px;
+                        ",
+                        "Selection missing"
+                    }
+                }
+            };
+        }
+    };
+
+    let asset_name = project_read
+        .find_asset(clip.asset_id)
+        .map(|asset| asset.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+    drop(project_read);
+
+    let transform = clip.transform;
+    let clip_id = clip.id;
+
+    rsx! {
+        div {
+            style: "padding: 12px; display: flex; flex-direction: column; gap: 12px;",
+            div {
+                style: "display: flex; flex-direction: column; gap: 6px;",
+                span { style: "font-size: 11px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Clip" }
+                span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "{asset_name}" }
+            }
+
+            div {
+                style: "
+                    display: flex; flex-direction: column; gap: 10px;
+                    padding: 10px; background-color: {BG_SURFACE};
+                    border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                ",
+                div {
+                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                    "Transform"
+                }
+                div {
+                    style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px;",
+                    NumericField {
+                        key: "{clip_id}-position-x",
+                        label: "Position X",
+                        value: transform.position_x,
+                        step: "1",
+                        clamp_min: None,
+                        clamp_max: None,
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.position_x = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                    NumericField {
+                        key: "{clip_id}-position-y",
+                        label: "Position Y",
+                        value: transform.position_y,
+                        step: "1",
+                        clamp_min: None,
+                        clamp_max: None,
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.position_y = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                    NumericField {
+                        key: "{clip_id}-scale-x",
+                        label: "Scale X",
+                        value: transform.scale_x,
+                        step: "0.01",
+                        clamp_min: Some(0.01),
+                        clamp_max: None,
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.scale_x = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                    NumericField {
+                        key: "{clip_id}-scale-y",
+                        label: "Scale Y",
+                        value: transform.scale_y,
+                        step: "0.01",
+                        clamp_min: Some(0.01),
+                        clamp_max: None,
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.scale_y = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                    NumericField {
+                        key: "{clip_id}-rotation",
+                        label: "Rotation",
+                        value: transform.rotation_deg,
+                        step: "1",
+                        clamp_min: None,
+                        clamp_max: None,
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.rotation_deg = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                    NumericField {
+                        key: "{clip_id}-opacity",
+                        label: "Opacity",
+                        value: transform.opacity,
+                        step: "0.05",
+                        clamp_min: Some(0.0),
+                        clamp_max: Some(1.0),
+                        on_commit: move |value| {
+                            update_clip_transform(project, clip_id, |transform| {
+                                transform.opacity = value;
+                            });
+                            preview_dirty.set(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#[component]
+fn PreviewPanel(
+    width: u32,
+    height: u32,
+    fps: f64,
+    preview_image_url: Option<String>,
+) -> Element {
+    let fps_label = format!("{:.0}", fps);
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
@@ -1468,28 +1837,34 @@ fn PreviewPanel() -> Element {
                 span { style: "font-size: 11px; font-weight: 500; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Preview" }
                 div {
                     style: "display: flex; align-items: center; gap: 6px; font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: {TEXT_DIM};",
-                    span { "1920 × 1080" }
+                    span { "{width} x {height}" }
                     span { style: "color: {TEXT_MUTED};", "@" }
-                    span { "60" }
+                    span { "{fps_label}" }
                 }
             }
 
             div {
-                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST};",
-                div {
-                    style: "display: flex; flex-direction: column; align-items: center; gap: 12px; color: {TEXT_DIM};",
-                    div {
-                        style: "width: 48px; height: 48px; border: 1px solid {BORDER_DEFAULT}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px;",
-                        "▶"
+                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 16px;",
+                if let Some(src) = preview_image_url {
+                    img {
+                        src: "{src}",
+                        style: "max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;",
+                        draggable: "false",
                     }
-                    span { style: "font-size: 12px;", "No preview" }
+                } else {
+                    div {
+                        style: "display: flex; flex-direction: column; align-items: center; gap: 12px; color: {TEXT_DIM};",
+                        div {
+                            style: "width: 48px; height: 48px; border: 1px solid {BORDER_DEFAULT}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px;",
+                            "?"
+                        }
+                        span { style: "font-size: 12px;", "No preview" }
+                    }
                 }
             }
         }
     }
 }
-
-// TimelinePanel, PlaybackBtn, TrackLabel, TrackRow moved to src/timeline.rs
 
 #[component]
 fn StatusBar() -> Element {
@@ -1600,6 +1975,24 @@ fn resolve_asset_duration_seconds(
     }
 
     None
+}
+
+fn parse_f32_input(value: &str, fallback: f32) -> f32 {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return fallback;
+    }
+    trimmed.parse::<f32>().unwrap_or(fallback)
+}
+
+fn update_clip_transform(
+    mut project: Signal<crate::state::Project>,
+    clip_id: uuid::Uuid,
+    update: impl FnOnce(&mut crate::state::ClipTransform),
+) {
+    if let Some(clip) = project.write().clips.iter_mut().find(|clip| clip.id == clip_id) {
+        update(&mut clip.transform);
+    }
 }
 
 /// Assets panel content - displays project assets and import functionality
@@ -1944,3 +2337,7 @@ fn AssetItem(
         }
     }
 }
+
+
+
+

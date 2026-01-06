@@ -103,6 +103,36 @@ impl Track {
 // Clips
 // =============================================================================
 
+/// Transform controls for a visual clip.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClipTransform {
+    /// Horizontal translation in project pixels.
+    pub position_x: f32,
+    /// Vertical translation in project pixels.
+    pub position_y: f32,
+    /// Horizontal scale factor.
+    pub scale_x: f32,
+    /// Vertical scale factor.
+    pub scale_y: f32,
+    /// Rotation in degrees.
+    pub rotation_deg: f32,
+    /// Opacity from 0.0 (transparent) to 1.0 (opaque).
+    pub opacity: f32,
+}
+
+impl Default for ClipTransform {
+    fn default() -> Self {
+        Self {
+            position_x: 0.0,
+            position_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotation_deg: 0.0,
+            opacity: 1.0,
+        }
+    }
+}
+
 /// A clip placed on a track
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clip {
@@ -119,6 +149,9 @@ pub struct Clip {
     /// Trim-in time in seconds (offset into source media)
     #[serde(default)]
     pub trim_in_seconds: f64,
+    /// Transform applied when compositing this clip.
+    #[serde(default)]
+    pub transform: ClipTransform,
 }
 
 impl Clip {
@@ -132,6 +165,7 @@ impl Clip {
             start_time,
             duration,
             trim_in_seconds: 0.0,
+            transform: ClipTransform::default(),
         }
     }
 
@@ -506,6 +540,59 @@ impl Project {
             clip.duration = duration;
             return true;
         }
+        false
+    }
+
+    /// Update the transform for a clip.
+    pub fn set_clip_transform(&mut self, id: Uuid, transform: ClipTransform) -> bool {
+        if let Some(clip) = self.clips.iter_mut().find(|c| c.id == id) {
+            clip.transform = transform;
+            return true;
+        }
+        false
+    }
+
+    /// Move a clip to the nearest compatible track above or below.
+    pub fn move_clip_to_adjacent_track(&mut self, id: Uuid, direction: i32) -> bool {
+        if direction == 0 {
+            return false;
+        }
+
+        let clip_index = match self.clips.iter().position(|clip| clip.id == id) {
+            Some(index) => index,
+            None => return false,
+        };
+
+        let asset_id = self.clips[clip_index].asset_id;
+        let asset = match self.find_asset(asset_id) {
+            Some(asset) => asset,
+            None => return false,
+        };
+
+        let target_track_type = if asset.is_visual() {
+            TrackType::Video
+        } else if asset.is_audio() {
+            TrackType::Audio
+        } else {
+            return false;
+        };
+
+        let current_track_id = self.clips[clip_index].track_id;
+        let current_track_index = match self.tracks.iter().position(|track| track.id == current_track_id) {
+            Some(index) => index,
+            None => return false,
+        };
+
+        let mut index = current_track_index as i32 + direction.signum();
+        while index >= 0 && (index as usize) < self.tracks.len() {
+            let track = &self.tracks[index as usize];
+            if track.track_type == target_track_type {
+                self.clips[clip_index].track_id = track.id;
+                return true;
+            }
+            index += direction.signum();
+        }
+
         false
     }
 

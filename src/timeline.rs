@@ -11,7 +11,7 @@ use dioxus::prelude::*;
 // Re-export colors from app (we'll move these to a shared module later)
 use crate::app::{
     BG_BASE, BG_ELEVATED, BG_HOVER, BG_SURFACE,
-    BORDER_DEFAULT, BORDER_STRONG, BORDER_SUBTLE,
+    BORDER_ACCENT, BORDER_DEFAULT, BORDER_STRONG, BORDER_SUBTLE,
     TEXT_DIM, TEXT_MUTED, TEXT_SECONDARY, TEXT_PRIMARY,
     ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO,
 };
@@ -56,6 +56,9 @@ pub fn TimelinePanel(
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
     on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
+    on_clip_move_track: EventHandler<(uuid::Uuid, i32)>, // (clip_id, direction)
+    selected_clips: Vec<uuid::Uuid>,
+    on_clip_select: EventHandler<uuid::Uuid>,
     // Asset Drag & Drop
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>, // (track_id, time, asset_id)
@@ -414,6 +417,9 @@ pub fn TimelinePanel(
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
                                         on_clip_resize: move |(id, start, dur)| on_clip_resize.call((id, start, dur)),
+                                        on_clip_move_track: move |(id, direction)| on_clip_move_track.call((id, direction)),
+                                        selected_clips: selected_clips.clone(),
+                                        on_clip_select: move |id| on_clip_select.call(id),
                                         dragged_asset: dragged_asset,
                                         on_asset_drop: move |(tid, t, aid)| on_asset_drop.call((tid, t, aid)),
                                     }
@@ -624,6 +630,9 @@ pub fn TrackRow(
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
     on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
+    on_clip_move_track: EventHandler<(uuid::Uuid, i32)>,
+    selected_clips: Vec<uuid::Uuid>,
+    on_clip_select: EventHandler<uuid::Uuid>,
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>,
 ) -> Element {
@@ -688,6 +697,9 @@ pub fn TrackRow(
                     on_delete: move |id| on_clip_delete.call(id),
                     on_move: move |(id, time)| on_clip_move.call((id, time)),
                     on_resize: move |(id, start, dur)| on_clip_resize.call((id, start, dur)),
+                    on_move_track: move |(id, direction)| on_clip_move_track.call((id, direction)),
+                    is_selected: selected_clips.contains(&clip.id),
+                    on_select: move |id| on_clip_select.call(id),
                 }
             }
         }
@@ -706,6 +718,9 @@ fn ClipElement(
     on_delete: EventHandler<uuid::Uuid>,
     on_move: EventHandler<(uuid::Uuid, f64)>,
     on_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (id, new_start, new_duration)
+    on_move_track: EventHandler<(uuid::Uuid, i32)>,
+    is_selected: bool,
+    on_select: EventHandler<uuid::Uuid>,
 ) -> Element {
     let mut show_menu = use_signal(|| false);
     let mut menu_pos = use_signal(|| (0.0, 0.0));
@@ -777,6 +792,11 @@ fn ClipElement(
     } else {
         format!("1px solid {}", clip_color)
     };
+    let selection_ring = if is_selected {
+        format!("0 0 0 1px {}", BORDER_ACCENT)
+    } else {
+        "none".to_string()
+    };
 
     let clip_id = clip.id;
     let current_start = clip.start_time;
@@ -802,6 +822,7 @@ fn ClipElement(
                 height: 32px;
                 background-color: {BG_ELEVATED};
                 border: {border_style};
+                box-shadow: {selection_ring};
                 border-radius: 4px;
                 display: flex;
                 align-items: center;
@@ -850,6 +871,7 @@ fn ClipElement(
                         if format!("{:?}", btn) == "Primary" {
                             e.prevent_default();
                             e.stop_propagation();
+                            on_select.call(clip_id);
                             drag_mode.set(Some("resize-left"));
                             drag_start_x.set(e.client_coordinates().x);
                             drag_start_time.set(current_start);
@@ -889,6 +911,7 @@ fn ClipElement(
                         if format!("{:?}", btn) == "Primary" {
                             e.prevent_default();
                             e.stop_propagation();
+                            on_select.call(clip_id);
                             drag_mode.set(Some("move"));
                             drag_start_x.set(e.client_coordinates().x);
                             drag_start_time.set(current_start);
@@ -936,6 +959,7 @@ fn ClipElement(
                         if format!("{:?}", btn) == "Primary" {
                             e.prevent_default();
                             e.stop_propagation();
+                            on_select.call(clip_id);
                             drag_mode.set(Some("resize-right"));
                             drag_start_x.set(e.client_coordinates().x);
                             drag_start_time.set(current_start);
@@ -1040,6 +1064,31 @@ fn ClipElement(
                     z-index: 9999; font-size: 12px;
                 ",
                 oncontextmenu: move |e| e.prevent_default(),
+                div {
+                    style: "
+                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                        transition: background-color 0.1s ease;
+                    ",
+                    onclick: move |_| {
+                        on_move_track.call((clip_id, -1));
+                        show_menu.set(false);
+                    },
+                    "Move Up"
+                }
+                div {
+                    style: "
+                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                        transition: background-color 0.1s ease;
+                    ",
+                    onclick: move |_| {
+                        on_move_track.call((clip_id, 1));
+                        show_menu.set(false);
+                    },
+                    "Move Down"
+                }
+                div {
+                    style: "height: 1px; background-color: {BORDER_SUBTLE}; margin: 4px 0;",
+                }
                 div {
                     style: "
                         padding: 6px 12px; color: #ef4444; cursor: pointer;
