@@ -38,6 +38,7 @@ const TIMELINE_MIN_HEIGHT: f64 = 100.0;
 const TIMELINE_MAX_HEIGHT: f64 = 500.0;
 const TIMELINE_DEFAULT_HEIGHT: f64 = 220.0;
 const TIMELINE_COLLAPSED_HEIGHT: f64 = 32.0;  // Must match header height exactly
+const DEFAULT_CLIP_DURATION_SECONDS: f64 = 2.0;
 
 /// Main application component
 #[component]
@@ -47,6 +48,8 @@ pub fn App() -> Element {
     
     // Core services
     let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
+    let thumbnail_refresh_tick = use_signal(|| 0_u64);
+    let thumbnail_cache_buster = use_signal(|| 0_u64);
     
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
@@ -76,6 +79,17 @@ pub fn App() -> Element {
     
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
+
+    use_future(move || {
+        let mut thumbnail_refresh_tick = thumbnail_refresh_tick.clone();
+        async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                interval.tick().await;
+                thumbnail_refresh_tick.set(thumbnail_refresh_tick() + 1);
+            }
+        }
+    });
 
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
@@ -248,12 +262,17 @@ pub fn App() -> Element {
                     // Assets panel content
                     AssetsPanelContent {
                         assets: project.read().assets.clone(),
+                        thumbnailer: thumbnailer.read().clone(),
+                        thumbnail_cache_buster: thumbnail_cache_buster(),
+                        thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         on_import: move |asset: crate::state::Asset| {
                             project.write().add_asset(asset.clone());
                             let thumbs = thumbnailer.read().clone();
+                            let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
                             // Spawn background task for thumbnail generation
                             spawn(async move {
                                 thumbs.generate(&asset, false).await;
+                                thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
                             });
                         },
                         on_import_file: move |path: std::path::PathBuf| {
@@ -265,10 +284,13 @@ pub fn App() -> Element {
                                     // Trigger thumbnail generation for the new asset
                                     if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                                         let thumbs = thumbnailer.read().clone();
+                                        let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
                                         spawn(async move {
                                             thumbs.generate(&asset, false).await;
+                                            thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
                                         });
                                     }
+                                    spawn_asset_duration_probe(project, asset_id);
                                 },
                                 Err(e) => println!("Failed to import file {:?}: {}", path, e),
                             }
@@ -276,6 +298,7 @@ pub fn App() -> Element {
                         on_regenerate_thumbnails: move |asset_id: uuid::Uuid| {
                             if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                                 let thumbs = thumbnailer.read().clone();
+                                let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
                                 spawn(async move {
                                      // Force regeneration logic could require a flag in future,
                                      // but our `generate` function currently checks existence.
@@ -296,6 +319,7 @@ pub fn App() -> Element {
                                      // We should probably modify `Thumbnailer::generate` to accept a `force` boolean.
                                      // I will do that in the next step. For now, let's wire up the UI.
                                      thumbs.generate(&asset, true).await;
+                                     thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
                                 });
                             }
                         },
@@ -303,9 +327,11 @@ pub fn App() -> Element {
                             project.write().remove_asset(id);
                         },
                         on_add_to_timeline: move |asset_id| {
-                            // Add clip at current playhead position with default 2-second duration
+                            // Add clip at current playhead position using asset duration when available
                             let time = current_time();
-                            project.write().add_clip_from_asset(asset_id, time, 2.0);
+                            let duration = resolve_asset_duration_seconds(project, asset_id)
+                                .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
+                            project.write().add_clip_from_asset(asset_id, time, duration);
                         },
                         on_drag_start: move |id| dragged_asset.set(Some(id)),
                     }
@@ -343,6 +369,8 @@ pub fn App() -> Element {
                         clips: project.read().clips.clone(),
                         assets: project.read().assets.clone(),
                         thumbnailer: thumbnailer.read().clone(),
+                        thumbnail_cache_buster: thumbnail_cache_buster(),
+                        thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         // Timeline state
                         current_time: current_time(),
                         duration: duration,
@@ -388,7 +416,9 @@ pub fn App() -> Element {
                         // Asset Drag & Drop
                         dragged_asset: dragged_asset(),
                         on_asset_drop: move |(track_id, time, asset_id)| {
-                            let clip = crate::state::Clip::new(asset_id, track_id, time, 2.0);
+                            let duration = resolve_asset_duration_seconds(project, asset_id)
+                                .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
+                            let clip = crate::state::Clip::new(asset_id, track_id, time, duration);
                             project.write().add_clip(clip);
                         },
                     }
@@ -529,6 +559,7 @@ pub fn App() -> Element {
                                 // Initialize thumbnailer with new project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(new_proj.project_path.clone().unwrap())));
                                 project.set(new_proj);
+                                spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },
                             Err(e) => println!("Error creating project: {}", e),
@@ -540,6 +571,7 @@ pub fn App() -> Element {
                                 // Initialize thumbnailer with loaded project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(loaded_proj.project_path.clone().unwrap())));
                                 project.set(loaded_proj);
+                                spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },
                             Err(e) => println!("Error loading project: {}", e),
@@ -1133,10 +1165,109 @@ fn StatusBar() -> Element {
     }
 }
 
+fn spawn_asset_duration_probe(
+    mut project: Signal<crate::state::Project>,
+    asset_id: uuid::Uuid,
+) {
+    let (project_root, asset_path, needs_probe) = {
+        let project_read = project.read();
+        let project_root = project_read.project_path.clone();
+        let asset = project_read.find_asset(asset_id);
+        let needs_probe = asset
+            .map(|asset| asset.duration_seconds.is_none() && (asset.is_video() || asset.is_audio()))
+            .unwrap_or(false);
+        let asset_path = asset.and_then(|asset| match &asset.kind {
+            crate::state::AssetKind::Video { path } => Some(path.clone()),
+            crate::state::AssetKind::Audio { path } => Some(path.clone()),
+            _ => None,
+        });
+        (project_root, asset_path, needs_probe)
+    };
+
+    let Some(project_root) = project_root else { return; };
+    let Some(asset_path) = asset_path else { return; };
+    if !needs_probe {
+        return;
+    }
+
+    let absolute_path = project_root.join(asset_path);
+
+    spawn(async move {
+        let duration = tokio::task::spawn_blocking(move || {
+            crate::core::media::probe_duration_seconds(&absolute_path)
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(duration) = duration {
+            project.write().set_asset_duration(asset_id, Some(duration));
+        }
+    });
+}
+
+fn spawn_missing_duration_probes(project: Signal<crate::state::Project>) {
+    let asset_ids: Vec<uuid::Uuid> = project
+        .read()
+        .assets
+        .iter()
+        .filter(|asset| asset.duration_seconds.is_none() && (asset.is_video() || asset.is_audio()))
+        .map(|asset| asset.id)
+        .collect();
+
+    for asset_id in asset_ids {
+        spawn_asset_duration_probe(project, asset_id);
+    }
+}
+
+fn resolve_asset_duration_seconds(
+    mut project: Signal<crate::state::Project>,
+    asset_id: uuid::Uuid,
+) -> Option<f64> {
+    let (project_root, asset_path, cached_duration, should_probe) = {
+        let project_read = project.read();
+        let project_root = project_read.project_path.clone();
+        let asset = project_read.find_asset(asset_id);
+        let cached_duration = asset.and_then(|asset| asset.duration_seconds);
+        let should_probe = asset
+            .map(|asset| asset.is_video() || asset.is_audio())
+            .unwrap_or(false);
+        let asset_path = asset.and_then(|asset| match &asset.kind {
+            crate::state::AssetKind::Video { path } => Some(path.clone()),
+            crate::state::AssetKind::Audio { path } => Some(path.clone()),
+            _ => None,
+        });
+        (project_root, asset_path, cached_duration, should_probe)
+    };
+
+    if let Some(duration) = cached_duration {
+        return Some(duration);
+    }
+
+    if !should_probe {
+        return None;
+    }
+
+    let Some(project_root) = project_root else { return None; };
+    let Some(asset_path) = asset_path else { return None; };
+
+    let absolute_path = project_root.join(asset_path);
+    let duration = crate::core::media::probe_duration_seconds(&absolute_path);
+    if let Some(duration) = duration {
+        project.write().set_asset_duration(asset_id, Some(duration));
+        return Some(duration);
+    }
+
+    None
+}
+
 /// Assets panel content - displays project assets and import functionality
 #[component]
 fn AssetsPanelContent(
     assets: Vec<crate::state::Asset>,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: u64,
+    thumbnail_refresh_tick: u64,
     on_import: EventHandler<crate::state::Asset>,
     on_import_file: EventHandler<std::path::PathBuf>,
     on_delete: EventHandler<uuid::Uuid>,
@@ -1144,6 +1275,7 @@ fn AssetsPanelContent(
     on_add_to_timeline: EventHandler<uuid::Uuid>,
     on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
+    let _ = thumbnail_refresh_tick;
     rsx! {
         div {
             style: "display: flex; flex-direction: column; height: 100%; padding: 8px;",
@@ -1278,6 +1410,8 @@ fn AssetsPanelContent(
                     for asset in assets.iter() {
                         AssetItem { 
                             asset: asset.clone(),
+                            thumbnailer: thumbnailer.clone(),
+                            thumbnail_cache_buster: thumbnail_cache_buster,
                             on_delete: move |id| on_delete.call(id),
                             on_regenerate_thumbnails: move |id| on_regenerate_thumbnails.call(id),
                             on_add_to_timeline: move |id| on_add_to_timeline.call(id),
@@ -1294,6 +1428,8 @@ fn AssetsPanelContent(
 #[component]
 fn AssetItem(
     asset: crate::state::Asset,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: u64,
     on_delete: EventHandler<uuid::Uuid>,
     on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
@@ -1317,6 +1453,15 @@ fn AssetItem(
         crate::state::AssetKind::Video { .. } | crate::state::AssetKind::GenerativeVideo { .. } => ACCENT_VIDEO,
         crate::state::AssetKind::Audio { .. } | crate::state::AssetKind::GenerativeAudio { .. } => ACCENT_AUDIO,
         crate::state::AssetKind::Image { .. } | crate::state::AssetKind::GenerativeImage { .. } => ACCENT_VIDEO,
+    };
+    
+    let thumb_url = if asset.is_visual() {
+        thumbnailer.get_thumbnail_path(asset.id, 0.0).map(|p| {
+            let url = crate::utils::get_local_file_url(&p);
+            format!("{}?v={}", url, thumbnail_cache_buster)
+        })
+    } else {
+        None
     };
     
     // Generative assets have a subtle dashed border
@@ -1356,8 +1501,33 @@ fn AssetItem(
                 div {
                     style: "width: 3px; height: 24px; border-radius: 2px; background-color: {accent};",
                 }
-                // Icon
-                span { style: "font-size: 14px;", "{icon}" }
+                // Thumbnail + icon
+                div {
+                    style: "
+                        width: 36px; height: 24px; border-radius: 3px; overflow: hidden;
+                        background-color: {BG_BASE}; border: 1px solid {BORDER_SUBTLE};
+                        display: flex; align-items: center; justify-content: center;
+                        position: relative; flex-shrink: 0;
+                    ",
+                    if let Some(src_url) = thumb_url.clone() {
+                        img {
+                            src: "{src_url}",
+                            style: "width: 100%; height: 100%; object-fit: cover; pointer-events: none;",
+                            draggable: "false",
+                        }
+                        span {
+                            style: "
+                                position: absolute; right: 2px; bottom: 2px;
+                                font-size: 9px; color: {TEXT_PRIMARY};
+                                background-color: rgba(0,0,0,0.6); padding: 1px 3px;
+                                border-radius: 3px; pointer-events: none;
+                            ",
+                            "{icon}"
+                        }
+                    } else {
+                        span { style: "font-size: 12px; color: {TEXT_MUTED}; pointer-events: none;", "{icon}" }
+                    }
+                }
                 // Name
                 span { 
                     style: "flex: 1; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",

@@ -17,6 +17,9 @@ use crate::app::{
 };
 use crate::state::{Track, TrackType};
 
+const THUMB_TILE_WIDTH_PX: f64 = 60.0;
+const MAX_THUMB_TILES: usize = 120;
+
 /// Main timeline panel component
 #[component]
 pub fn TimelinePanel(
@@ -29,6 +32,8 @@ pub fn TimelinePanel(
     clips: Vec<crate::state::Clip>,
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: u64,
+    thumbnail_refresh_tick: u64,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -55,6 +60,7 @@ pub fn TimelinePanel(
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>, // (track_id, time, asset_id)
 ) -> Element {
+    let _ = thumbnail_refresh_tick;
     let icon = if collapsed { "▲" } else { "▼" };
     let play_icon = if is_playing { "⏸" } else { "▶" };
     
@@ -93,6 +99,9 @@ pub fn TimelinePanel(
     let track_label_width = 140;
 
     rsx! {
+        {
+            let _ = thumbnail_refresh_tick;
+        }
         div {
             style: "
                 display: flex; flex-direction: column;
@@ -400,6 +409,7 @@ pub fn TimelinePanel(
                                         clips: clips.clone(),
                                         assets: assets.clone(),
                                         thumbnailer: thumbnailer.clone(),
+                                        thumbnail_cache_buster: thumbnail_cache_buster,
                                         zoom: zoom,
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
@@ -608,6 +618,7 @@ pub fn TrackRow(
     clips: Vec<crate::state::Clip>,
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: u64,
     zoom: f64,  // pixels per second
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
@@ -670,6 +681,7 @@ pub fn TrackRow(
                     clip: (*clip).clone(),
                     assets: assets.clone(),
                     thumbnailer: thumbnailer.clone(),
+                    thumbnail_cache_buster: thumbnail_cache_buster,
                     zoom: zoom,
                     clip_color: clip_color,
                     on_delete: move |id| on_clip_delete.call(id),
@@ -687,6 +699,7 @@ fn ClipElement(
     clip: crate::state::Clip,
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: u64,
     zoom: f64,
     clip_color: &'static str,
     on_delete: EventHandler<uuid::Uuid>,
@@ -699,26 +712,64 @@ fn ClipElement(
     let mut drag_start_x = use_signal(|| 0.0);
     let mut drag_start_time = use_signal(|| 0.0);
     let mut drag_start_duration = use_signal(|| 0.0);
-
-    // Calculate thumbnail URL using Wry's http mapping using our abstraction
-    let thumb_url = thumbnailer.get_thumbnail_path(clip.asset_id, 0.0).map(|p| {
-        crate::utils::get_local_file_url(&p)
-    });
+    let mut drag_start_end_time = use_signal(|| 0.0);
 
     let left = (clip.start_time * zoom) as i32;
     let clip_width = (clip.duration * zoom).max(20.0) as i32;
+    let clip_width_f = clip_width as f64;
     
-    // Find asset name
-    let asset_name = assets.iter()
-        .find(|a| a.id == clip.asset_id)
+    let asset = assets.iter().find(|a| a.id == clip.asset_id);
+    let asset_name = asset
         .map(|a| a.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
+    let is_generative = asset.map(|a| a.is_generative()).unwrap_or(false);
+    let is_visual = asset.map(|a| a.is_visual()).unwrap_or(false);
+    let trim_in_seconds = clip.trim_in_seconds.max(0.0);
+    let max_duration = asset.and_then(|a| {
+        if a.is_video() || a.is_audio() {
+            a.duration_seconds.filter(|duration| *duration > 0.0)
+        } else {
+            None
+        }
+    });
+    let available_duration = max_duration.map(|duration| (duration - trim_in_seconds).max(0.0));
     
-    // Check if asset is generative
-    let is_generative = assets.iter()
-        .find(|a| a.id == clip.asset_id)
-        .map(|a| a.is_generative())
-        .unwrap_or(false);
+    let first_thumb_url = if is_visual {
+        thumbnailer.get_thumbnail_path(clip.asset_id, trim_in_seconds).map(|p| {
+            let url = crate::utils::get_local_file_url(&p);
+            format!("{}?v={}", url, thumbnail_cache_buster)
+        })
+    } else {
+        None
+    };
+    
+    let mut thumb_tiles: Vec<String> = Vec::new();
+    let mut tile_width = THUMB_TILE_WIDTH_PX;
+    
+    if let Some(fallback_url) = first_thumb_url.clone() {
+        if clip_width > 40 {
+            let estimated_tiles = (clip_width_f / tile_width).ceil() as usize;
+            if estimated_tiles > MAX_THUMB_TILES {
+                tile_width = (clip_width_f / MAX_THUMB_TILES as f64).ceil();
+            }
+            let tile_count = (clip_width_f / tile_width).ceil() as usize;
+            let tile_count = tile_count.max(1);
+            let tile_time = tile_width / zoom;
+            
+            for i in 0..tile_count {
+                let time_in_clip = (i as f64 * tile_time).min(clip.duration.max(0.0));
+                let time = trim_in_seconds + time_in_clip;
+                let url = thumbnailer
+                    .get_thumbnail_path(clip.asset_id, time)
+                    .map(|p| {
+                        let url = crate::utils::get_local_file_url(&p);
+                        format!("{}?v={}", url, thumbnail_cache_buster)
+                    })
+                    .unwrap_or_else(|| fallback_url.clone());
+                thumb_tiles.push(url);
+            }
+        }
+    }
     
     let border_style = if is_generative {
         format!("1px dashed {}", clip_color)
@@ -729,6 +780,7 @@ fn ClipElement(
     let clip_id = clip.id;
     let current_start = clip.start_time;
     let current_duration = clip.duration;
+    let current_end = current_start + current_duration;
     
     let is_active = drag_mode().is_some();
     let cursor_style = match drag_mode() {
@@ -764,6 +816,25 @@ fn ClipElement(
                 menu_pos.set((coords.x, coords.y));
                 show_menu.set(true);
             },
+
+            // Thumbnails sub-layer (absolute, clipped to clip bounds)
+            if !thumb_tiles.is_empty() {
+                div {
+                    style: "
+                        position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+                        display: flex; overflow: hidden; opacity: 0.5;
+                        pointer-events: none; z-index: 0; border-radius: 4px;
+                    ",
+                    for (idx, src_url) in thumb_tiles.iter().enumerate() {
+                        img {
+                            key: "thumb-{clip_id}-{idx}",
+                            src: "{src_url}",
+                            style: "height: 100%; width: {tile_width}px; object-fit: cover; flex: 0 0 {tile_width}px;",
+                            draggable: "false",
+                        }
+                    }
+                }
+            }
             
             // Left resize handle
             div {
@@ -782,6 +853,7 @@ fn ClipElement(
                             drag_start_x.set(e.client_coordinates().x);
                             drag_start_time.set(current_start);
                             drag_start_duration.set(current_duration);
+                            drag_start_end_time.set(current_end);
                         }
                     }
                 },
@@ -809,7 +881,7 @@ fn ClipElement(
             div {
                 style: "
                     flex: 1; height: 100%; display: flex; align-items: center;
-                    padding: 0 10px; overflow: visible; position: relative;
+                    padding: 0 10px; overflow: visible; position: relative; z-index: 1;
                 ",
                 onmousedown: move |e| {
                     if let Some(btn) = e.trigger_button() {
@@ -830,39 +902,6 @@ fn ClipElement(
                      show_menu.set(true);
                 },
                 
-                // Thumbnails sub-layer (absolute)
-                if clip_width > 40 {
-                    div {
-                        style: "
-                            position: absolute; left: 0; right: 0; top: 0; bottom: 0;
-                            display: flex; overflow: hidden; opacity: 0.5; pointer-events: none; z-index: 0;
-                        ",
-                        // Simple first frame thumbnail
-                        {
-                             match thumb_url {
-                                Some(src_url) => {
-                                    rsx! {
-                                        img {
-                                            src: "{src_url}",
-                                            style: "height: 100%; width: auto; object-fit: cover;",
-                                            draggable: "false",
-                                        }
-                                        // If wide, repeat it a bit to fill space (pseudo-filmstrip)
-                                        if clip_width > 150 {
-                                             img {
-                                                src: "{src_url}",
-                                                style: "height: 100%; width: auto; object-fit: cover; margin-left: 2px;",
-                                                draggable: "false",
-                                            }
-                                        }
-                                    }
-                                },
-                                None => rsx! {}
-                            }
-                        }
-                    }
-                }
-
                 // Foreground Content Container (Text + Indicator)
                 div {
                     style: "display: flex; align-items: center; width: 100%; z-index: 1; position: relative;",
@@ -940,18 +979,31 @@ fn ClipElement(
                             on_move.call((clip_id, snapped));
                         }
                         Some("resize-left") => {
-                            // Moving left edge: changes start and duration inversely
-                            let new_start = (drag_start_time() + delta_time).max(0.0);
-                            let new_duration = drag_start_duration() - delta_time;
-                            if new_duration >= 0.1 {
-                                let snapped_start = (new_start * 60.0).round() / 60.0;
-                                let snapped_dur = (new_duration * 60.0).round() / 60.0;
-                                on_resize.call((clip_id, snapped_start, snapped_dur));
+                            // Moving left edge: keep right edge fixed while clamping to source duration
+                            let end_time = drag_start_end_time();
+                            let min_start = (current_start - trim_in_seconds).max(0.0);
+                            let mut new_start = (drag_start_time() + delta_time).max(min_start);
+                            let mut new_duration = end_time - new_start;
+                            if let Some(max_duration) = max_duration {
+                                if new_duration > max_duration {
+                                    new_duration = max_duration;
+                                    new_start = (end_time - new_duration).max(0.0);
+                                }
                             }
+                            if new_duration < 0.1 {
+                                new_duration = 0.1;
+                                new_start = (end_time - new_duration).max(0.0);
+                            }
+                            let snapped_start = (new_start * 60.0).round() / 60.0;
+                            let snapped_dur = (end_time - snapped_start).max(0.1);
+                            on_resize.call((clip_id, snapped_start, snapped_dur));
                         }
                         Some("resize-right") => {
-                            // Moving right edge: only changes duration
-                            let new_duration = (drag_start_duration() + delta_time).max(0.1);
+                            // Moving right edge: only changes duration, clamped to source duration
+                            let mut new_duration = (drag_start_duration() + delta_time).max(0.1);
+                            if let Some(available_duration) = available_duration {
+                                new_duration = new_duration.min(available_duration);
+                            }
                             let snapped_dur = (new_duration * 60.0).round() / 60.0;
                             on_resize.call((clip_id, current_start, snapped_dur));
                         }

@@ -108,7 +108,9 @@ pub struct Clip {
     pub start_time: f64,
     /// Duration in seconds
     pub duration: f64,
-    // Future: trim_in, trim_out for trimming source media
+    /// Trim-in time in seconds (offset into source media)
+    #[serde(default)]
+    pub trim_in_seconds: f64,
 }
 
 impl Clip {
@@ -121,6 +123,7 @@ impl Clip {
             track_id,
             start_time,
             duration,
+            trim_in_seconds: 0.0,
         }
     }
 
@@ -249,6 +252,25 @@ impl Project {
     /// Find an asset by ID
     pub fn find_asset(&self, id: Uuid) -> Option<&Asset> {
         self.assets.iter().find(|a| a.id == id)
+    }
+
+    /// Set the cached duration (in seconds) for an asset
+    pub fn set_asset_duration(&mut self, id: Uuid, duration_seconds: Option<f64>) -> bool {
+        if let Some(asset) = self.assets.iter_mut().find(|a| a.id == id) {
+            asset.set_duration_seconds(duration_seconds);
+            return true;
+        }
+        false
+    }
+
+    /// Get the cached duration (in seconds) for an asset
+    pub fn asset_duration_seconds(&self, id: Uuid) -> Option<f64> {
+        self.find_asset(id).and_then(|asset| asset.duration_seconds)
+    }
+
+    /// Get a clip duration for an asset, falling back to a default value
+    pub fn asset_clip_duration(&self, id: Uuid, default_duration: f64) -> f64 {
+        self.asset_duration_seconds(id).unwrap_or(default_duration)
     }
 
     /// Get all clips on a specific track
@@ -446,8 +468,33 @@ impl Project {
     /// Resize a clip (change start and/or duration)
     pub fn resize_clip(&mut self, id: Uuid, new_start: f64, new_duration: f64) -> bool {
         if let Some(clip) = self.clips.iter_mut().find(|c| c.id == id) {
-            clip.start_time = new_start.max(0.0);
-            clip.duration = new_duration.max(0.1);  // Minimum 0.1 second
+            let old_start = clip.start_time;
+            let start_time = new_start.max(0.0);
+            let mut duration = new_duration.max(0.1);  // Minimum 0.1 second
+
+            let asset = self.assets.iter().find(|a| a.id == clip.asset_id);
+            let max_duration = asset.and_then(|a| a.duration_seconds).filter(|d| *d > 0.0);
+
+            if let Some(max_duration) = max_duration {
+                duration = duration.min(max_duration);
+            }
+
+            if let Some(asset) = asset {
+                if (asset.is_video() || asset.is_audio()) && (start_time - old_start).abs() > f64::EPSILON {
+                    let delta = start_time - old_start;
+                    clip.trim_in_seconds = (clip.trim_in_seconds + delta).max(0.0);
+
+                    if let Some(max_duration) = max_duration {
+                        let max_trim_in = (max_duration - duration).max(0.0);
+                        if clip.trim_in_seconds > max_trim_in {
+                            clip.trim_in_seconds = max_trim_in;
+                        }
+                    }
+                }
+            }
+
+            clip.start_time = start_time;
+            clip.duration = duration;
             return true;
         }
         false

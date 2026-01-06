@@ -751,6 +751,13 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Fixed left-edge trim drift by anchoring to drag-start end time
+- **2026-01-06:** Removed unused `mut` warnings from thumbnail tick signals and clip resize logic
+- **2026-01-06:** Added clip trim-in state for left-edge trimming; timeline thumbnails now offset by trim-in and clip filmstrip is clipped to bounds
+- **2026-01-06:** Fixed thumbnail refresh wiring for asset/timeline panels and duration probe helpers
+- **2026-01-06:** Asset durations now cached via ffprobe for audio/video; clips use asset duration on drop/add and resizing is clamped to source length
+- **2026-01-06:** Thumbnail URLs now cache-bust on refresh and missing files no longer render broken images
+- **2026-01-06:** Asset panel shows first-frame thumbnails for visual assets; timeline thumbnails distribute across clips using 1s sampling with repeat-fill on zoom
 - **2026-01-06:** Implemented robust custom protocol (`http://nla.localhost`) for serving local thumbnails
 - **2026-01-06:** Added "Rendering & Preview Strategy" to docs
 - **2026-01-06:** Promoted Preview Window and Thumbnails to MVP status based on user feedback

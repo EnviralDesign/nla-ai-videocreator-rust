@@ -4,6 +4,9 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use crate::state::Asset;
 
+const THUMBNAIL_INTERVAL_SECONDS: f64 = 1.0;
+const THUMBNAIL_HEIGHT: u32 = 120;
+
 /// Manages the generation of thumbnails for assets
 #[derive(Debug)]
 pub struct Thumbnailer {
@@ -83,7 +86,7 @@ impl Thumbnailer {
 
         // Spawn blocking FFmpeg task
         let _ = tokio::task::spawn_blocking(move || {
-            // Extract 1 frame every 5 seconds, height 120px, keep aspect ratio
+            // Extract 1 frame per interval, keep aspect ratio
             let output_pattern = out.join("thumb_%04d.jpg");
             
             // Debug check: ensure file exists
@@ -96,7 +99,7 @@ impl Thumbnailer {
                 .arg("-i")
                 .arg(&source)
                 .arg("-vf")
-                .arg("fps=1/5,scale=-1:120") // 1 frame every 5s, 120px height
+                .arg(format!("fps=1/{},scale=-1:{}", THUMBNAIL_INTERVAL_SECONDS, THUMBNAIL_HEIGHT))
                 .arg("-q:v")
                 .arg("5") // reasonable jpeg quality
                 .arg(output_pattern)
@@ -119,17 +122,22 @@ impl Thumbnailer {
             return None;
         }
         
-        // Map time to index (fps=1/5 means 1 frame per 5 seconds)
-        // thumb_0001.jpg covers 0-5s
-        // thumb_0002.jpg covers 5-10s
-        let index = (time_seconds / 5.0).floor() as u32 + 1;
+        // Map time to index (fps=1/interval)
+        // thumb_0001.jpg covers 0-interval
+        // thumb_0002.jpg covers interval-2*interval
+        let index = (time_seconds / THUMBNAIL_INTERVAL_SECONDS).floor() as u32 + 1;
         
         let path = dir.join(format!("thumb_{:04}.jpg", index));
         if path.exists() {
             Some(path)
         } else {
             // Fallback to first frame if out of bounds (or handle empty)
-            Some(dir.join("thumb_0001.jpg"))
+            let fallback = dir.join("thumb_0001.jpg");
+            if fallback.exists() {
+                Some(fallback)
+            } else {
+                None
+            }
         }
     }
 }

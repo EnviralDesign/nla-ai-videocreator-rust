@@ -89,6 +89,9 @@ pub struct Asset {
     pub id: Uuid,
     /// User-facing display name
     pub name: String,
+    /// Optional duration in seconds for time-based media
+    #[serde(default)]
+    pub duration_seconds: Option<f64>,
     /// The type and location of this asset
     pub kind: AssetKind,
 }
@@ -100,6 +103,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::Video { path },
         }
     }
@@ -109,6 +113,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::Image { path },
         }
     }
@@ -118,6 +123,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::Audio { path },
         }
     }
@@ -127,6 +133,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::GenerativeVideo {
                 folder,
                 active_version: None,
@@ -139,6 +146,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::GenerativeImage {
                 folder,
                 active_version: None,
@@ -151,6 +159,7 @@ impl Asset {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            duration_seconds: None,
             kind: AssetKind::GenerativeAudio {
                 folder,
                 active_version: None,
@@ -181,6 +190,11 @@ impl Asset {
     /// Check if this asset can be placed on an audio track
     pub fn is_audio(&self) -> bool {
         self.kind.is_audio()
+    }
+
+    /// Update the cached duration in seconds for this asset
+    pub fn set_duration_seconds(&mut self, duration_seconds: Option<f64>) {
+        self.duration_seconds = duration_seconds;
     }
 }
 
