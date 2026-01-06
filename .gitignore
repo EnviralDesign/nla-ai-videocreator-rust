@@ -33,9 +33,9 @@ Thumbs.db
 *.log
 logs/
 
-# Project-specific (user assets - don't commit large media)
-# Individual projects will live in their own folders outside the repo
-# But if testing locally:
+# User projects (contains media assets, project.json, etc.)
+# These are created by the application and should not be committed
+/projects/
 /test-projects/
 
 # OS generated

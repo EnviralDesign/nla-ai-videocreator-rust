@@ -75,8 +75,17 @@ pub fn App() -> Element {
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
 
     // Dialog state
-    let mut show_new_project_dialog = use_signal(|| false);
-    let mut new_project_name = use_signal(|| "My Project".to_string());
+    let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
+    
+    // Startup Modal state - check if we have a valid project path on load
+    // For MVP, we start with a dummy project, so we check if project_path is None
+    let mut startup_done = use_signal(|| false); 
+    
+    // On first load, if project has no path effectively, treat as "No Project Loaded"
+    // But since we initialize with default(), we need a flag to block interaction until New/Open
+    // We'll use specific "show_startup_modal" derived state
+    
+    let show_startup = project.read().project_path.is_none() && !startup_done();
 
     // Read current values
     let left_w = if left_collapsed() { PANEL_COLLAPSED_WIDTH } else { left_width() };
@@ -232,6 +241,13 @@ pub fn App() -> Element {
                         assets: project.read().assets.clone(),
                         on_import: move |asset| {
                             project.write().add_asset(asset);
+                        },
+                        on_import_file: move |path: std::path::PathBuf| {
+                            // Implicit Copy: Always import directly designated by the strict folder policy
+                            // We assume a project exists because the startup modal blocks everything else
+                            if let Err(e) = project.write().import_file(&path) {
+                                println!("Failed to import file {:?}: {}", path, e);
+                            }
                         },
                         on_delete: move |id| {
                             project.write().remove_asset(id);
@@ -450,9 +466,37 @@ pub fn App() -> Element {
                 }
             }
 
+            // Startup Modal (Blocks everything until Project is created/loaded)
+            if show_startup {
+                StartupModal {
+                    on_create: move |(parent_dir, name): (std::path::PathBuf, String)| {
+                        // Create full path: parent_dir/name
+                        let project_dir = parent_dir.join(&name);
+                        match crate::state::Project::create_in(&project_dir, &name) {
+                            Ok(new_proj) => {
+                                project.set(new_proj);
+                                startup_done.set(true);
+                            },
+                            Err(e) => println!("Error creating project: {}", e),
+                        }
+                    },
+                    on_open: move |path: std::path::PathBuf| {
+                         match crate::state::Project::load(&path) { // path is the project folder
+                            Ok(loaded_proj) => {
+                                project.set(loaded_proj);
+                                startup_done.set(true);
+                            },
+                            Err(e) => println!("Error loading project: {}", e),
+                        }
+                    }
+                }
+            }
 
-            // New Project Modal
+            // New Project Modal (File > New Project)
             if show_new_project_dialog() {
+                // ... reusing the existing modal structure but purely for NEW projects
+                // We reuse the startup modal logic essentially, but let's keep the existing simple one for now
+                // just adapted to immediate creation
                 div {
                     style: "
                         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -460,91 +504,308 @@ pub fn App() -> Element {
                         display: flex; align-items: center; justify-content: center;
                         z-index: 2000;
                     ",
-                    // Close on backdrop click
                     onclick: move |_| show_new_project_dialog.set(false),
                     
-                    // Modal content
                     div {
-                        style: "
-                            width: 400px;
-                            background-color: {BG_ELEVATED};
-                            border: 1px solid {BORDER_DEFAULT};
-                            border-radius: 8px;
-                            padding: 24px;
-                            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                         style: "
+                            width: 400px; background-color: {BG_ELEVATED};
+                            border: 1px solid {BORDER_DEFAULT}; border-radius: 8px;
+                            padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
                         ",
-                        onclick: move |e| e.stop_propagation(), // Prevent closing when clicking inside
-                        
-                        h3 { 
-                            style: "margin: 0 0 16px 0; font-size: 16px; color: {TEXT_PRIMARY};",
-                            "Create New Project" 
-                        }
+                         onclick: move |e| e.stop_propagation(),
+                         
+                         h3 { style: "margin: 0 0 16px 0; font-size: 16px; color: {TEXT_PRIMARY};", "New Project" }
+                         // ... (keep existing simple input for now) ...
+                         // NOTE: We should probably unify this with StartupModal eventually
+                         div {
+                            style: "margin-bottom: 20px;",
+                             button {
+                                style: "width: 100%; padding: 10px; background: {ACCENT_VIDEO}; border: none; border-radius: 4px; color: white; cursor: pointer;",
+                                onclick: move |_| {
+                                     // Quick hack: just reset to startup modal for now to force the flow
+                                    project.set(crate::state::Project::default()); // Reset to untitled
+                                    startup_done.set(false); // Trigger startup modal
+                                    show_new_project_dialog.set(false);
+                                },
+                                "Go to Project Wizard"
+                             }
+                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Modal shown on app launch
+#[component]
+fn StartupModal(
+    on_create: EventHandler<(std::path::PathBuf, String)>,
+    on_open: EventHandler<std::path::PathBuf>
+) -> Element {
+    let mut name = use_signal(|| "My New Project".to_string());
+    // Default projects folder
+    let projects_folder = std::env::current_dir().unwrap_or_default().join("projects");
+    let projects_folder_clone = projects_folder.clone();
+    let projects_folder_for_browse = projects_folder.clone();
+    let projects_folder_for_open = projects_folder.clone();
+    let projects_folder_for_scan = projects_folder.clone();
+    
+    // Use `Option<PathBuf>` to store the selected parent directory
+    let mut parent_dir = use_signal(move || projects_folder_clone.clone());
+    
+    // Refresh counter - increment to force re-scan of projects
+    let mut refresh_counter = use_signal(|| 0u32);
+    
+    // Context menu state: Option<(x, y, project_path, project_name)>
+    let mut context_menu: Signal<Option<(f64, f64, std::path::PathBuf, String)>> = use_signal(|| None);
+    
+    // Scan for existing projects (folders containing project.json)
+    // Re-runs when refresh_counter changes
+    let _ = refresh_counter(); // Subscribe to changes
+    let existing_projects: Vec<(String, std::path::PathBuf)> = if projects_folder_for_scan.exists() {
+        std::fs::read_dir(&projects_folder_for_scan)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.path().is_dir())
+                    .filter(|entry| entry.path().join("project.json").exists())
+                    .map(|entry| {
+                        let path = entry.path();
+                        let name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Unknown")
+                            .to_string();
+                        (name, path)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    rsx! {
+        div {
+            style: "
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                background-color: {BG_BASE}; z-index: 9999;
+                display: flex; align-items: center; justify-content: center;
+            ",
+            
+            div {
+                style: "
+                    width: 600px; display: flex; flex-direction: column; 
+                    background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                    border-radius: 8px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+                ",
+                
+                // Header
+                div {
+                    style: "padding: 24px; border-bottom: 1px solid {BORDER_DEFAULT}; background-color: {BG_SURFACE};",
+                    h1 { style: "margin: 0; font-size: 20px; font-weight: 600; color: {TEXT_PRIMARY};", "NLA AI Video Creator" }
+                    p { style: "margin: 4px 0 0; font-size: 13px; color: {TEXT_SECONDARY};", "Select an action to get started" }
+                }
+                
+                div {
+                    style: "display: flex; height: 320px;",
+                    
+                    // Left: New Project
+                    div {
+                        style: "flex: 1; padding: 24px; border-right: 1px solid {BORDER_DEFAULT}; display: flex; flex-direction: column;",
+                        h2 { style: "margin: 0 0 16px 0; font-size: 16px; color: {TEXT_PRIMARY};", "Create New Project" },
                         
                         div {
-                            style: "margin-bottom: 20px;",
-                            label { 
-                                style: "display: block; margin-bottom: 8px; font-size: 12px; color: {TEXT_SECONDARY};",
-                                "Project Name" 
-                            }
+                            style: "flex: 1;",
+                            label { style: "display: block; font-size: 12px; color: {TEXT_SECONDARY}; margin-bottom: 6px;", "Project Name" }
                             input {
                                 style: "
-                                    width: 100%; padding: 8px 12px;
-                                    background-color: {BG_BASE}; 
-                                    border: 1px solid {BORDER_DEFAULT};
-                                    border-radius: 4px;
-                                    color: {TEXT_PRIMARY};
-                                    font-size: 14px;
-                                    outline: none;
+                                    width: 100%; padding: 8px 12px; background: {BG_BASE};
+                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                    color: {TEXT_PRIMARY}; outline: none; margin-bottom: 16px;
                                 ",
-                                value: "{new_project_name}",
-                                oninput: move |e| new_project_name.set(e.value()),
-                                autofocus: true,
+                                value: "{name}",
+                                oninput: move |e| name.set(e.value()),
                             }
+                            
+                            label { style: "display: block; font-size: 12px; color: {TEXT_SECONDARY}; margin-bottom: 6px;", "Location" }
                             div {
-                                style: "margin-top: 8px; font-size: 11px; color: {TEXT_DIM};",
-                                "Project will be created in ./projects/{new_project_name}"
+                                style: "display: flex; gap: 8px; margin-bottom: 8px;",
+                                input {
+                                    style: "
+                                        flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                        color: {TEXT_DIM}; outline: none;
+                                    ",
+                                    disabled: true,
+                                    value: "{parent_dir().to_string_lossy()}",
+                                }
+                                button {
+                                    style: "padding: 0 12px; background: {BG_SURFACE}; border: 1px solid {BORDER_DEFAULT}; border-radius: 4px; color: {TEXT_PRIMARY}; cursor: pointer;",
+                                    onclick: move |_| {
+                                        let start_dir = projects_folder_for_browse.clone();
+                                        if let Some(path) = rfd::FileDialog::new()
+                                            .set_directory(&start_dir)
+                                            .pick_folder() 
+                                        {
+                                            parent_dir.set(path);
+                                        }
+                                    },
+                                    "Browse..."
+                                }
+                            }
+                            
+                            div {
+                                style: "font-size: 11px; color: {TEXT_MUTED};",
+                                "Project will be created at: "
+                                span { style: "color: {TEXT_SECONDARY};", "{parent_dir().join(name()).to_string_lossy()}" }
                             }
                         }
                         
-                        div {
-                            style: "display: flex; justify-content: flex-end; gap: 12px;",
-                            button {
-                                style: "
-                                    padding: 8px 16px; border-radius: 4px; border: 1px solid {BORDER_DEFAULT};
-                                    background: transparent; color: {TEXT_SECONDARY}; cursor: pointer;
-                                ",
-                                onclick: move |_| show_new_project_dialog.set(false),
-                                "Cancel"
+                        button {
+                            style: "
+                                width: 100%; padding: 10px; margin-top: 16px;
+                                background-color: {ACCENT_VIDEO}; border: none; border-radius: 4px;
+                                color: white; font-weight: 500; cursor: pointer;
+                                transition: opacity 0.2s;
+                            ",
+                            onclick: move |_| {
+                                let n = name();
+                                if !n.trim().is_empty() {
+                                    on_create.call((parent_dir(), n));
+                                }
+                            },
+                            "Create Project"
+                        }
+                    }
+                    
+                    // Right: Open Project
+                    div {
+                        style: "flex: 1; padding: 24px; display: flex; flex-direction: column; background-color: {BG_BASE}; min-width: 0; overflow: hidden;",
+                        h2 { style: "margin: 0 0 12px 0; font-size: 16px; color: {TEXT_PRIMARY};", "Open Existing" },
+                        
+                        // Project list or empty state
+                        if existing_projects.is_empty() {
+                            div {
+                                style: "flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: {TEXT_DIM}; gap: 12px;",
+                                div { style: "font-size: 32px; opacity: 0.5;", "📂" }
+                                p { style: "margin: 0; font-size: 13px; text-align: center;", "No projects found" }
                             }
-                            button {
+                        } else {
+                            div {
                                 style: "
-                                    padding: 8px 16px; border-radius: 4px; border: none;
-                                    background-color: {ACCENT_AUDIO}; color: white; cursor: pointer;
-                                    font-weight: 500;
+                                    flex: 1; overflow-y: auto; overflow-x: hidden;
+                                    border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                                    background-color: {BG_SURFACE};
+                                    min-height: 0;
                                 ",
-                                onclick: move |_| {
-                                    let name = new_project_name();
-                                    let sanitized = name.trim();
-                                    if sanitized.is_empty() { return; }
-                                    
-                                    // Simple path logic for MVP: ./projects/{name}
-                                    let cwd = std::env::current_dir().unwrap_or_default();
-                                    let folder = cwd.join("projects").join(sanitized);
-                                    
-                                    match crate::state::Project::create_in(&folder, sanitized) {
-                                        Ok(new_proj) => {
-                                            project.set(new_proj);
-                                            show_new_project_dialog.set(false);
-                                        },
-                                        Err(e) => {
-                                            println!("Error creating project: {}", e);
-                                            // Future: show error toast
+                                for (proj_name, proj_path) in existing_projects.iter() {
+                                    {
+                                        let path_clone = proj_path.clone();
+                                        let path_for_menu = proj_path.clone();
+                                        let name_for_menu = proj_name.clone();
+                                        let on_open_clone = on_open.clone();
+                                        rsx! {
+                                            div {
+                                                key: "{proj_path.display()}",
+                                                style: "
+                                                    padding: 8px 10px; cursor: pointer;
+                                                    border-bottom: 1px solid {BORDER_SUBTLE};
+                                                    transition: background-color 0.15s ease;
+                                                ",
+                                                onmouseenter: move |_| {},
+                                                onclick: move |_| {
+                                                    on_open_clone.call(path_clone.clone());
+                                                },
+                                                oncontextmenu: move |e| {
+                                                    e.prevent_default();
+                                                    context_menu.set(Some((
+                                                        e.client_coordinates().x,
+                                                        e.client_coordinates().y,
+                                                        path_for_menu.clone(),
+                                                        name_for_menu.clone()
+                                                    )));
+                                                },
+                                                div {
+                                                    style: "display: flex; align-items: center; gap: 8px; min-width: 0;",
+                                                    span { style: "font-size: 14px; flex-shrink: 0;", "📁" }
+                                                    div {
+                                                        style: "flex: 1; min-width: 0; overflow: hidden;",
+                                                        div { 
+                                                            style: "font-size: 12px; font-weight: 500; color: {TEXT_PRIMARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;", 
+                                                            "{proj_name}" 
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                },
-                                "Create Project"
+                                }
                             }
                         }
+                        
+                        button {
+                            style: "
+                                width: 100%; padding: 10px; margin-top: 12px; flex-shrink: 0;
+                                background-color: {BG_SURFACE}; border: 1px solid {BORDER_DEFAULT};
+                                border-radius: 4px; color: {TEXT_PRIMARY}; font-weight: 500; cursor: pointer;
+                                transition: background 0.2s;
+                            ",
+                            onclick: move |_| {
+                                let start_dir = projects_folder_for_open.clone();
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_directory(&start_dir)
+                                    .set_title("Open Project")
+                                    .pick_folder()
+                                {
+                                    on_open.call(path);
+                                }
+                            },
+                            "Browse for Project..."
+                        }
+                    }
+                }
+            }
+            
+            // Context menu overlay for project deletion
+            if let Some((x, y, proj_path, proj_name)) = context_menu() {
+                // Backdrop to catch clicks outside menu
+                div {
+                    style: "
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        z-index: 10000;
+                    ",
+                    onclick: move |_| context_menu.set(None),
+                }
+                // The actual menu
+                div {
+                    style: "
+                        position: fixed; 
+                        left: min({x}px, calc(100vw - 160px)); 
+                        top: min({y}px, calc(100vh - 60px));
+                        background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                        border-radius: 6px; padding: 4px 0; min-width: 140px;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        z-index: 10001; font-size: 12px;
+                    ",
+                    div {
+                        style: "
+                            padding: 6px 12px; color: #ef4444; cursor: pointer;
+                            transition: background-color 0.1s ease;
+                        ",
+                        onmouseenter: move |_| {},
+                        onclick: move |_| {
+                            // Delete the project folder
+                            if let Err(e) = std::fs::remove_dir_all(&proj_path) {
+                                println!("Failed to delete project {:?}: {}", proj_path, e);
+                            } else {
+                                println!("Deleted project: {:?}", proj_path);
+                            }
+                            // Close menu and refresh list
+                            context_menu.set(None);
+                            refresh_counter.set(refresh_counter() + 1);
+                        },
+                        "🗑 Delete \"{proj_name}\""
                     }
                 }
             }
@@ -806,6 +1067,7 @@ fn StatusBar() -> Element {
 fn AssetsPanelContent(
     assets: Vec<crate::state::Asset>,
     on_import: EventHandler<crate::state::Asset>,
+    on_import_file: EventHandler<std::path::PathBuf>,
     on_delete: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
     on_drag_start: EventHandler<uuid::Uuid>,
@@ -833,31 +1095,7 @@ fn AssetsPanelContent(
                         .pick_files()
                     {
                         for path in paths {
-                            // Determine asset type from extension
-                            let ext = path.extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("")
-                                .to_lowercase();
-                            
-                            let name = path.file_stem()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("Untitled")
-                                .to_string();
-                            
-                            let asset = match ext.as_str() {
-                                "mp4" | "mov" | "avi" | "mkv" | "webm" => {
-                                    crate::state::Asset::new_video(name, path)
-                                }
-                                "mp3" | "wav" | "ogg" | "flac" => {
-                                    crate::state::Asset::new_audio(name, path)
-                                }
-                                "png" | "jpg" | "jpeg" | "gif" | "webp" => {
-                                    crate::state::Asset::new_image(name, path)
-                                }
-                                _ => continue, // Skip unknown types
-                            };
-                            
-                            on_import.call(asset);
+                            on_import_file.call(path);
                         }
                     }
                 },

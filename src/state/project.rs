@@ -318,6 +318,65 @@ impl Project {
         id
     }
 
+    /// Import a file into the project
+    /// Copies the file to the appropriate project subdirectory and returns a new Asset ID
+    pub fn import_file(&mut self, source_path: &Path) -> io::Result<Uuid> {
+        let project_root = self.project_path.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Other, "Project must be saved before importing files")
+        })?;
+
+        // 1. Determine asset type and target subfolder
+        let ext = source_path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        
+        let (subfolder, is_video, is_audio, is_image) = match ext.as_str() {
+            "mp4" | "mov" | "avi" | "mkv" | "webm" => ("video", true, false, false),
+            "mp3" | "wav" | "ogg" | "flac" => ("audio", false, true, false),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" => ("images", false, false, true),
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unsupported file type")),
+        };
+
+        // 2. Determine target filename with collision handling
+        let file_stem = source_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("import");
+        
+        let target_dir = project_root.join(subfolder);
+        // Ensure directory exists (it should, but safety first)
+        if !target_dir.exists() {
+            fs::create_dir_all(&target_dir)?;
+        }
+
+        let mut target_filename = format!("{}.{}", file_stem, ext);
+        let mut target_path = target_dir.join(&target_filename);
+        let mut counter = 1;
+
+        while target_path.exists() {
+            target_filename = format!("{}_{}.{}", file_stem, counter, ext);
+            target_path = target_dir.join(&target_filename);
+            counter += 1;
+        }
+
+        // 3. Copy the file
+        fs::copy(source_path, &target_path)?;
+
+        // 4. Create Asset with relative path
+        let relative_path = PathBuf::from(subfolder).join(&target_filename);
+        let name = file_stem.to_string(); // Use original filename as display name
+
+        let asset = if is_video {
+            Asset::new_video(name, relative_path)
+        } else if is_audio {
+            Asset::new_audio(name, relative_path)
+        } else {
+            Asset::new_image(name, relative_path)
+        };
+
+        Ok(self.add_asset(asset))
+    }
+
     /// Remove an asset by ID (also removes any clips using this asset)
     pub fn remove_asset(&mut self, id: Uuid) -> bool {
         // Remove any clips that reference this asset
@@ -472,6 +531,14 @@ impl Project {
         project.project_path = Some(folder.to_path_buf());
         project.save_to(folder)?;
         Ok(project)
+    }
+
+    /// Save the current project to a new folder (initializing it)
+    pub fn save_project_as(&mut self, folder: &Path, name: impl Into<String>) -> io::Result<()> {
+        self.name = name.into();
+        self.project_path = Some(folder.to_path_buf());
+        self.save_to(folder)?;
+        Ok(())
     }
 }
 

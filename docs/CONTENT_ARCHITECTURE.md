@@ -254,12 +254,13 @@ my-project/
     └── my_comfy_t2v.json
 ```
 
-### In-Project Only (MVP)
+### In-Project Only (Strict MVP)
 
-For MVP, all assets must be inside the project folder. External file references are a future power-user feature.
+For MVP, **all assets MUST be inside the project folder.**
 
-When a user selects a file from outside the project, prompt:
-> "Copy this file into your project folder?"
+- **No external linking:** Dragging a file into the app **implicitly copies** it into the project folder.
+- **No prompt:** The copy happens automatically to ensure project portability.
+- **"Project = Folder":** The project is fully self-contained. You can zip the folder and send it to another machine.
 
 ---
 

@@ -184,7 +184,11 @@ Providers have **bespoke input requirements**. Some need just text, others need 
 ## 🎬 User Workflow (MVP)
 
 ### Phase 1: Setup
-1. User opens the app, creates a new project
+### Phase 1: Setup
+1. User opens the app → **Startup Modal** appears (New Project / Open Project)
+2. **New Project**: User selects a folder/name. System immediately creates the folder structure on disk.
+3. **Open Project**: User selects an existing `project.json` or folder.
+4. App loads with the project active.
 2. Sets project dimensions (1080p, 4K, etc.) and frame rate
 3. Configures one or more providers in the Provider panel
 
@@ -352,7 +356,10 @@ my-project/
   - [x] Import files via native file dialog
   - [x] Visual distinction: standard assets vs generative assets (⚙️ badge, dashed border)
   - [x] Drag assets to timeline to create clips (with compatibility checks)
-  - [ ] Copy imported files to project folder
+    - [x] Copy imported files to project folder
+    - [x] **Import Logic**: Create `Project::import_file` to copy external files to `audio/`, `video/`, etc.
+    - [x] **Path Normalization**: Ensure `Asset` stores relative paths for portability
+    - [x] **Collision Handling**: Auto-rename files if they already exist in project folder
 
 - [ ] **Generative Assets** (Core Innovation) — In Progress
   - [x] "+ New Generative Video/Image/Audio" buttons in Assets panel
@@ -693,6 +700,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Added right-click context menu to delete projects from startup modal
+- **2026-01-06:** Fixed project list layout (compact items, proper overflow handling, scrollable)
+- **2026-01-06:** Improved Startup Modal: existing projects now listed automatically, file dialogs start from projects folder
 - **2026-01-04:** Implemented custom context menus for track management
 - **2026-01-04:** Added "Move Up/Down" track reordering via context menu
 - **2026-01-04:** Fixed window title and removed default Win/Edit/Help menu bar
@@ -722,5 +732,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-04*
+*Last updated: 2026-01-06*
 
