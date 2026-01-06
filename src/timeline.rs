@@ -12,7 +12,7 @@ use dioxus::prelude::*;
 use crate::app::{
     BG_BASE, BG_ELEVATED, BG_HOVER, BG_SURFACE,
     BORDER_DEFAULT, BORDER_STRONG, BORDER_SUBTLE,
-    TEXT_DIM, TEXT_MUTED, TEXT_SECONDARY,
+    TEXT_DIM, TEXT_MUTED, TEXT_SECONDARY, TEXT_PRIMARY,
     ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO,
 };
 use crate::state::{Track, TrackType};
@@ -28,6 +28,7 @@ pub fn TimelinePanel(
     tracks: Vec<Track>,
     clips: Vec<crate::state::Clip>,
     assets: Vec<crate::state::Asset>,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -398,6 +399,7 @@ pub fn TimelinePanel(
                                         track_type: track.track_type.clone(),
                                         clips: clips.clone(),
                                         assets: assets.clone(),
+                                        thumbnailer: thumbnailer.clone(),
                                         zoom: zoom,
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
@@ -605,6 +607,7 @@ pub fn TrackRow(
     track_type: TrackType,
     clips: Vec<crate::state::Clip>,
     assets: Vec<crate::state::Asset>,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     zoom: f64,  // pixels per second
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
@@ -666,6 +669,7 @@ pub fn TrackRow(
                     key: "{clip.id}",
                     clip: (*clip).clone(),
                     assets: assets.clone(),
+                    thumbnailer: thumbnailer.clone(),
                     zoom: zoom,
                     clip_color: clip_color,
                     on_delete: move |id| on_clip_delete.call(id),
@@ -682,6 +686,7 @@ pub fn TrackRow(
 fn ClipElement(
     clip: crate::state::Clip,
     assets: Vec<crate::state::Asset>,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     zoom: f64,
     clip_color: &'static str,
     on_delete: EventHandler<uuid::Uuid>,
@@ -694,6 +699,11 @@ fn ClipElement(
     let mut drag_start_x = use_signal(|| 0.0);
     let mut drag_start_time = use_signal(|| 0.0);
     let mut drag_start_duration = use_signal(|| 0.0);
+
+    // Calculate thumbnail URL using Wry's http mapping using our abstraction
+    let thumb_url = thumbnailer.get_thumbnail_path(clip.asset_id, 0.0).map(|p| {
+        crate::utils::get_local_file_url(&p)
+    });
 
     let left = (clip.start_time * zoom) as i32;
     let clip_width = (clip.duration * zoom).max(20.0) as i32;
@@ -799,7 +809,7 @@ fn ClipElement(
             div {
                 style: "
                     flex: 1; height: 100%; display: flex; align-items: center;
-                    padding: 0 10px; overflow: hidden;
+                    padding: 0 10px; overflow: visible; position: relative;
                 ",
                 onmousedown: move |e| {
                     if let Some(btn) = e.trigger_button() {
@@ -819,15 +829,57 @@ fn ClipElement(
                      menu_pos.set((coords.x, coords.y));
                      show_menu.set(true);
                 },
-                // Color indicator bar
-                div {
-                    style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
+                
+                // Thumbnails sub-layer (absolute)
+                if clip_width > 40 {
+                    div {
+                        style: "
+                            position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+                            display: flex; overflow: hidden; opacity: 0.5; pointer-events: none; z-index: 0;
+                        ",
+                        // Simple first frame thumbnail
+                        {
+                             match thumb_url {
+                                Some(src_url) => {
+                                    rsx! {
+                                        img {
+                                            src: "{src_url}",
+                                            style: "height: 100%; width: auto; object-fit: cover;",
+                                            draggable: "false",
+                                        }
+                                        // If wide, repeat it a bit to fill space (pseudo-filmstrip)
+                                        if clip_width > 150 {
+                                             img {
+                                                src: "{src_url}",
+                                                style: "height: 100%; width: auto; object-fit: cover; margin-left: 2px;",
+                                                draggable: "false",
+                                            }
+                                        }
+                                    }
+                                },
+                                None => rsx! {}
+                            }
+                        }
+                    }
                 }
-                // Clip name
-                span {
-                    style: "font-size: 10px; color: {TEXT_SECONDARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;",
-                    if is_generative { "✨ " } else { "" }
-                    "{asset_name}"
+
+                // Foreground Content Container (Text + Indicator)
+                div {
+                    style: "display: flex; align-items: center; width: 100%; z-index: 1; position: relative;",
+                    // Color indicator bar
+                    div {
+                        style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
+                    }
+                    // Clip name with text shadow for readability over image
+                    span {
+                        style: "
+                            font-size: 10px; color: {TEXT_PRIMARY}; 
+                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+                            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+                        ",
+                        if is_generative { "✨ " } else { "" }
+                        "{asset_name}"
+                    }
                 }
             }
             

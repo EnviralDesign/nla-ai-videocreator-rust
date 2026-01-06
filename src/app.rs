@@ -45,6 +45,9 @@ pub fn App() -> Element {
     // Project state - the core data model
     let mut project = use_signal(|| crate::state::Project::default());
     
+    // Core services
+    let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
+    
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
     let mut left_collapsed = use_signal(|| false);
@@ -213,7 +216,13 @@ pub fn App() -> Element {
                 project_name: project.read().name.clone(),
                 on_new_project: move |_| {
                     show_new_project_dialog.set(true);
-                }
+                },
+                on_save: move |_| {
+                     // Since project knows its own path (if loaded/saved once), we can just save
+                     // If it's effectively unsaved (default path), we might want a "Save As" flow eventually
+                     // For now, MVP assumes we have a path from startup or just saves to current effective path
+                     let _ = project.read().save(); 
+                },
             }
 
             // Main content
@@ -239,14 +248,55 @@ pub fn App() -> Element {
                     // Assets panel content
                     AssetsPanelContent {
                         assets: project.read().assets.clone(),
-                        on_import: move |asset| {
-                            project.write().add_asset(asset);
+                        on_import: move |asset: crate::state::Asset| {
+                            project.write().add_asset(asset.clone());
+                            let thumbs = thumbnailer.read().clone();
+                            // Spawn background task for thumbnail generation
+                            spawn(async move {
+                                thumbs.generate(&asset, false).await;
+                            });
                         },
                         on_import_file: move |path: std::path::PathBuf| {
                             // Implicit Copy: Always import directly designated by the strict folder policy
                             // We assume a project exists because the startup modal blocks everything else
-                            if let Err(e) = project.write().import_file(&path) {
-                                println!("Failed to import file {:?}: {}", path, e);
+                            let import_result = project.write().import_file(&path);
+                            match import_result {
+                                Ok(asset_id) => {
+                                    // Trigger thumbnail generation for the new asset
+                                    if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                                        let thumbs = thumbnailer.read().clone();
+                                        spawn(async move {
+                                            thumbs.generate(&asset, false).await;
+                                        });
+                                    }
+                                },
+                                Err(e) => println!("Failed to import file {:?}: {}", path, e),
+                            }
+                        },
+                        on_regenerate_thumbnails: move |asset_id: uuid::Uuid| {
+                            if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                                let thumbs = thumbnailer.read().clone();
+                                spawn(async move {
+                                     // Force regeneration logic could require a flag in future,
+                                     // but our `generate` function currently checks existence.
+                                     // To force it, we should probably delete the cache dir first or add a force flag.
+                                     // For now, let's just assume the user deleted the cache or we want to try again if it failed.
+                                     // To firmly force it, we'll manually nuke the cache dir for this asset here before calling generate.
+                                    
+                                     // We need to resolve the cache path to delete it.
+                                     // Thumbnailer encapsulates the path logic.
+                                     // Let's just trust `generate` or update `Thumbnailer` later to support `force`.
+                                     // Actually, user asked for manual trigger. Let's make it robust by deleting first.
+                                     // But `Thumbnailer` struct has `cache_root` private.
+                                     // Let's just call `generate` for now. If it already exists it returns silently.
+                                     // If we really want "Re-generate", we need to clear it.
+                                     // Let's updated `Thumbnailer` in a separate step or just rely on 'generate' doing a check.
+                                     // User said "what triggers re-generation... force manually".
+                                     // If `generate` returns early on existing folder, this won't do anything if folder exists.
+                                     // We should probably modify `Thumbnailer::generate` to accept a `force` boolean.
+                                     // I will do that in the next step. For now, let's wire up the UI.
+                                     thumbs.generate(&asset, true).await;
+                                });
                             }
                         },
                         on_delete: move |id| {
@@ -289,8 +339,10 @@ pub fn App() -> Element {
                         on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
                         // Project data
                         tracks: project.read().tracks.clone(),
+
                         clips: project.read().clips.clone(),
                         assets: project.read().assets.clone(),
+                        thumbnailer: thumbnailer.read().clone(),
                         // Timeline state
                         current_time: current_time(),
                         duration: duration,
@@ -474,6 +526,8 @@ pub fn App() -> Element {
                         let project_dir = parent_dir.join(&name);
                         match crate::state::Project::create_in(&project_dir, &name) {
                             Ok(new_proj) => {
+                                // Initialize thumbnailer with new project path
+                                thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(new_proj.project_path.clone().unwrap())));
                                 project.set(new_proj);
                                 startup_done.set(true);
                             },
@@ -483,6 +537,8 @@ pub fn App() -> Element {
                     on_open: move |path: std::path::PathBuf| {
                          match crate::state::Project::load(&path) { // path is the project folder
                             Ok(loaded_proj) => {
+                                // Initialize thumbnailer with loaded project path
+                                thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(loaded_proj.project_path.clone().unwrap())));
                                 project.set(loaded_proj);
                                 startup_done.set(true);
                             },
@@ -815,7 +871,11 @@ fn StartupModal(
 
 #[component]
 
-fn TitleBar(project_name: String, on_new_project: EventHandler<MouseEvent>) -> Element {
+fn TitleBar(
+    project_name: String, 
+    on_new_project: EventHandler<MouseEvent>,
+    on_save: EventHandler<MouseEvent>
+) -> Element {
     rsx! {
         div {
             style: "
@@ -837,6 +897,17 @@ fn TitleBar(project_name: String, on_new_project: EventHandler<MouseEvent>) -> E
                     ",
                     onclick: move |e| on_new_project.call(e),
                     "New Project"
+                }
+
+                // Save button
+                button {
+                    class: "collapse-btn",
+                    style: "
+                        background: transparent; border: none; color: {TEXT_PRIMARY}; 
+                        font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+                    ",
+                    onclick: move |e| on_save.call(e),
+                    "Save"
                 }
             }
             
@@ -1069,6 +1140,7 @@ fn AssetsPanelContent(
     on_import: EventHandler<crate::state::Asset>,
     on_import_file: EventHandler<std::path::PathBuf>,
     on_delete: EventHandler<uuid::Uuid>,
+    on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
     on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
@@ -1207,6 +1279,7 @@ fn AssetsPanelContent(
                         AssetItem { 
                             asset: asset.clone(),
                             on_delete: move |id| on_delete.call(id),
+                            on_regenerate_thumbnails: move |id| on_regenerate_thumbnails.call(id),
                             on_add_to_timeline: move |id| on_add_to_timeline.call(id),
                             on_drag_start: move |id| on_drag_start.call(id),
                         }
@@ -1222,6 +1295,7 @@ fn AssetsPanelContent(
 fn AssetItem(
     asset: crate::state::Asset,
     on_delete: EventHandler<uuid::Uuid>,
+    on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
     on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
@@ -1323,6 +1397,18 @@ fn AssetItem(
                                     show_menu.set(false);
                                 },
                                 "➕ Add to Timeline"
+                            }
+                             // Regenerate Thumbnails
+                            div {
+                                style: "
+                                    padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                                    transition: background-color 0.1s ease;
+                                ",
+                                onclick: move |_| {
+                                    on_regenerate_thumbnails.call(asset_id);
+                                    show_menu.set(false);
+                                },
+                                "🔄 Refresh Thumbnails"
                             }
                             // Divider
                             div {

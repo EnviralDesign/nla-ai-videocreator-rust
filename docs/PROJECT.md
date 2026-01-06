@@ -50,6 +50,12 @@ A purpose-built NLA editor that:
 │  │  ComfyUI   │ │   fal.ai   │ │   Veo3     │ │  Custom HTTP    │   │
 │  │  Adapter   │ │  Adapter   │ │  Adapter   │ │    Adapter      │   │
 │  └────────────┘ └────────────┘ └────────────┘ └─────────────────┘   │
+│  └────────────┘ └────────────┘ └────────────┘ └─────────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                       Rendering Engine                              │
+│  ┌───────────────┐   ┌────────────────┐   ┌─────────────────────┐   │
+│  │ Thumbnailer   │   │  Compositor    │   │   Frame Server      │   │
+│  └───────────────┘   └────────────────┘   └─────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -133,6 +139,41 @@ Provider entries are the pluggable backends that execute generation tasks. Key p
 - Configured via simple JSON/config
 - Can be a commercial API, local ComfyUI instance, or custom HTTP endpoint
 - Details of the adapter interface will be discovered during implementation—we're keeping this intentionally vague until we experiment with real ComfyUI workflows.
+
+---
+
+> **Intentionally vague for now.** We'll discover the right abstractions when we actually integrate with ComfyUI and experiment with real workflows. Premature abstraction is the enemy of good design.
+
+---
+
+## 🎥 Rendering & Preview Strategy
+
+### 1. Robust Compositor (Canvas-based)
+We are skipping intermediate "DOM overlay" solutions to build a production-grade compositing engine from the start. This ensures support for pixel-perfect operations, affine transformations (scale, rotate, translate), and complex blending.
+
+#### Architecture
+1.  **Frame Server (Rust)**
+    - Managed by a background thread (Tokio).
+    - Responsible for fetching or decoding frame data for the current timestamp.
+    - **Caching Strategy**: To ensure smooth scrubbing, we will employ a hybrid strategy:
+        - **Images**: Loaded fast from disk/memory.
+        - **Video**: decoded on demand or pre-cached as low-res proxy image sequences for performance.
+2.  **Compositor (Rust)**
+    - Takes raw frame buffers from the Frame Server.
+    - Applies a "Render Graph" of operations:
+        - **Transform**: Scale, Rotate, Translate (Project Canvas coordinates).
+        - **Composite**: Layering using standard blending modes (Source Over).
+    - Outputs a single raw RGBA buffer for the viewport.
+3.  **Display (Frontend/Dioxus)**
+    - A single `<canvas>` element in the Preview Panel.
+    - Rust sends the composited RGBA buffer to the shared UI memory or via efficient binary transfer.
+    - JavaScript draws the buffer using `putImageData` or WebGL texture upload.
+
+### 2. Thumbnail Generation
+Visual feedback on the timeline.
+- **Mechanism**: Background FFmpeg task.
+- **Output**: Cached JPEGs stored in `.project/cache/thumbnails/`.
+- **UI**: CSS `background-image` sprite sheets for performance.
 
 ---
 
@@ -339,7 +380,7 @@ my-project/
   - [x] Default new project: Video 1, Audio 1, Markers
   - [x] User can add additional Video/Audio tracks
 
-- [ ] **Clip System** — In Progress
+- [x] **Clip System**
   - [x] Render clips on timeline tracks (positioned by start_time, sized by duration)
   - [x] Visual distinction: standard clips vs generative clips (dashed border, ✨ prefix)
   - [x] Clip Interactions:
@@ -350,6 +391,8 @@ my-project/
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
   - [ ] Clip thumbnail/waveform preview
+    - [x] **Thumbnailer Service**: Background FFmpeg task to generate cache images
+    - [x] **Timeline Rendering**: UI logic to display cached thumbnails on clips
 
 - [x] **Asset System** (Phase 2A) ✓
   - [x] Assets panel shows project assets (imported + generative)
@@ -414,6 +457,12 @@ my-project/
   - [ ] Assume FFmpeg on PATH
   - [ ] Basic export settings
 
+- [ ] **Preview Window** (Priority: High)
+  - [ ] **Canvas Compositor**: Rust-side blending engine supporting RGBA buffers
+  - [ ] **Transform Pipeline**: Structure to handle Scale/Rotate/Translate data per clip
+  - [ ] **Frame Server**: Logic to fetch/decode frames for specific timestamps
+  - [ ] **Frontend Ops**: Efficient buffer transfer to JS `<canvas>`
+
 ### Nice to Have (v0.2+)
 
 - [ ] I2V generation (image-to-video providers)
@@ -425,7 +474,6 @@ my-project/
 - [ ] Provider presets library
 - [ ] fal.ai provider
 - [ ] Replicate provider
-- [ ] Preview window with real-time playback
 - [ ] Multiple audio tracks with mute/solo
 - [ ] Multiple video tracks with visibility toggle
 - [ ] Audio generation providers
@@ -599,6 +647,7 @@ This allows:
 | Providers Grouped by Output Type | Video/Image/Audio; input requirements vary per provider via dynamic schema | ✅ Decided |
 | No Separate Keyframe Track | Images are clips on Video tracks; "keyframes" are just overlapping reference images | ✅ Decided |
 | In-Project Assets Only (MVP) | All assets must be in project folder; external refs are future enhancement | ✅ Decided |
+| Canvas Compositor Strategy | Skip DOM overlay; build robust pixel-buffer compositing for transforms/blending immediately | ✅ Decided |
 
 ---
 
@@ -683,7 +732,9 @@ v1.0 - Public Release
 ### In Progress 🔄
 | Area | Status | Next Steps |
 |------|--------|------------|
-| **Clip System** | 🔲 Not Started | Place clips on tracks, resize, move |
+| **Clip System** | � In Progress | Placing clips works, previews next |
+| **Thumbnails** | ✅ Complete | Background generation & `nla://` protocol |
+| **Preview Engine** | 🔲 Planned | Design Canvas Compositor & Frame Server |
 | **Audio Playback** | 🔲 Not Started | Waveform visualization, sync with timeline |
 | **File Copy** | 🔲 Not Started | Copy imported files into project folder |
 
@@ -700,6 +751,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Implemented robust custom protocol (`http://nla.localhost`) for serving local thumbnails
+- **2026-01-06:** Added "Rendering & Preview Strategy" to docs
+- **2026-01-06:** Promoted Preview Window and Thumbnails to MVP status based on user feedback
 - **2026-01-06:** Added right-click context menu to delete projects from startup modal
 - **2026-01-06:** Fixed project list layout (compact items, proper overflow handling, scrollable)
 - **2026-01-06:** Improved Startup Modal: existing projects now listed automatically, file dialogs start from projects folder

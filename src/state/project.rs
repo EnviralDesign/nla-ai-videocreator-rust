@@ -331,7 +331,7 @@ impl Project {
             .unwrap_or("")
             .to_lowercase();
         
-        let (subfolder, is_video, is_audio, is_image) = match ext.as_str() {
+        let (subfolder, is_video, is_audio, _is_image) = match ext.as_str() {
             "mp4" | "mov" | "avi" | "mkv" | "webm" => ("video", true, false, false),
             "mp3" | "wav" | "ogg" | "flac" => ("audio", false, true, false),
             "png" | "jpg" | "jpeg" | "gif" | "webp" => ("images", false, false, true),
