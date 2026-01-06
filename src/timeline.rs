@@ -445,6 +445,7 @@ pub fn TimelinePanel(
 /// All elements here use pointer-events: none so clicks pass through to parent
 #[component]
 fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
+    let _ = scroll_offset;
     // Calculate tick spacing based on zoom level
     let seconds_per_major_tick = if zoom < 30.0 {
         10.0
@@ -468,9 +469,9 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
     // Generate tick positions
     let num_ticks = (duration / seconds_per_major_tick).ceil() as i32 + 1;
     
-    // Calculate visible time range for frame ticks
-    let visible_start_time = (scroll_offset / zoom).max(0.0);
-    let visible_end_time = ((scroll_offset + 2000.0) / zoom).min(duration);
+    let content_width = duration * zoom;
+    let visible_start_time = 0.0;
+    let visible_end_time = duration;
     
     rsx! {
         // Entire ruler container ignores pointer events - clicks pass through
@@ -487,11 +488,11 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
                         for frame in start_frame..=end_frame {
                             {
                                 let frame_time = frame as f64 / FPS;
-                                let x = (frame_time * zoom) - scroll_offset;
+                                let x = frame_time * zoom;
                                 // Skip frame ticks that land on second boundaries
                                 let is_on_second = frame % 60 == 0;
                                 
-                                if !is_on_second && x >= -10.0 && x <= 2010.0 {
+                                if !is_on_second && x <= content_width + 10.0 {
                                     rsx! {
                                         div {
                                             key: "frame-{frame}",
@@ -519,12 +520,12 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
             for i in 0..num_ticks {
                 {
                     let t = i as f64 * seconds_per_major_tick;
-                    let x = (t * zoom) - scroll_offset;
+                    let x = t * zoom;
                     let minutes = t as i32 / 60;
                     let seconds = t as i32 % 60;
                     let label = format!("{}:{:02}", minutes, seconds);
                     
-                    if x >= -50.0 && x <= 2000.0 {  // Only render visible ticks
+                    if x <= content_width + 50.0 {
                         rsx! {
                             // Container for tick + label (key must be on first node)
                             div {

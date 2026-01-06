@@ -751,6 +751,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Startup modal now captures project resolution, FPS, and duration; location field moved to bottom with separator
+- **2026-01-06:** Added project duration to settings and extended timeline ruler ticks across full duration
 - **2026-01-06:** Fixed left-edge trim drift by anchoring to drag-start end time
 - **2026-01-06:** Removed unused `mut` warnings from thumbnail tick signals and clip resize logic
 - **2026-01-06:** Added clip trim-in state for left-edge trimming; timeline thumbnails now offset by trim-in and clip filmstrip is clipped to bounds

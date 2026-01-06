@@ -27,6 +27,13 @@ pub struct ProjectSettings {
     pub height: u32,
     /// Frame rate (frames per second)
     pub fps: f64,
+    /// Project timeline duration in seconds
+    #[serde(default = "default_project_duration_seconds")]
+    pub duration_seconds: f64,
+}
+
+fn default_project_duration_seconds() -> f64 {
+    60.0
 }
 
 impl Default for ProjectSettings {
@@ -35,6 +42,7 @@ impl Default for ProjectSettings {
             width: 1920,
             height: 1080,
             fps: 60.0,
+            duration_seconds: default_project_duration_seconds(),
         }
     }
 }
@@ -241,7 +249,8 @@ impl Project {
     pub fn duration(&self) -> f64 {
         let clip_end = self.clips.iter().map(|c| c.end_time()).fold(0.0, f64::max);
         let marker_end = self.markers.iter().map(|m| m.time).fold(0.0, f64::max);
-        clip_end.max(marker_end).max(60.0) // Minimum 60 seconds
+        let configured = self.settings.duration_seconds.max(0.0);
+        clip_end.max(marker_end).max(configured)
     }
 
     /// Find a track by ID
@@ -575,6 +584,19 @@ impl Project {
     #[allow(dead_code)]
     pub fn create_in(folder: &Path, name: impl Into<String>) -> io::Result<Self> {
         let mut project = Project::new(name);
+        project.project_path = Some(folder.to_path_buf());
+        project.save_to(folder)?;
+        Ok(project)
+    }
+
+    /// Create a new project in a folder with explicit settings
+    pub fn create_in_with_settings(
+        folder: &Path,
+        name: impl Into<String>,
+        settings: ProjectSettings,
+    ) -> io::Result<Self> {
+        let mut project = Project::new(name);
+        project.settings = settings;
         project.project_path = Some(folder.to_path_buf());
         project.save_to(folder)?;
         Ok(project)
