@@ -1,5 +1,7 @@
 # NLA AI Video Creator
 
+This is early days, and changing constantly. If you are looking for something to use that does anything close to what is advertised - come back later :) 
+
 ![alt text](media/image.png)
 
 > **A local-first, AI-native Non-Linear Animation editor for generative video production.**
