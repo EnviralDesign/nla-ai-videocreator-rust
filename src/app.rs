@@ -42,6 +42,8 @@ const TIMELINE_COLLAPSED_HEIGHT: f64 = 32.0;  // Must match header height exactl
 const DEFAULT_CLIP_DURATION_SECONDS: f64 = 2.0;
 const PREVIEW_FPS: u64 = 24;
 const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
+const PREVIEW_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const PREVIEW_PREFETCH_SECONDS: f64 = 0.5;
 
 /// Main application component
 #[component]
@@ -53,7 +55,12 @@ pub fn App() -> Element {
     let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
     let thumbnail_refresh_tick = use_signal(|| 0_u64);
     let thumbnail_cache_buster = use_signal(|| 0_u64);
-    let mut previewer = use_signal(|| std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(std::path::PathBuf::from("projects/default"))));
+    let mut previewer = use_signal(|| std::sync::Arc::new(
+        crate::core::preview::PreviewRenderer::new(
+            std::path::PathBuf::from("projects/default"),
+            PREVIEW_CACHE_BUDGET_BYTES,
+        ),
+    ));
     let preview_image_url = use_signal(|| None::<String>);
     let preview_cache_buster = use_signal(|| 0_u64);
     let mut preview_dirty = use_signal(|| true);
@@ -136,6 +143,9 @@ pub fn App() -> Element {
         let mut preview_cache_buster = preview_cache_buster.clone();
         let mut preview_dirty = preview_dirty.clone();
         async move {
+            let render_request_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let render_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+            let prefetch_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
             let mut last_time = -1.0_f64;
             loop {
                 tokio::time::sleep(Duration::from_millis(PREVIEW_FRAME_INTERVAL_MS)).await;
@@ -146,26 +156,73 @@ pub fn App() -> Element {
                     continue;
                 }
 
+                let permit = match render_gate.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => continue,
+                };
+                let request_id = render_request_id
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
+
                 let project_snapshot = project.read().clone();
                 let renderer = previewer.read().clone();
-                let render_result = tokio::task::spawn_blocking(move || {
-                    renderer.render_frame(&project_snapshot, time)
+                let render_task = tokio::task::spawn_blocking(move || {
+                    let result = renderer.render_frame(&project_snapshot, time);
+                    drop(permit);
+                    (result, project_snapshot)
                 })
                 .await
-                .ok()
-                .flatten();
+                .ok();
 
-                if let Some(path) = render_result {
+                let Some((render_result, project_snapshot)) = render_task else {
+                    continue;
+                };
+
+                if render_request_id.load(std::sync::atomic::Ordering::Relaxed) != request_id {
+                    continue;
+                }
+
+                let rendered = if let Some(path) = render_result {
                     let url = crate::utils::get_local_file_url(&path);
                     let next_buster = preview_cache_buster() + 1;
                     preview_cache_buster.set(next_buster);
                     preview_image_url.set(Some(format!("{}?v={}", url, next_buster)));
+                    true
                 } else {
                     preview_image_url.set(None);
-                }
+                    false
+                };
 
                 preview_dirty.set(false);
+                let direction = if last_time < 0.0 {
+                    0
+                } else if time > last_time {
+                    1
+                } else if time < last_time {
+                    -1
+                } else {
+                    0
+                };
                 last_time = time;
+
+                if rendered && direction != 0 && PREVIEW_PREFETCH_SECONDS > 0.0 {
+                    let fps = project_snapshot.settings.fps.max(1.0);
+                    let prefetch_frames = (fps * PREVIEW_PREFETCH_SECONDS).round() as u32;
+                    if prefetch_frames > 0 {
+                        if let Ok(prefetch_permit) = prefetch_gate.clone().try_acquire_owned() {
+                            let renderer = previewer.read().clone();
+                            tokio::task::spawn_blocking(move || {
+                                renderer.prefetch_frames(
+                                    &project_snapshot,
+                                    time,
+                                    direction,
+                                    prefetch_frames,
+                                );
+                                drop(prefetch_permit);
+                            });
+                        }
+                    }
+                }
             }
         }
     });
@@ -660,7 +717,12 @@ pub fn App() -> Element {
                             Ok(new_proj) => {
                                 // Initialize thumbnailer with new project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(new_proj.project_path.clone().unwrap())));
-                                previewer.set(std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(new_proj.project_path.clone().unwrap())));
+                                previewer.set(std::sync::Arc::new(
+                                    crate::core::preview::PreviewRenderer::new(
+                                        new_proj.project_path.clone().unwrap(),
+                                        PREVIEW_CACHE_BUDGET_BYTES,
+                                    ),
+                                ));
                                 project.set(new_proj);
                                 preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);
@@ -674,7 +736,12 @@ pub fn App() -> Element {
                             Ok(loaded_proj) => {
                                 // Initialize thumbnailer with loaded project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(loaded_proj.project_path.clone().unwrap())));
-                                previewer.set(std::sync::Arc::new(crate::core::preview::PreviewRenderer::new(loaded_proj.project_path.clone().unwrap())));
+                                previewer.set(std::sync::Arc::new(
+                                    crate::core::preview::PreviewRenderer::new(
+                                        loaded_proj.project_path.clone().unwrap(),
+                                        PREVIEW_CACHE_BUDGET_BYTES,
+                                    ),
+                                ));
                                 project.set(loaded_proj);
                                 preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);

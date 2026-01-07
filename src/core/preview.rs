@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use image::{DynamicImage, Rgba, RgbaImage};
 use image::imageops::{overlay, resize, FilterType};
 
+use crate::core::video_decode::VideoDecodeWorker;
 use crate::state::{Asset, AssetKind, ClipTransform, Project, TrackType};
 
 const DEFAULT_MAX_PREVIEW_WIDTH: u32 = 960;
@@ -13,18 +14,100 @@ const DEFAULT_MAX_PREVIEW_HEIGHT: u32 = 540;
 const PREVIEW_FRAME_FILENAME: &str = "frame.png";
 const FFMPEG_TIME_EPSILON: f64 = 0.001;
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct FrameKey {
+    path: PathBuf,
+    frame_index: i64,
+}
+
+struct CacheEntry {
+    image: Arc<RgbaImage>,
+    size_bytes: usize,
+    last_used: u64,
+}
+
+struct FrameCache {
+    max_bytes: usize,
+    total_bytes: usize,
+    access_counter: u64,
+    entries: HashMap<FrameKey, CacheEntry>,
+    lru_order: VecDeque<(FrameKey, u64)>,
+}
+
+impl FrameCache {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            total_bytes: 0,
+            access_counter: 0,
+            entries: HashMap::new(),
+            lru_order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: &FrameKey) -> Option<Arc<RgbaImage>> {
+        let entry = self.entries.get_mut(key)?;
+        self.access_counter = self.access_counter.wrapping_add(1);
+        entry.last_used = self.access_counter;
+        self.lru_order.push_back((key.clone(), entry.last_used));
+        Some(Arc::clone(&entry.image))
+    }
+
+    fn insert(&mut self, key: FrameKey, image: Arc<RgbaImage>) {
+        let size_bytes = image_size_bytes(&image);
+        if size_bytes == 0 || self.max_bytes == 0 || size_bytes > self.max_bytes {
+            return;
+        }
+
+        if let Some(existing) = self.entries.remove(&key) {
+            self.total_bytes = self.total_bytes.saturating_sub(existing.size_bytes);
+        }
+
+        self.access_counter = self.access_counter.wrapping_add(1);
+        let last_used = self.access_counter;
+        self.entries.insert(
+            key.clone(),
+            CacheEntry {
+                image,
+                size_bytes,
+                last_used,
+            },
+        );
+        self.total_bytes = self.total_bytes.saturating_add(size_bytes);
+        self.lru_order.push_back((key, last_used));
+        self.evict_if_needed();
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.total_bytes > self.max_bytes {
+            let Some((key, stamp)) = self.lru_order.pop_front() else {
+                break;
+            };
+            let Some(entry) = self.entries.get(&key) else {
+                continue;
+            };
+            if entry.last_used != stamp {
+                continue;
+            }
+            self.total_bytes = self.total_bytes.saturating_sub(entry.size_bytes);
+            self.entries.remove(&key);
+        }
+    }
+}
+
 /// Generates composited preview frames for the current timeline time.
 pub struct PreviewRenderer {
     project_root: PathBuf,
     cache_root: PathBuf,
     max_width: u32,
     max_height: u32,
-    still_cache: Mutex<HashMap<PathBuf, Arc<RgbaImage>>>,
+    video_decoder: VideoDecodeWorker,
+    frame_cache: Mutex<FrameCache>,
 }
 
 impl PreviewRenderer {
     /// Create a new preview renderer rooted at the project's folder.
-    pub fn new(project_root: PathBuf) -> Self {
+    pub fn new(project_root: PathBuf, max_cache_bytes: usize) -> Self {
         let cache_root = project_root.join(".cache").join("preview");
         let _ = std::fs::create_dir_all(&cache_root);
 
@@ -33,7 +116,11 @@ impl PreviewRenderer {
             cache_root,
             max_width: DEFAULT_MAX_PREVIEW_WIDTH,
             max_height: DEFAULT_MAX_PREVIEW_HEIGHT,
-            still_cache: Mutex::new(HashMap::new()),
+            video_decoder: VideoDecodeWorker::new(
+                DEFAULT_MAX_PREVIEW_WIDTH,
+                DEFAULT_MAX_PREVIEW_HEIGHT,
+            ),
+            frame_cache: Mutex::new(FrameCache::new(max_cache_bytes)),
         }
     }
 
@@ -51,7 +138,8 @@ impl PreviewRenderer {
             self.max_height,
         );
 
-        let layers = self.collect_layers(project, project_root, time_seconds);
+        let fps = project.settings.fps.max(1.0);
+        let layers = self.collect_layers(project, project_root, time_seconds, fps);
 
         let has_visual_assets = project.clips.iter().any(|clip| {
             project
@@ -69,7 +157,7 @@ impl PreviewRenderer {
         for layer in layers {
             composite_layer(
                 &mut canvas,
-                layer.image,
+                &layer.image,
                 layer.transform,
                 preview_scale,
             );
@@ -89,6 +177,7 @@ impl PreviewRenderer {
         project: &Project,
         project_root: &Path,
         time_seconds: f64,
+        fps: f64,
     ) -> Vec<PreviewLayer> {
         let mut track_order: HashMap<uuid::Uuid, usize> = HashMap::new();
         let mut video_tracks = 0;
@@ -116,7 +205,7 @@ impl PreviewRenderer {
             };
 
             let source_time = (time_seconds - clip.start_time + clip.trim_in_seconds).max(0.0);
-            if let Some(image) = self.load_clip_frame(project_root, asset, source_time) {
+            if let Some(image) = self.load_clip_frame(project_root, asset, source_time, fps) {
                 layers.push(PreviewLayer {
                     track_index,
                     start_time: clip.start_time,
@@ -135,18 +224,57 @@ impl PreviewRenderer {
         layers
     }
 
+    pub fn prefetch_frames(
+        &self,
+        project: &Project,
+        time_seconds: f64,
+        direction: i32,
+        window_frames: u32,
+    ) {
+        if window_frames == 0 || direction == 0 {
+            return;
+        }
+
+        let fps = project.settings.fps.max(1.0);
+        let project_root = project
+            .project_path
+            .as_ref()
+            .unwrap_or(&self.project_root);
+        let start_frame = time_to_frame_index(time_seconds, fps);
+        let step = direction.signum() as i64;
+
+        for offset in 1..=window_frames {
+            let frame_index = start_frame + step * offset as i64;
+            if frame_index < 0 {
+                break;
+            }
+            let frame_time = frame_index_to_time(frame_index, fps);
+            for clip in project.clips.iter() {
+                if frame_time < clip.start_time || frame_time >= clip.end_time() {
+                    continue;
+                }
+
+                let asset = match project.find_asset(clip.asset_id) {
+                    Some(asset) if asset.is_visual() => asset,
+                    _ => continue,
+                };
+
+                let source_time = (frame_time - clip.start_time + clip.trim_in_seconds).max(0.0);
+                let _ = self.load_clip_frame(project_root, asset, source_time, fps);
+            }
+        }
+    }
+
     fn load_clip_frame(
         &self,
         project_root: &Path,
         asset: &Asset,
         time_seconds: f64,
-    ) -> Option<RgbaImage> {
-        match &asset.kind {
-            AssetKind::Image { path } => self.load_still(project_root.join(path)),
-            AssetKind::Video { path } => {
-                let time = clamp_time(time_seconds, asset.duration_seconds);
-                self.extract_video_frame(project_root.join(path), time)
-            }
+        fps: f64,
+    ) -> Option<Arc<RgbaImage>> {
+        let (path, is_video, duration) = match &asset.kind {
+            AssetKind::Image { path } => (project_root.join(path), false, asset.duration_seconds),
+            AssetKind::Video { path } => (project_root.join(path), true, asset.duration_seconds),
             AssetKind::GenerativeImage { folder, active_version } => {
                 let path = resolve_generative_path(
                     project_root,
@@ -154,7 +282,7 @@ impl PreviewRenderer {
                     active_version.as_deref(),
                     &["png", "jpg", "jpeg", "webp"],
                 )?;
-                self.load_still(path)
+                (path, false, asset.duration_seconds)
             }
             AssetKind::GenerativeVideo { folder, active_version } => {
                 let path = resolve_generative_path(
@@ -163,59 +291,57 @@ impl PreviewRenderer {
                     active_version.as_deref(),
                     &["mp4", "mov", "mkv", "webm"],
                 )?;
-                let time = clamp_time(time_seconds, asset.duration_seconds);
-                self.extract_video_frame(path, time)
+                (path, true, asset.duration_seconds)
             }
-            _ => None,
-        }
-    }
+            _ => return None,
+        };
 
-    fn load_still(&self, path: PathBuf) -> Option<RgbaImage> {
-        if let Ok(cache) = self.still_cache.lock() {
-            if let Some(image) = cache.get(&path) {
-                return Some((**image).clone());
+        let (frame_index, frame_time) = if is_video {
+            let time = clamp_time(time_seconds, duration);
+            let index = time_to_frame_index(time, fps);
+            let frame_time = frame_index_to_time(index, fps);
+            (index, frame_time)
+        } else {
+            (0, 0.0)
+        };
+
+        let cache_key = FrameKey {
+            path: path.clone(),
+            frame_index,
+        };
+
+        if let Ok(mut cache) = self.frame_cache.lock() {
+            if let Some(image) = cache.get(&cache_key) {
+                return Some(image);
             }
         }
 
-        let image = image::open(&path).ok()?.into_rgba8();
+        let image = if is_video {
+            self.video_decoder.decode(&path, frame_time)?
+        } else {
+            self.load_still(&path)?
+        };
 
-        if let Ok(mut cache) = self.still_cache.lock() {
-            cache.insert(path, Arc::new(image.clone()));
+        let image = Arc::new(image);
+        if let Ok(mut cache) = self.frame_cache.lock() {
+            cache.insert(cache_key, Arc::clone(&image));
         }
 
         Some(image)
     }
 
-    fn extract_video_frame(&self, path: PathBuf, time_seconds: f64) -> Option<RgbaImage> {
-        if !path.exists() {
-            return None;
-        }
-
-        let time_arg = format!("{:.3}", time_seconds.max(0.0));
-        let output = Command::new("ffmpeg")
-            .args(["-loglevel", "error", "-hide_banner"])
-            .args(["-ss", &time_arg])
-            .arg("-i")
-            .arg(&path)
-            .args(["-frames:v", "1"])
-            .args(["-f", "image2pipe"])
-            .args(["-vcodec", "png"])
-            .arg("pipe:1")
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        image::load_from_memory(&output.stdout).ok().map(|img| img.into_rgba8())
+    fn load_still(&self, path: &Path) -> Option<RgbaImage> {
+        let image = image::open(path).ok()?.into_rgba8();
+        Some(scale_image_to_fit(image, self.max_width, self.max_height))
     }
+
+    // Video decoding handled by the in-process decoder worker.
 }
 
 struct PreviewLayer {
     track_index: usize,
     start_time: f64,
-    image: RgbaImage,
+    image: Arc<RgbaImage>,
     transform: ClipTransform,
 }
 
@@ -241,14 +367,18 @@ fn preview_canvas_size(
 
 fn composite_layer(
     canvas: &mut RgbaImage,
-    mut image: RgbaImage,
+    image: &RgbaImage,
     transform: ClipTransform,
     preview_scale: f32,
 ) {
     let opacity = transform.opacity.clamp(0.0, 1.0);
-    if opacity < 1.0 {
-        apply_opacity(&mut image, opacity);
-    }
+    let image = if opacity < 1.0 {
+        let mut working = image.clone();
+        apply_opacity(&mut working, opacity);
+        Cow::Owned(working)
+    } else {
+        Cow::Borrowed(image)
+    };
 
     let (canvas_w, canvas_h) = (canvas.width() as f32, canvas.height() as f32);
     let (src_w, src_h) = (image.width() as f32, image.height() as f32);
@@ -265,7 +395,7 @@ fn composite_layer(
         return;
     }
 
-    let resized = resize(&image, scaled_w, scaled_h, FilterType::Triangle);
+    let resized = resize(image.as_ref(), scaled_w, scaled_h, FilterType::Triangle);
 
     let offset_x = ((canvas_w - scaled_w as f32) * 0.5) + (transform.position_x * preview_scale);
     let offset_y = ((canvas_h - scaled_h as f32) * 0.5) + (transform.position_y * preview_scale);
@@ -287,6 +417,43 @@ fn clamp_time(time_seconds: f64, duration: Option<f64>) -> f64 {
         time = time.min(limit);
     }
     time
+}
+
+fn time_to_frame_index(time_seconds: f64, fps: f64) -> i64 {
+    let fps = fps.max(1.0);
+    (time_seconds.max(0.0) * fps).floor() as i64
+}
+
+fn frame_index_to_time(frame_index: i64, fps: f64) -> f64 {
+    let fps = fps.max(1.0);
+    let frame_index = frame_index.max(0) as f64;
+    frame_index / fps
+}
+
+fn image_size_bytes(image: &RgbaImage) -> usize {
+    let width = image.width() as usize;
+    let height = image.height() as usize;
+    width
+        .saturating_mul(height)
+        .saturating_mul(4)
+}
+
+fn scale_image_to_fit(image: RgbaImage, max_width: u32, max_height: u32) -> RgbaImage {
+    let max_width = max_width.max(1);
+    let max_height = max_height.max(1);
+    let width = image.width();
+    let height = image.height();
+    if width <= max_width && height <= max_height {
+        return image;
+    }
+
+    let scale_w = max_width as f32 / width as f32;
+    let scale_h = max_height as f32 / height as f32;
+    let scale = scale_w.min(scale_h).max(0.01);
+    let target_w = (width as f32 * scale).round().max(1.0) as u32;
+    let target_h = (height as f32 * scale).round().max(1.0) as u32;
+
+    resize(&image, target_w, target_h, FilterType::Triangle)
 }
 
 fn resolve_generative_path(

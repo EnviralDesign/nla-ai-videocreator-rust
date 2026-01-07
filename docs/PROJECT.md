@@ -463,12 +463,12 @@ my-project/
 - [ ] **Preview Window** (Priority: High)
   - [x] Clip transform data model (position/scale/rotation/opacity)
   - [x] Preview render loop (playhead-driven frame requests)
-  - [x] Frame server v0: load stills + ffmpeg single-frame decode
+  - [x] Frame server v0: load stills + in-process FFmpeg decode worker
   - [x] Compositor v0: layer stack with opacity + basic scale/translate
   - [x] Preview panel renders composited frame via cached PNG
   - [ ] Transform pipeline v1: rotation + anchor/pivot support
   - [ ] Canvas compositor + direct buffer upload (replace PNG cache)
-  - [ ] Frame caching/prefetch for smooth scrubbing
+  - [x] Frame caching/prefetch for smooth scrubbing
 
 ### Nice to Have (v0.2+)
 
@@ -758,6 +758,11 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Updated ffmpeg-next to v8.0.0 to align with FFmpeg 7.x headers from vcpkg
+- **2026-01-06:** Added in-process FFmpeg decode worker for preview frame extraction
+- **2026-01-06:** Removed ffmpeg scale filter from preview decode to avoid empty frames; scaling happens in Rust after decode
+- **2026-01-06:** Fixed preview latest-wins gating so in-flight renders don't get discarded when the render gate is busy
+- **2026-01-06:** Added preview frame cache (2GB budget), latest-wins scheduling, and prefetch window for smoother scrubbing
 - **2026-01-06:** Clip context menu now supports moving clips up/down to compatible tracks
 - **2026-01-06:** Attribute editor numeric fields commit on blur/Enter to avoid input jitter
 - **2026-01-06:** Added preview renderer v0 (ffmpeg frame extraction + compositing) and playhead-driven preview updates
