@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use image::{Rgba, RgbaImage};
 use image::imageops::{overlay, resize, FilterType};
+use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
 
 use crate::core::preview_store;
 use crate::core::video_decode::{DecodeMode, VideoDecodeWorker};
@@ -56,6 +57,7 @@ pub struct PreviewLayerPlacement {
     pub scaled_w: f32,
     pub scaled_h: f32,
     pub opacity: f32,
+    pub rotation_deg: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -826,12 +828,45 @@ fn composite_layer(
     }
 
     let resized = resize(image.as_ref(), scaled_w, scaled_h, FilterType::Triangle);
-    overlay(
-        canvas,
-        &resized,
-        placement.offset_x.round() as i64,
-        placement.offset_y.round() as i64,
-    );
+    if placement.rotation_deg.abs() <= 0.01 {
+        overlay(
+            canvas,
+            &resized,
+            placement.offset_x.round() as i64,
+            placement.offset_y.round() as i64,
+        );
+        return;
+    }
+
+    let rotated = rotate_rgba(&resized, placement.rotation_deg);
+    let center_x = placement.offset_x + placement.scaled_w * 0.5;
+    let center_y = placement.offset_y + placement.scaled_h * 0.5;
+    let dest_x = (center_x - rotated.width() as f32 * 0.5).round() as i64;
+    let dest_y = (center_y - rotated.height() as f32 * 0.5).round() as i64;
+    overlay(canvas, &rotated, dest_x, dest_y);
+}
+
+fn rotate_rgba(image: &RgbaImage, rotation_deg: f32) -> RgbaImage {
+    let angle = rotation_deg.to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let abs_sin = sin.abs();
+    let abs_cos = cos.abs();
+    let src_w = image.width().max(1) as f32;
+    let src_h = image.height().max(1) as f32;
+    let new_w = (src_w * abs_cos + src_h * abs_sin).ceil().max(1.0) as u32;
+    let new_h = (src_w * abs_sin + src_h * abs_cos).ceil().max(1.0) as u32;
+
+    let mut expanded = RgbaImage::from_pixel(new_w, new_h, Rgba([0, 0, 0, 0]));
+    let offset_x = ((new_w as f32 - src_w) * 0.5).round() as i64;
+    let offset_y = ((new_h as f32 - src_h) * 0.5).round() as i64;
+    overlay(&mut expanded, image, offset_x, offset_y);
+
+    rotate_about_center(
+        &expanded,
+        angle,
+        Interpolation::Bilinear,
+        Rgba([0, 0, 0, 0]),
+    )
 }
 
 fn compute_layer_placement(
@@ -863,6 +898,7 @@ fn compute_layer_placement(
         scaled_w,
         scaled_h,
         opacity,
+        rotation_deg: transform.rotation_deg,
     })
 }
 

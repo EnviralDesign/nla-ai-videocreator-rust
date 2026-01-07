@@ -83,16 +83,18 @@ const QUAD_VERTICES: [Vertex; 6] = [
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct LayerUniform {
-    scale_translate: [f32; 4],
-    opacity_pad: [f32; 4],
+    scale_center: [f32; 4],
+    rotation_opacity: [f32; 4],
 }
 
 #[cfg(target_os = "windows")]
 impl LayerUniform {
-    fn new(scale: [f32; 2], translate: [f32; 2], opacity: f32) -> Self {
+    fn new(scale: [f32; 2], center: [f32; 2], rotation_deg: f32, opacity: f32) -> Self {
+        let radians = -rotation_deg.to_radians();
+        let (sin, cos) = radians.sin_cos();
         Self {
-            scale_translate: [scale[0], scale[1], translate[0], translate[1]],
-            opacity_pad: [opacity, 0.0, 0.0, 0.0],
+            scale_center: [scale[0], scale[1], center[0], center[1]],
+            rotation_opacity: [cos, sin, opacity, 0.0],
         }
     }
 }
@@ -110,8 +112,8 @@ struct VertexOutput {
 };
 
 struct LayerUniform {
-    scale_translate: vec4<f32>,
-    opacity_pad: vec4<f32>,
+    scale_center: vec4<f32>,
+    rotation_opacity: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -124,9 +126,18 @@ var<uniform> layer_uniform: LayerUniform;
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let scale = layer_uniform.scale_translate.xy;
-    let translate = layer_uniform.scale_translate.zw;
-    let pos = input.position * scale + translate;
+    let scale = layer_uniform.scale_center.xy;
+    let center = layer_uniform.scale_center.zw;
+    let rot = layer_uniform.rotation_opacity.xy;
+    let local = vec2<f32>(
+        (input.position.x - 0.5) * scale.x,
+        (0.5 - input.position.y) * scale.y
+    );
+    let rotated = vec2<f32>(
+        local.x * rot.x - local.y * rot.y,
+        local.x * rot.y + local.y * rot.x
+    );
+    let pos = center + rotated;
     out.position = vec4<f32>(pos, 0.0, 1.0);
     out.uv = input.uv;
     return out;
@@ -135,7 +146,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(layer_tex, layer_sampler, input.uv);
-    return vec4<f32>(color.rgb, color.a * layer_uniform.opacity_pad.x);
+    return vec4<f32>(color.rgb, color.a * layer_uniform.rotation_opacity.z);
 }
 "#;
 
@@ -438,7 +449,7 @@ impl PreviewGpuSurface {
             ],
         });
 
-        let uniform = LayerUniform::new([0.0, 0.0], [0.0, 0.0], placement.opacity);
+        let uniform = LayerUniform::new([0.0, 0.0], [0.0, 0.0], placement.rotation_deg, placement.opacity);
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("preview_gpu_layer_uniform"),
             contents: bytemuck::bytes_of(&uniform),
@@ -495,14 +506,18 @@ impl PreviewGpuSurface {
         let rect_x = offset_x + placement.offset_x * preview_scale;
         let rect_y = offset_y + placement.offset_y * preview_scale;
 
+        let center_x = rect_x + rect_w * 0.5;
+        let center_y = rect_y + rect_h * 0.5;
+
         let scale_x = rect_w / surface_w * 2.0;
-        let scale_y = -(rect_h / surface_h) * 2.0;
-        let translate_x = rect_x / surface_w * 2.0 - 1.0;
-        let translate_y = 1.0 - rect_y / surface_h * 2.0;
+        let scale_y = rect_h / surface_h * 2.0;
+        let center_x = center_x / surface_w * 2.0 - 1.0;
+        let center_y = 1.0 - center_y / surface_h * 2.0;
 
         Some(LayerUniform::new(
             [scale_x, scale_y],
-            [translate_x, translate_y],
+            [center_x, center_y],
+            placement.rotation_deg,
             placement.opacity,
         ))
     }

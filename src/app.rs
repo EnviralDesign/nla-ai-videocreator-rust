@@ -52,6 +52,9 @@ const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
 const PREVIEW_CACHE_BUDGET_BYTES: usize = 8usize * 1024 * 1024 * 1024;
 const PREVIEW_PREFETCH_SCRUB_SECONDS: f64 = 0.5;
 const PREVIEW_PREFETCH_PLAYBACK_SECONDS: f64 = 3.0;
+const PREVIEW_IDLE_PREFETCH_DELAY_MS: u64 = 800;
+const PREVIEW_IDLE_PREFETCH_AHEAD_SECONDS: f64 = 5.0;
+const PREVIEW_IDLE_PREFETCH_BEHIND_SECONDS: f64 = 1.0;
 const SHOW_CACHE_TICKS: bool = false;
 const PREVIEW_CANVAS_SCRIPT: &str = r#"
 let canvas = null;
@@ -298,12 +301,59 @@ pub fn App() -> Element {
             let render_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
             let prefetch_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
             let mut last_time = -1.0_f64;
+            let mut last_interaction = Instant::now();
             loop {
                 tokio::time::sleep(Duration::from_millis(PREVIEW_FRAME_INTERVAL_MS)).await;
 
                 let time = current_time();
                 let dirty = preview_dirty();
-                if !dirty && (time - last_time).abs() < 0.0001 {
+                let time_changed = (time - last_time).abs() >= 0.0001;
+
+                if !is_playing() && (time_changed || dirty) {
+                    last_interaction = Instant::now();
+                }
+
+                if !is_playing()
+                    && !dirty
+                    && last_interaction.elapsed()
+                        >= Duration::from_millis(PREVIEW_IDLE_PREFETCH_DELAY_MS)
+                {
+                    if let Ok(prefetch_permit) = prefetch_gate.clone().try_acquire_owned() {
+                        let project_snapshot = project.read().clone();
+                        let renderer = previewer.read().clone();
+                        let allow_hw_decode = use_hw_decode();
+                        let fps = project_snapshot.settings.fps.max(1.0);
+                        let ahead_frames =
+                            (fps * PREVIEW_IDLE_PREFETCH_AHEAD_SECONDS).round() as u32;
+                        let behind_frames =
+                            (fps * PREVIEW_IDLE_PREFETCH_BEHIND_SECONDS).round() as u32;
+                        tokio::task::spawn_blocking(move || {
+                            if ahead_frames > 0 {
+                                renderer.prefetch_frames(
+                                    &project_snapshot,
+                                    time,
+                                    1,
+                                    ahead_frames,
+                                    crate::core::preview::PreviewDecodeMode::Sequential,
+                                    allow_hw_decode,
+                                );
+                            }
+                            if behind_frames > 0 {
+                                renderer.prefetch_frames(
+                                    &project_snapshot,
+                                    time,
+                                    -1,
+                                    behind_frames,
+                                    crate::core::preview::PreviewDecodeMode::Sequential,
+                                    allow_hw_decode,
+                                );
+                            }
+                            drop(prefetch_permit);
+                        });
+                    }
+                }
+
+                if !dirty && !time_changed {
                     continue;
                 }
 

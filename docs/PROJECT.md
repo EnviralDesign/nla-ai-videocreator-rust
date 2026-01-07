@@ -759,6 +759,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added CPU fallback rotation support using imageproc (GPU + CPU paths now respect clip rotation)
+- **2026-01-07:** Added idle-time prefetch (800ms delay, 5s ahead + 1s behind) to warm the preview cache when not playing
+- **2026-01-07:** GPU preview now applies clip rotation (rotation degrees respected during compositing)
 - **2026-01-07:** Added a title-bar "HW Dec" toggle to force CPU decode for A/B comparisons
 - **2026-01-07:** Defaulted preview stats toggle to off (still available via the header toggle)
 - **2026-01-07:** Moved preview stats into a docked right-side column so they stay visible above the native wgpu surface
