@@ -2241,9 +2241,10 @@ fn PreviewPanel(
         } else {
             0.0
         };
+        let scan_ms = (stats.collect_ms - stats.video_decode_ms - stats.still_load_ms).max(0.0);
         let mut parts = Vec::new();
         parts.push(format!("total {:.1}ms", stats.total_ms));
-        parts.push(format!("collect {:.1}ms", stats.collect_ms));
+        parts.push(format!("scan {:.1}ms", scan_ms));
         parts.push(format!("vdec {:.1}ms", stats.video_decode_ms));
         parts.push(format!("still {:.1}ms", stats.still_load_ms));
         parts.push(format!("comp {:.1}ms", stats.composite_ms));

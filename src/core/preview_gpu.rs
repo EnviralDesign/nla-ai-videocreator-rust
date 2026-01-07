@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
 };
 
 #[cfg(target_os = "windows")]
@@ -372,6 +373,18 @@ impl PreviewGpuSurface {
         surface.configure(&device, &config);
         window.set_visible(true);
 
+        // Make the window transparent to mouse events so clicks pass through to the webview
+        // beneath. This prevents the overlay from blocking resize handles on adjacent panels.
+        unsafe {
+            let hwnd = window.hwnd();
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(
+                hwnd,
+                GWL_EXSTYLE,
+                ex_style | WS_EX_TRANSPARENT as isize | WS_EX_LAYERED as isize,
+            );
+        }
+
         Some(Self {
             window,
             surface,
@@ -442,12 +455,28 @@ impl PreviewGpuSurface {
     }
 
     pub fn apply_bounds(&mut self, bounds: PreviewBounds) -> bool {
-        let size = bounds.to_physical_size();
+        // Inset the overlay bounds to prevent overlap with adjacent resize handles.
+        // The resize handles are 4px wide, so we inset by that much plus a small margin.
+        const INSET_LEFT: i32 = 8;
+        const INSET_RIGHT: i32 = 8;
+        const INSET_TOP: i32 = 4;
+        const INSET_BOTTOM: i32 = 12;  // Larger to clear the timeline resize handle
+
+        let mut size = bounds.to_physical_size();
         let mut position = bounds.to_physical_position();
+        
         // TODO: Remove once we can anchor to the WebView HWND directly.
         // This compensates for a small WebView2 client-area inset on Windows.
         position.x = position.x.saturating_add(PREVIEW_NATIVE_OFFSET_X);
         position.y = position.y.saturating_add(PREVIEW_NATIVE_OFFSET_Y);
+        
+        // Apply inset to prevent overlap with resize handles
+        position.x = position.x.saturating_add(INSET_LEFT);
+        position.y = position.y.saturating_add(INSET_TOP);
+        let new_width = size.width.saturating_sub((INSET_LEFT + INSET_RIGHT) as u32);
+        let new_height = size.height.saturating_sub((INSET_TOP + INSET_BOTTOM) as u32);
+        size = dioxus::desktop::tao::dpi::PhysicalSize::new(new_width.max(1), new_height.max(1));
+        
         if size.width == 0 || size.height == 0 {
             return false;
         }
