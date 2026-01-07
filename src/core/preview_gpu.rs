@@ -12,6 +12,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
+const PREVIEW_NATIVE_OFFSET_X: i32 = -8;
+#[cfg(target_os = "windows")]
+const PREVIEW_NATIVE_OFFSET_Y: i32 = -1;
+#[cfg(target_os = "windows")]
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -439,7 +443,11 @@ impl PreviewGpuSurface {
 
     pub fn apply_bounds(&mut self, bounds: PreviewBounds) -> bool {
         let size = bounds.to_physical_size();
-        let position = bounds.to_physical_position();
+        let mut position = bounds.to_physical_position();
+        // TODO: Remove once we can anchor to the WebView HWND directly.
+        // This compensates for a small WebView2 client-area inset on Windows.
+        position.x = position.x.saturating_add(PREVIEW_NATIVE_OFFSET_X);
+        position.y = position.y.saturating_add(PREVIEW_NATIVE_OFFSET_Y);
         if size.width == 0 || size.height == 0 {
             return false;
         }

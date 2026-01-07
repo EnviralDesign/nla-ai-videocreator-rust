@@ -759,6 +759,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added a small Windows-only native preview offset to compensate for WebView2 client-area inset
+- **2026-01-07:** Kept preview header layout stable when stats are hidden and removed preview padding to align the native surface
+- **2026-01-07:** Added a title-bar toggle for preview stats and anchored native preview bounds to a dedicated host rectangle
 - **2026-01-07:** Aligned native preview bounds to the canvas element, moved stats into the preview header, and switched native letterbox bars to black
 - **2026-01-07:** Fixed native preview positioning to use parent-relative coordinates (avoids double offset when moving the app window)
 - **2026-01-07:** Adjusted native preview window positioning to use window-origin coordinates and raised the child window to the top of the z-order

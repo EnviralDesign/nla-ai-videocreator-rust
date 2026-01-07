@@ -111,7 +111,7 @@ while (true) {
 "#;
 
 const PREVIEW_NATIVE_HOST_SCRIPT: &str = r#"
-const hostId = "preview-canvas";
+const hostId = "preview-native-host";
 let last = null;
 
 function sendBounds() {
@@ -191,6 +191,7 @@ pub fn App() -> Element {
     let mut preview_native_uploaded = use_signal(|| None::<(u64, u32, u32)>);
     let mut preview_gpu_upload_ms = use_signal(|| None::<f64>);
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
+    let mut show_preview_stats = use_signal(|| true);
     let desktop = use_window();
     let desktop_for_bounds = desktop.clone();
     let desktop_for_events = desktop.clone();
@@ -674,6 +675,10 @@ pub fn App() -> Element {
                      // For now, MVP assumes we have a path from startup or just saves to current effective path
                      let _ = project.read().save(); 
                 },
+                show_preview_stats: show_preview_stats(),
+                on_toggle_preview_stats: move |_| {
+                    show_preview_stats.set(!show_preview_stats());
+                },
             }
 
             // Main content
@@ -783,15 +788,16 @@ pub fn App() -> Element {
                     class: "center-area",
                     style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
 
-    PreviewPanel {
-        width: project.read().settings.width,
-        height: project.read().settings.height,
-        fps: project.read().settings.fps,
-        preview_frame: preview_frame(),
-        preview_stats: preview_stats(),
-        preview_gpu_upload_ms: preview_gpu_upload_ms(),
-        preview_native_active: preview_native_active(),
-    }
+                    PreviewPanel {
+                        width: project.read().settings.width,
+                        height: project.read().settings.height,
+                        fps: project.read().settings.fps,
+                        preview_frame: preview_frame(),
+                        preview_stats: preview_stats(),
+                        preview_gpu_upload_ms: preview_gpu_upload_ms(),
+                        show_preview_stats: show_preview_stats(),
+                        preview_native_active: preview_native_active(),
+                    }
 
                     // Timeline resize handle
                     div {
@@ -1724,8 +1730,11 @@ fn StartupModal(
 fn TitleBar(
     project_name: String, 
     on_new_project: EventHandler<MouseEvent>,
-    on_save: EventHandler<MouseEvent>
+    on_save: EventHandler<MouseEvent>,
+    show_preview_stats: bool,
+    on_toggle_preview_stats: EventHandler<MouseEvent>,
 ) -> Element {
+    let stats_toggle_bg = if show_preview_stats { BG_HOVER } else { BG_BASE };
     rsx! {
         div {
             style: "
@@ -1763,8 +1772,24 @@ fn TitleBar(
             
             span { style: "font-size: 13px; color: {TEXT_MUTED};", "{project_name}" }
             
-            // Right side spacer (balance)
-            div { style: "width: 150px;" } 
+            div {
+                style: "display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 160px;",
+                span {
+                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.6px;",
+                    "Stats"
+                }
+                button {
+                    class: "collapse-btn",
+                    style: "
+                        background: {stats_toggle_bg};
+                        border: 1px solid {BORDER_DEFAULT};
+                        color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
+                        padding: 4px 10px; border-radius: 999px;
+                    ",
+                    onclick: move |e| on_toggle_preview_stats.call(e),
+                    if show_preview_stats { "On" } else { "Off" }
+                }
+            }
         }
     }
 }
@@ -2195,6 +2220,7 @@ fn PreviewPanel(
     preview_frame: Option<crate::core::preview::PreviewFrameInfo>,
     preview_stats: Option<crate::core::preview::PreviewStats>,
     preview_gpu_upload_ms: Option<f64>,
+    show_preview_stats: bool,
     preview_native_active: bool,
 ) -> Element {
     let fps_label = format!("{:.0}", fps);
@@ -2207,7 +2233,8 @@ fn PreviewPanel(
         "hidden"
     };
     let show_placeholder = !preview_native_active && !has_frame;
-    let stats_line = preview_stats.map(|stats| {
+    let stats_line = if show_preview_stats {
+        preview_stats.map(|stats| {
         let total_queries = stats.cache_hits + stats.cache_misses;
         let hit_ratio = if total_queries > 0 {
             (stats.cache_hits as f64 / total_queries as f64) * 100.0
@@ -2227,7 +2254,11 @@ fn PreviewPanel(
         parts.push(format!("hit {:.0}%", hit_ratio));
         parts.push(format!("layers {}", stats.layers));
         parts.join(" | ")
-    });
+        })
+    } else {
+        None
+    };
+    let stats_line = stats_line.unwrap_or_default();
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
@@ -2238,20 +2269,21 @@ fn PreviewPanel(
                     height: 32px; padding: 0 14px;
                     background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER_DEFAULT};
                 ",
-                span { style: "font-size: 11px; font-weight: 500; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Preview" }
-                if let Some(stats_line) = stats_line {
-                    span {
-                        style: "
-                            justify-self: center; min-width: 0;
-                            font-family: 'SF Mono', Consolas, monospace;
-                            font-size: 10px; color: {TEXT_DIM};
-                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-                        ",
-                        "{stats_line}"
-                    }
+                span {
+                    style: "grid-column: 1; font-size: 11px; font-weight: 500; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;",
+                    "Preview"
+                }
+                span {
+                    style: "
+                        grid-column: 2; justify-self: center; min-width: 0;
+                        font-family: 'SF Mono', Consolas, monospace;
+                        font-size: 10px; color: {TEXT_DIM};
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                    ",
+                    "{stats_line}"
                 }
                 div {
-                    style: "display: flex; align-items: center; gap: 6px; font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: {TEXT_DIM};",
+                    style: "grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 6px; font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: {TEXT_DIM};",
                     span { "{width} x {height}" }
                     span { style: "color: {TEXT_MUTED};", "@" }
                     span { "{fps_label}" }
@@ -2259,12 +2291,16 @@ fn PreviewPanel(
             }
 
             div {
-                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 16px; position: relative;",
+                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 0; position: relative;",
+                div {
+                    id: "preview-native-host",
+                    style: "position: absolute; inset: 0; background-color: transparent; pointer-events: none; z-index: 0;",
+                }
                 canvas {
                     id: "preview-canvas",
                     width: "1",
                     height: "1",
-                    style: "position: relative; z-index: 1; max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 0; background-color: #000; visibility: {canvas_visibility};",
+                    style: "position: relative; z-index: 1; max-width: 100%; max-height: 100%; width: auto; height: auto; border: none; border-radius: 0; background-color: #000; visibility: {canvas_visibility};",
                 }
                 if show_placeholder {
                     div {
