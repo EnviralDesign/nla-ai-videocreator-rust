@@ -881,7 +881,7 @@ fn compute_layer_placement(
         return None;
     }
 
-    let base_scale = (canvas_w / src_w).min(canvas_h / src_h);
+    let base_scale = preview_scale;
     let scaled_w = src_w * base_scale * transform.scale_x.max(0.01);
     let scaled_h = src_h * base_scale * transform.scale_y.max(0.01);
     if scaled_w <= 0.0 || scaled_h <= 0.0 {

@@ -89,12 +89,18 @@ struct LayerUniform {
 
 #[cfg(target_os = "windows")]
 impl LayerUniform {
-    fn new(scale: [f32; 2], center: [f32; 2], rotation_deg: f32, opacity: f32) -> Self {
+    fn new(
+        scale: [f32; 2],
+        center: [f32; 2],
+        rotation_deg: f32,
+        opacity: f32,
+        aspect: f32,
+    ) -> Self {
         let radians = -rotation_deg.to_radians();
         let (sin, cos) = radians.sin_cos();
         Self {
             scale_center: [scale[0], scale[1], center[0], center[1]],
-            rotation_opacity: [cos, sin, opacity, 0.0],
+            rotation_opacity: [cos, sin, opacity, aspect],
         }
     }
 }
@@ -129,13 +135,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let scale = layer_uniform.scale_center.xy;
     let center = layer_uniform.scale_center.zw;
     let rot = layer_uniform.rotation_opacity.xy;
+    let aspect = layer_uniform.rotation_opacity.w;
+    let inv_aspect = 1.0 / max(aspect, 0.0001);
     let local = vec2<f32>(
         (input.position.x - 0.5) * scale.x,
         (0.5 - input.position.y) * scale.y
     );
     let rotated = vec2<f32>(
-        local.x * rot.x - local.y * rot.y,
-        local.x * rot.y + local.y * rot.x
+        local.x * rot.x - local.y * inv_aspect * rot.y,
+        local.x * aspect * rot.y + local.y * rot.x
     );
     let pos = center + rotated;
     out.position = vec4<f32>(pos, 0.0, 1.0);
@@ -449,7 +457,13 @@ impl PreviewGpuSurface {
             ],
         });
 
-        let uniform = LayerUniform::new([0.0, 0.0], [0.0, 0.0], placement.rotation_deg, placement.opacity);
+        let uniform = LayerUniform::new(
+            [0.0, 0.0],
+            [0.0, 0.0],
+            placement.rotation_deg,
+            placement.opacity,
+            1.0,
+        );
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("preview_gpu_layer_uniform"),
             contents: bytemuck::bytes_of(&uniform),
@@ -513,12 +527,14 @@ impl PreviewGpuSurface {
         let scale_y = rect_h / surface_h * 2.0;
         let center_x = center_x / surface_w * 2.0 - 1.0;
         let center_y = 1.0 - center_y / surface_h * 2.0;
+        let aspect = surface_w / surface_h;
 
         Some(LayerUniform::new(
             [scale_x, scale_y],
             [center_x, center_y],
             placement.rotation_deg,
             placement.opacity,
+            aspect,
         ))
     }
 
