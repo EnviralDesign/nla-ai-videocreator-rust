@@ -8,12 +8,13 @@ use image::{Rgba, RgbaImage};
 use image::imageops::{overlay, resize, FilterType};
 
 use crate::core::preview_store;
-use crate::core::video_decode::VideoDecodeWorker;
+use crate::core::video_decode::{DecodeMode, VideoDecodeWorker};
 use crate::state::{Asset, AssetKind, ClipTransform, Project, TrackType};
 
 const DEFAULT_MAX_PREVIEW_WIDTH: u32 = 960;
 const DEFAULT_MAX_PREVIEW_HEIGHT: u32 = 540;
 const FFMPEG_TIME_EPSILON: f64 = 0.001;
+const MAX_CACHE_BUCKETS: usize = 120;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewStats {
@@ -26,6 +27,12 @@ pub struct PreviewStats {
     pub layers: usize,
     pub cache_hits: usize,
     pub cache_misses: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PreviewDecodeMode {
+    Seek,
+    Sequential,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,7 +177,12 @@ impl PreviewRenderer {
     }
 
     /// Render a preview frame for the given time and store the encoded PNG in memory.
-    pub fn render_frame(&self, project: &Project, time_seconds: f64) -> RenderOutput {
+    pub fn render_frame(
+        &self,
+        project: &Project,
+        time_seconds: f64,
+        decode_mode: PreviewDecodeMode,
+    ) -> RenderOutput {
         let render_start = Instant::now();
         let mut stats = PreviewStats::default();
         let project_root = project
@@ -187,7 +199,8 @@ impl PreviewRenderer {
 
         let fps = project.settings.fps.max(1.0);
         let collect_start = Instant::now();
-        let layers = self.collect_layers(project, project_root, time_seconds, fps, &mut stats);
+        let layers =
+            self.collect_layers(project, project_root, time_seconds, fps, decode_mode, &mut stats);
         stats.collect_ms = elapsed_ms(collect_start);
         stats.layers = layers.len();
 
@@ -239,7 +252,12 @@ impl PreviewRenderer {
     }
 
     /// Render the per-layer stack for GPU compositing.
-    pub fn render_layers(&self, project: &Project, time_seconds: f64) -> RenderOutput {
+    pub fn render_layers(
+        &self,
+        project: &Project,
+        time_seconds: f64,
+        decode_mode: PreviewDecodeMode,
+    ) -> RenderOutput {
         let render_start = Instant::now();
         let mut stats = PreviewStats::default();
         let project_root = project
@@ -256,7 +274,8 @@ impl PreviewRenderer {
 
         let fps = project.settings.fps.max(1.0);
         let collect_start = Instant::now();
-        let layers = self.collect_layers(project, project_root, time_seconds, fps, &mut stats);
+        let layers =
+            self.collect_layers(project, project_root, time_seconds, fps, decode_mode, &mut stats);
         stats.collect_ms = elapsed_ms(collect_start);
         stats.layers = layers.len();
 
@@ -312,6 +331,7 @@ impl PreviewRenderer {
         project_root: &Path,
         time_seconds: f64,
         fps: f64,
+        decode_mode: PreviewDecodeMode,
         stats: &mut PreviewStats,
     ) -> Vec<PreviewLayer> {
         let mut track_order: HashMap<uuid::Uuid, usize> = HashMap::new();
@@ -345,6 +365,7 @@ impl PreviewRenderer {
                 asset,
                 source_time,
                 fps,
+                decode_mode,
                 Some(stats),
             ) {
                 layers.push(PreviewLayer {
@@ -371,6 +392,7 @@ impl PreviewRenderer {
         time_seconds: f64,
         direction: i32,
         window_frames: u32,
+        decode_mode: PreviewDecodeMode,
     ) {
         if window_frames == 0 || direction == 0 {
             return;
@@ -401,9 +423,81 @@ impl PreviewRenderer {
                 };
 
                 let source_time = (frame_time - clip.start_time + clip.trim_in_seconds).max(0.0);
-                let _ = self.load_clip_frame(project_root, asset, source_time, fps, None);
+                let _ = self.load_clip_frame(
+                    project_root,
+                    asset,
+                    source_time,
+                    fps,
+                    decode_mode,
+                    None,
+                );
             }
         }
+    }
+
+    pub fn cached_buckets_for_project(
+        &self,
+        project: &Project,
+        bucket_hint_seconds: f64,
+    ) -> HashMap<uuid::Uuid, Vec<bool>> {
+        let project_root = project
+            .project_path
+            .as_ref()
+            .unwrap_or(&self.project_root);
+        let fps = project.settings.fps.max(1.0);
+        let min_bucket_seconds = (1.0 / fps).max(0.001);
+        let bucket_hint_seconds = bucket_hint_seconds.max(min_bucket_seconds);
+        let mut result = HashMap::new();
+
+        let Ok(cache) = self.frame_cache.lock() else {
+            return result;
+        };
+
+        for clip in project.clips.iter() {
+            let Some(asset) = project.find_asset(clip.asset_id) else {
+                continue;
+            };
+            if !asset.is_visual() {
+                continue;
+            }
+
+            let Some((path, is_video, duration)) = resolve_asset_source(
+                project_root,
+                asset,
+                &["png", "jpg", "jpeg", "webp"],
+                &["mp4", "mov", "mkv", "webm"],
+            ) else {
+                continue;
+            };
+
+            let clip_duration = clip.duration.max(0.0);
+            if clip_duration <= 0.0 {
+                continue;
+            }
+
+            let mut bucket_seconds = bucket_hint_seconds.max(clip_duration / MAX_CACHE_BUCKETS as f64);
+            bucket_seconds = bucket_seconds.max(min_bucket_seconds);
+            let bucket_count = (clip_duration / bucket_seconds).ceil().max(1.0) as usize;
+
+            let mut buckets = Vec::with_capacity(bucket_count);
+            for index in 0..bucket_count {
+                let time_in_clip = (index as f64 * bucket_seconds).min(clip_duration);
+                let mut time_in_asset = clip.trim_in_seconds.max(0.0) + time_in_clip;
+                if is_video {
+                    time_in_asset = clamp_time(time_in_asset, duration);
+                }
+                let frame_index = time_to_frame_index(time_in_asset, fps);
+                let key = FrameKey {
+                    path: path.clone(),
+                    frame_index,
+                };
+                buckets.push(cache.entries.contains_key(&key));
+            }
+
+            result.insert(clip.id, buckets);
+        }
+
+        result
     }
 
     fn load_clip_frame(
@@ -412,31 +506,11 @@ impl PreviewRenderer {
         asset: &Asset,
         time_seconds: f64,
         fps: f64,
+        decode_mode: PreviewDecodeMode,
         mut stats: Option<&mut PreviewStats>,
     ) -> Option<Arc<RgbaImage>> {
-        let (path, is_video, duration) = match &asset.kind {
-            AssetKind::Image { path } => (project_root.join(path), false, asset.duration_seconds),
-            AssetKind::Video { path } => (project_root.join(path), true, asset.duration_seconds),
-            AssetKind::GenerativeImage { folder, active_version } => {
-                let path = resolve_generative_path(
-                    project_root,
-                    folder,
-                    active_version.as_deref(),
-                    &["png", "jpg", "jpeg", "webp"],
-                )?;
-                (path, false, asset.duration_seconds)
-            }
-            AssetKind::GenerativeVideo { folder, active_version } => {
-                let path = resolve_generative_path(
-                    project_root,
-                    folder,
-                    active_version.as_deref(),
-                    &["mp4", "mov", "mkv", "webm"],
-                )?;
-                (path, true, asset.duration_seconds)
-            }
-            _ => return None,
-        };
+        let (path, is_video, duration) =
+            resolve_asset_source(project_root, asset, &["png", "jpg", "jpeg", "webp"], &["mp4", "mov", "mkv", "webm"])?;
 
         let (frame_index, frame_time) = if is_video {
             let time = clamp_time(time_seconds, duration);
@@ -467,7 +541,14 @@ impl PreviewRenderer {
 
         let decode_start = Instant::now();
         let image = if is_video {
-            self.video_decoder.decode(&path, frame_time)?
+            let mode = match decode_mode {
+                PreviewDecodeMode::Seek => DecodeMode::Seek,
+                PreviewDecodeMode::Sequential => DecodeMode::Sequential,
+            };
+            match mode {
+                DecodeMode::Seek => self.video_decoder.decode(&path, frame_time)?,
+                DecodeMode::Sequential => self.video_decoder.decode_sequential(&path, frame_time)?,
+            }
         } else {
             self.load_still(&path)?
         };
@@ -681,4 +762,41 @@ fn resolve_generative_path(
     }
 
     None
+}
+
+fn resolve_asset_source(
+    project_root: &Path,
+    asset: &Asset,
+    image_extensions: &[&str],
+    video_extensions: &[&str],
+) -> Option<(PathBuf, bool, Option<f64>)> {
+    match &asset.kind {
+        AssetKind::Image { path } => Some((project_root.join(path), false, asset.duration_seconds)),
+        AssetKind::Video { path } => Some((project_root.join(path), true, asset.duration_seconds)),
+        AssetKind::GenerativeImage {
+            folder,
+            active_version,
+        } => {
+            let path = resolve_generative_path(
+                project_root,
+                folder,
+                active_version.as_deref(),
+                image_extensions,
+            )?;
+            Some((path, false, asset.duration_seconds))
+        }
+        AssetKind::GenerativeVideo {
+            folder,
+            active_version,
+        } => {
+            let path = resolve_generative_path(
+                project_root,
+                folder,
+                active_version.as_deref(),
+                video_extensions,
+            )?;
+            Some((path, true, asset.duration_seconds))
+        }
+        _ => None,
+    }
 }

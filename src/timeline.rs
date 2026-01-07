@@ -7,6 +7,7 @@
 //! - TrackRow: Track row content area
 
 use dioxus::prelude::*;
+use std::collections::HashMap;
 
 // Re-export colors from app (we'll move these to a shared module later)
 use crate::app::{
@@ -34,6 +35,7 @@ pub fn TimelinePanel(
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
     thumbnail_refresh_tick: u64,
+    clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -413,6 +415,7 @@ pub fn TimelinePanel(
                                         assets: assets.clone(),
                                         thumbnailer: thumbnailer.clone(),
                                         thumbnail_cache_buster: thumbnail_cache_buster,
+                                        clip_cache_buckets: clip_cache_buckets.clone(),
                                         zoom: zoom,
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
@@ -626,6 +629,7 @@ pub fn TrackRow(
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
+    clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
     zoom: f64,  // pixels per second
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
@@ -692,6 +696,7 @@ pub fn TrackRow(
                     assets: assets.clone(),
                     thumbnailer: thumbnailer.clone(),
                     thumbnail_cache_buster: thumbnail_cache_buster,
+                    clip_cache_buckets: clip_cache_buckets.clone(),
                     zoom: zoom,
                     clip_color: clip_color,
                     on_delete: move |id| on_clip_delete.call(id),
@@ -713,6 +718,7 @@ fn ClipElement(
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
+    clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
     zoom: f64,
     clip_color: &'static str,
     on_delete: EventHandler<uuid::Uuid>,
@@ -733,6 +739,16 @@ fn ClipElement(
     let left = (clip.start_time * zoom) as i32;
     let clip_width = (clip.duration * zoom).max(20.0) as i32;
     let clip_width_f = clip_width as f64;
+    let clip_id = clip.id;
+    let cache_buckets = clip_cache_buckets
+        .get(&clip.id)
+        .cloned()
+        .unwrap_or_default();
+    let cache_bucket_width = if cache_buckets.is_empty() {
+        0.0
+    } else {
+        clip_width_f / cache_buckets.len() as f64
+    };
     
     let asset = assets.iter().find(|a| a.id == clip.asset_id);
     let asset_name = asset
@@ -798,7 +814,6 @@ fn ClipElement(
         "none".to_string()
     };
 
-    let clip_id = clip.id;
     let current_start = clip.start_time;
     let current_duration = clip.duration;
     let current_end = current_start + current_duration;
@@ -853,6 +868,31 @@ fn ClipElement(
                             src: "{src_url}",
                             style: "height: 100%; width: {tile_width}px; object-fit: cover; flex: 0 0 {tile_width}px;",
                             draggable: "false",
+                        }
+                    }
+                }
+            }
+
+            if !cache_buckets.is_empty() {
+                div {
+                    style: "
+                        position: absolute; left: 0; right: 0; bottom: 0;
+                        height: 3px; display: flex; pointer-events: none;
+                        z-index: 2; opacity: 0.8;
+                    ",
+                    for (idx, cached) in cache_buckets.iter().enumerate() {
+                        {
+                            let color = if *cached { ACCENT_VIDEO } else { "transparent" };
+                            rsx! {
+                                div {
+                                    key: "cache-{clip_id}-{idx}",
+                                    style: "
+                                        flex: 0 0 {cache_bucket_width}px;
+                                        height: 100%;
+                                        background-color: {color};
+                                    ",
+                                }
+                            }
                         }
                     }
                 }

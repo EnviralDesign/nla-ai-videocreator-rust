@@ -759,6 +759,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added per-clip cache tick overlay to visualize cached frame buckets on the timeline
+- **2026-01-07:** Capped in-process FFmpeg decoders with an LRU eviction policy (8 max) and added sequential playback decode mode
+- **2026-01-07:** Increased playback prefetch window to 1s and forced a preview render after GPU init; native overlay stays hidden until first upload
 - **2026-01-07:** Fixed WGPU preview shader uniform layout to prevent pipeline validation crashes
 - **2026-01-07:** Switched native preview to upload per-layer textures and composite them in WGPU using per-layer transforms and opacity
 - **2026-01-07:** Preview render loop now emits layer stacks for the GPU path and triggers native redraws when layers update

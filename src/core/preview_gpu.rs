@@ -192,6 +192,7 @@ pub struct PreviewGpuSurface {
     layers: Vec<GpuLayer>,
     canvas_size: (u32, u32),
     upload_scratch: Vec<u8>,
+    visible: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -353,7 +354,7 @@ impl PreviewGpuSurface {
         });
 
         surface.configure(&device, &config);
-        window.set_visible(true);
+        window.set_visible(false);
 
         // Make the window transparent to mouse events so clicks pass through to the webview
         // beneath. This prevents the overlay from blocking resize handles on adjacent panels.
@@ -383,6 +384,7 @@ impl PreviewGpuSurface {
             layers: Vec::new(),
             canvas_size: (1, 1),
             upload_scratch: Vec::new(),
+            visible: false,
         })
     }
 
@@ -646,12 +648,21 @@ impl PreviewGpuSurface {
             }
         }
 
+        if uploaded && !self.visible {
+            self.window.set_visible(true);
+            self.visible = true;
+        }
+
         uploaded
     }
 
     pub fn clear_layers(&mut self) {
         self.layers.clear();
         self.canvas_size = (1, 1);
+        if self.visible {
+            self.window.set_visible(false);
+            self.visible = false;
+        }
     }
 
     pub fn render_layers(&mut self) {

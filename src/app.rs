@@ -7,6 +7,7 @@ use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent as TaoWindowEve
 use dioxus::prelude::*;
 use serde::Serialize;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
@@ -49,7 +50,8 @@ const DEFAULT_CLIP_DURATION_SECONDS: f64 = 2.0;
 const PREVIEW_FPS: u64 = 24;
 const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
 const PREVIEW_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
-const PREVIEW_PREFETCH_SECONDS: f64 = 0.5;
+const PREVIEW_PREFETCH_SCRUB_SECONDS: f64 = 0.5;
+const PREVIEW_PREFETCH_PLAYBACK_SECONDS: f64 = 1.0;
 const PREVIEW_CANVAS_SCRIPT: &str = r#"
 let canvas = null;
 let ctx = null;
@@ -194,6 +196,9 @@ pub fn App() -> Element {
     let mut preview_native_ready = use_signal(|| false);
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
     let mut show_preview_stats = use_signal(|| true);
+    let mut clip_cache_buckets =
+        use_signal(|| std::sync::Arc::new(HashMap::<uuid::Uuid, Vec<bool>>::new()));
+    let preview_cache_tick = use_signal(|| 0_u64);
     let desktop = use_window();
     let desktop_for_bounds = desktop.clone();
     let desktop_for_events = desktop.clone();
@@ -277,11 +282,13 @@ pub fn App() -> Element {
     use_future(move || {
         let project = project.clone();
         let current_time = current_time.clone();
+        let is_playing = is_playing.clone();
         let previewer = previewer.clone();
         let mut preview_frame = preview_frame.clone();
         let mut preview_layers = preview_layers.clone();
         let mut preview_stats = preview_stats.clone();
         let mut preview_dirty = preview_dirty.clone();
+        let mut preview_cache_tick = preview_cache_tick.clone();
         let preview_native_ready = preview_native_ready.clone();
         async move {
             let render_request_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -308,19 +315,24 @@ pub fn App() -> Element {
                 let project_snapshot = project.read().clone();
                 let renderer = previewer.read().clone();
                 let use_gpu = preview_native_ready();
+                let decode_mode = if is_playing() {
+                    crate::core::preview::PreviewDecodeMode::Sequential
+                } else {
+                    crate::core::preview::PreviewDecodeMode::Seek
+                };
                 let render_task = tokio::task::spawn_blocking(move || {
                     let result = if use_gpu {
-                        renderer.render_layers(&project_snapshot, time)
+                        renderer.render_layers(&project_snapshot, time, decode_mode)
                     } else {
-                        renderer.render_frame(&project_snapshot, time)
+                        renderer.render_frame(&project_snapshot, time, decode_mode)
                     };
                     drop(permit);
-                    (result, project_snapshot, use_gpu)
+                    (result, project_snapshot, use_gpu, decode_mode)
                 })
                 .await
                 .ok();
 
-                let Some((render_output, project_snapshot, use_gpu)) = render_task else {
+                let Some((render_output, project_snapshot, use_gpu, decode_mode)) = render_task else {
                     continue;
                 };
 
@@ -330,6 +342,7 @@ pub fn App() -> Element {
 
                 let crate::core::preview::RenderOutput { frame, layers, stats } = render_output;
                 preview_stats.set(Some(stats));
+                preview_cache_tick.set(preview_cache_tick() + 1);
 
                 let rendered = if use_gpu {
                     if let Some(layers) = layers {
@@ -359,9 +372,14 @@ pub fn App() -> Element {
                 };
                 last_time = time;
 
-                if rendered && direction != 0 && PREVIEW_PREFETCH_SECONDS > 0.0 {
+                if rendered && direction != 0 {
                     let fps = project_snapshot.settings.fps.max(1.0);
-                    let prefetch_frames = (fps * PREVIEW_PREFETCH_SECONDS).round() as u32;
+                    let prefetch_seconds = if is_playing() {
+                        PREVIEW_PREFETCH_PLAYBACK_SECONDS
+                    } else {
+                        PREVIEW_PREFETCH_SCRUB_SECONDS
+                    };
+                    let prefetch_frames = (fps * prefetch_seconds).round() as u32;
                     if prefetch_frames > 0 {
                         if let Ok(prefetch_permit) = prefetch_gate.clone().try_acquire_owned() {
                             let renderer = previewer.read().clone();
@@ -371,6 +389,7 @@ pub fn App() -> Element {
                                     time,
                                     direction,
                                     prefetch_frames,
+                                    decode_mode,
                                 );
                                 drop(prefetch_permit);
                             });
@@ -379,6 +398,17 @@ pub fn App() -> Element {
                 }
             }
         }
+    });
+
+    use_effect(move || {
+        let _tick = preview_cache_tick();
+        let zoom_value = zoom().max(1.0);
+        let project_snapshot = project.read().clone();
+        let renderer = previewer.read().clone();
+        let fps = project_snapshot.settings.fps.max(1.0);
+        let bucket_hint_seconds = (6.0 / zoom_value).max(1.0 / fps);
+        let cache_map = renderer.cached_buckets_for_project(&project_snapshot, bucket_hint_seconds);
+        clip_cache_buckets.set(std::sync::Arc::new(cache_map));
     });
 
     use_effect(move || {
@@ -474,6 +504,7 @@ pub fn App() -> Element {
         let mut preview_gpu_upload_ms = preview_gpu_upload_ms.clone();
         let preview_layers = preview_layers.clone();
         let mut preview_native_ready = preview_native_ready.clone();
+        let mut preview_dirty = preview_dirty.clone();
         let desktop = desktop_for_events.clone();
         move |event, target| {
             if !preview_native_enabled() {
@@ -517,6 +548,7 @@ pub fn App() -> Element {
                 if let Some(gpu) = PreviewGpuSurface::new(&desktop.window, target) {
                     *gpu_state = Some(gpu);
                     preview_native_ready.set(true);
+                    preview_dirty.set(true);
                 } else {
                     return;
                 }
@@ -525,19 +557,29 @@ pub fn App() -> Element {
             if let Some(gpu) = gpu_state.as_mut() {
                 let mut uploaded = false;
                 let upload_ms = if let Some((stack_id, stack)) = preview_layers() {
-                    if !preview_native_active() {
-                        preview_native_active.set(true);
-                    }
-                    if preview_native_uploaded() != Some(stack_id) {
-                        let upload_start = Instant::now();
-                        uploaded = gpu.upload_layers(&stack);
-                        let elapsed_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
-                        if uploaded {
-                            preview_native_uploaded.set(Some(stack_id));
+                    if stack.layers.is_empty() {
+                        if preview_native_active() {
+                            preview_native_active.set(false);
                         }
-                        Some(elapsed_ms)
-                    } else {
+                        preview_native_uploaded.set(None);
+                        gpu.clear_layers();
+                        uploaded = true;
                         Some(0.0)
+                    } else {
+                        if !preview_native_active() {
+                            preview_native_active.set(true);
+                        }
+                        if preview_native_uploaded() != Some(stack_id) {
+                            let upload_start = Instant::now();
+                            uploaded = gpu.upload_layers(&stack);
+                            let elapsed_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
+                            if uploaded {
+                                preview_native_uploaded.set(Some(stack_id));
+                            }
+                            Some(elapsed_ms)
+                        } else {
+                            Some(0.0)
+                        }
                     }
                 } else {
                     if preview_native_active() {
@@ -840,21 +882,22 @@ pub fn App() -> Element {
                         },
                     }
 
-                    TimelinePanel {
-                        height: timeline_h,
-                        collapsed: timeline_collapsed(),
-                        is_resizing: timeline_resizing,
-                        on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
-                        // Project data
-                        tracks: project.read().tracks.clone(),
+                        TimelinePanel {
+                            height: timeline_h,
+                            collapsed: timeline_collapsed(),
+                            is_resizing: timeline_resizing,
+                            on_toggle: move |_| timeline_collapsed.set(!timeline_collapsed()),
+                            // Project data
+                            tracks: project.read().tracks.clone(),
 
-                        clips: project.read().clips.clone(),
-                        assets: project.read().assets.clone(),
-                        thumbnailer: thumbnailer.read().clone(),
-                        thumbnail_cache_buster: thumbnail_cache_buster(),
-                        thumbnail_refresh_tick: thumbnail_refresh_tick(),
-                        // Timeline state
-                        current_time: current_time(),
+                            clips: project.read().clips.clone(),
+                            assets: project.read().assets.clone(),
+                            thumbnailer: thumbnailer.read().clone(),
+                            thumbnail_cache_buster: thumbnail_cache_buster(),
+                            thumbnail_refresh_tick: thumbnail_refresh_tick(),
+                            clip_cache_buckets: clip_cache_buckets(),
+                            // Timeline state
+                            current_time: current_time(),
                         duration: duration,
                         zoom: zoom(),
                         is_playing: is_playing(),
