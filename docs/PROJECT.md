@@ -759,6 +759,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Aligned native preview bounds to the canvas element, moved stats into the preview header, and switched native letterbox bars to black
+- **2026-01-07:** Fixed native preview positioning to use parent-relative coordinates (avoids double offset when moving the app window)
 - **2026-01-07:** Adjusted native preview window positioning to use window-origin coordinates and raised the child window to the top of the z-order
 - **2026-01-07:** Added wgpu upload timing to the preview performance overlay
 - **2026-01-07:** WGPU preview now uploads RGBA frames to a texture and renders via a quad (canvas uploads suppressed once native preview is active)

@@ -144,18 +144,6 @@ impl PreviewBounds {
         )
     }
 
-    pub fn to_physical_position_with_origin(
-        self,
-        origin: Option<dioxus::desktop::tao::dpi::PhysicalPosition<i32>>,
-    ) -> dioxus::desktop::tao::dpi::PhysicalPosition<i32> {
-        let pos = self.to_physical_position();
-        if let Some(origin) = origin {
-            dioxus::desktop::tao::dpi::PhysicalPosition::new(pos.x + origin.x, pos.y + origin.y)
-        } else {
-            pos
-        }
-    }
-
     pub fn to_physical_size(self) -> dioxus::desktop::tao::dpi::PhysicalSize<u32> {
         let scale = self.dpr.max(0.01);
         let width = (self.width * scale).round().max(1.0) as u32;
@@ -449,13 +437,9 @@ impl PreviewGpuSurface {
         });
     }
 
-    pub fn apply_bounds(
-        &mut self,
-        bounds: PreviewBounds,
-        origin: Option<dioxus::desktop::tao::dpi::PhysicalPosition<i32>>,
-    ) -> bool {
+    pub fn apply_bounds(&mut self, bounds: PreviewBounds) -> bool {
         let size = bounds.to_physical_size();
-        let position = bounds.to_physical_position_with_origin(origin);
+        let position = bounds.to_physical_position();
         if size.width == 0 || size.height == 0 {
             return false;
         }
@@ -574,9 +558,9 @@ impl PreviewGpuSurface {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.06,
-                            g: 0.12,
-                            b: 0.18,
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -656,11 +640,7 @@ impl PreviewGpuSurface {
         None
     }
 
-    pub fn apply_bounds(
-        &mut self,
-        _bounds: PreviewBounds,
-        _origin: Option<dioxus::desktop::tao::dpi::PhysicalPosition<i32>>,
-    ) -> bool {
+    pub fn apply_bounds(&mut self, _bounds: PreviewBounds) -> bool {
         false
     }
 

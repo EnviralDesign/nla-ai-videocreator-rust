@@ -111,7 +111,7 @@ while (true) {
 "#;
 
 const PREVIEW_NATIVE_HOST_SCRIPT: &str = r#"
-const hostId = "preview-native-host";
+const hostId = "preview-canvas";
 let last = null;
 
 function sendBounds() {
@@ -524,8 +524,7 @@ pub fn App() -> Element {
                     preview_gpu_upload_ms.set(Some(ms));
                 }
 
-                let origin = desktop.window.inner_position().ok();
-                let changed = gpu.apply_bounds(bounds, origin);
+                let changed = gpu.apply_bounds(bounds);
                 if should_render || changed || uploaded {
                     gpu.render();
                 }
@@ -2208,17 +2207,49 @@ fn PreviewPanel(
         "hidden"
     };
     let show_placeholder = !preview_native_active && !has_frame;
+    let stats_line = preview_stats.map(|stats| {
+        let total_queries = stats.cache_hits + stats.cache_misses;
+        let hit_ratio = if total_queries > 0 {
+            (stats.cache_hits as f64 / total_queries as f64) * 100.0
+        } else {
+            0.0
+        };
+        let mut parts = Vec::new();
+        parts.push(format!("total {:.1}ms", stats.total_ms));
+        parts.push(format!("collect {:.1}ms", stats.collect_ms));
+        parts.push(format!("vdec {:.1}ms", stats.video_decode_ms));
+        parts.push(format!("still {:.1}ms", stats.still_load_ms));
+        parts.push(format!("comp {:.1}ms", stats.composite_ms));
+        parts.push(format!("upload {:.1}ms", stats.encode_ms));
+        if let Some(gpu_ms) = preview_gpu_upload_ms {
+            parts.push(format!("gpu {:.1}ms", gpu_ms));
+        }
+        parts.push(format!("hit {:.0}%", hit_ratio));
+        parts.push(format!("layers {}", stats.layers));
+        parts.join(" | ")
+    });
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
 
             div {
                 style: "
-                    display: flex; align-items: center; justify-content: space-between;
+                    display: grid; grid-template-columns: auto 1fr auto; align-items: center;
                     height: 32px; padding: 0 14px;
                     background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER_DEFAULT};
                 ",
                 span { style: "font-size: 11px; font-weight: 500; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Preview" }
+                if let Some(stats_line) = stats_line {
+                    span {
+                        style: "
+                            justify-self: center; min-width: 0;
+                            font-family: 'SF Mono', Consolas, monospace;
+                            font-size: 10px; color: {TEXT_DIM};
+                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                        ",
+                        "{stats_line}"
+                    }
+                }
                 div {
                     style: "display: flex; align-items: center; gap: 6px; font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: {TEXT_DIM};",
                     span { "{width} x {height}" }
@@ -2229,51 +2260,11 @@ fn PreviewPanel(
 
             div {
                 style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 16px; position: relative;",
-                if let Some(stats) = preview_stats {
-                    {
-                        let total_queries = stats.cache_hits + stats.cache_misses;
-                        let hit_ratio = if total_queries > 0 {
-                            (stats.cache_hits as f64 / total_queries as f64) * 100.0
-                        } else {
-                            0.0
-                        };
-
-                        rsx! {
-                            div {
-                                style: "
-                                    position: absolute; left: 12px; bottom: 12px;
-                                    display: flex; flex-wrap: wrap; gap: 8px;
-                                    font-family: 'SF Mono', Consolas, monospace;
-                                    font-size: 10px; color: {TEXT_DIM};
-                                    background-color: rgba(0,0,0,0.45);
-                                    border: 1px solid {BORDER_SUBTLE};
-                                    border-radius: 6px; padding: 6px 8px;
-                                    z-index: 3; pointer-events: none;
-                                ",
-                                span { "total {stats.total_ms:.1}ms" }
-                                span { "collect {stats.collect_ms:.1}ms" }
-                                span { "vdec {stats.video_decode_ms:.1}ms" }
-                                span { "still {stats.still_load_ms:.1}ms" }
-                                span { "comp {stats.composite_ms:.1}ms" }
-                                span { "upload {stats.encode_ms:.1}ms" }
-                                if let Some(gpu_ms) = preview_gpu_upload_ms {
-                                    span { "gpu {gpu_ms:.1}ms" }
-                                }
-                                span { "hit {hit_ratio:.0}%" }
-                                span { "layers {stats.layers}" }
-                            }
-                        }
-                    }
-                }
-                div {
-                    id: "preview-native-host",
-                    style: "position: absolute; inset: 16px; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: transparent; pointer-events: none; z-index: 0;",
-                }
                 canvas {
                     id: "preview-canvas",
                     width: "1",
                     height: "1",
-                    style: "position: relative; z-index: 1; max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: #000; visibility: {canvas_visibility};",
+                    style: "position: relative; z-index: 1; max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 0; background-color: #000; visibility: {canvas_visibility};",
                 }
                 if show_placeholder {
                     div {
