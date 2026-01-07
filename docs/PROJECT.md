@@ -759,6 +759,14 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Defaulted preview stats toggle to off (still available via the header toggle)
+- **2026-01-07:** Moved preview stats into a docked right-side column so they stay visible above the native wgpu surface
+- **2026-01-07:** Expanded preview stats into a vertical overlay with detailed video decode breakdown (seek, packet, transfer, scale, copy)
+- **2026-01-07:** Expanded playback prefetch window to 3 seconds to improve sustained playback responsiveness
+- **2026-01-07:** Increased preview frame cache budget to 8GB for smoother scrubbing in larger regions
+- **2026-01-07:** Added parallel decode scheduling (worker pool keyed by track lanes) to allow per-layer decoding concurrently
+- **2026-01-07:** Added hardware-accelerated decode support (Windows D3D11VA/DXVA2) with automatic CPU fallback
+- **2026-01-07:** Preview stats now include a `hwdec` percentage to indicate hardware decode usage
 - **2026-01-07:** Added a `SHOW_CACHE_TICKS` toggle to enable/disable the timeline cache bucket overlay
 - **2026-01-07:** Cache tick overlay now uses a per-asset frame index to mark buckets based on any cached frame in the clip range (stills fill all buckets once cached)
 - **2026-01-07:** Added per-clip cache tick overlay to visualize cached frame buckets on the timeline

@@ -23,7 +23,14 @@ pub struct PreviewStats {
     pub composite_ms: f64,
     pub encode_ms: f64,
     pub video_decode_ms: f64,
+    pub video_decode_seek_ms: f64,
+    pub video_decode_packet_ms: f64,
+    pub video_decode_transfer_ms: f64,
+    pub video_decode_scale_ms: f64,
+    pub video_decode_copy_ms: f64,
     pub still_load_ms: f64,
+    pub hw_decode_frames: usize,
+    pub sw_decode_frames: usize,
     pub layers: usize,
     pub cache_hits: usize,
     pub cache_misses: usize,
@@ -355,7 +362,13 @@ impl PreviewRenderer {
             }
         }
 
+        let decode_mode = match decode_mode {
+            PreviewDecodeMode::Seek => DecodeMode::Seek,
+            PreviewDecodeMode::Sequential => DecodeMode::Sequential,
+        };
+
         let mut layers = Vec::new();
+        let mut pending = Vec::new();
         for clip in project.clips.iter() {
             let track_index = match track_order.get(&clip.track_id) {
                 Some(index) => *index,
@@ -372,20 +385,115 @@ impl PreviewRenderer {
             };
 
             let source_time = (time_seconds - clip.start_time + clip.trim_in_seconds).max(0.0);
-            if let Some(image) = self.load_clip_frame(
+            let Some((path, is_video, duration)) = resolve_asset_source(
                 project_root,
                 asset,
-                source_time,
-                fps,
-                decode_mode,
-                Some(stats),
-            ) {
-                layers.push(PreviewLayer {
-                    track_index,
-                    start_time: clip.start_time,
-                    image,
-                    transform: clip.transform,
-                });
+                &["png", "jpg", "jpeg", "webp"],
+                &["mp4", "mov", "mkv", "webm"],
+            ) else {
+                continue;
+            };
+
+            let (frame_index, frame_time) = if is_video {
+                let time = clamp_time(source_time, duration);
+                let index = time_to_frame_index(time, fps);
+                let frame_time = frame_index_to_time(index, fps);
+                (index, frame_time)
+            } else {
+                (0, 0.0)
+            };
+
+            let cache_key = FrameKey {
+                path: path.clone(),
+                frame_index,
+            };
+
+            if let Ok(mut cache) = self.frame_cache.lock() {
+                if let Some(image) = cache.get(&cache_key) {
+                    stats.cache_hits += 1;
+                    layers.push(PreviewLayer {
+                        track_index,
+                        start_time: clip.start_time,
+                        image,
+                        transform: clip.transform,
+                    });
+                    continue;
+                }
+            }
+
+            stats.cache_misses += 1;
+
+            if !is_video {
+                let decode_start = Instant::now();
+                let image = self.load_still(&path);
+                let decode_ms = elapsed_ms(decode_start);
+                stats.still_load_ms += decode_ms;
+                if let Some(image) = image {
+                    let image = Arc::new(image);
+                    if let Ok(mut cache) = self.frame_cache.lock() {
+                        cache.insert(cache_key, Arc::clone(&image));
+                    }
+                    layers.push(PreviewLayer {
+                        track_index,
+                        start_time: clip.start_time,
+                        image,
+                        transform: clip.transform,
+                    });
+                }
+                continue;
+            }
+
+            pending.push(PendingDecode {
+                track_index,
+                start_time: clip.start_time,
+                path,
+                frame_time,
+                cache_key,
+                transform: clip.transform,
+                lane_id: track_lane_id(clip.track_id),
+            });
+        }
+
+        if !pending.is_empty() {
+            let mut requests = Vec::with_capacity(pending.len());
+            for item in pending {
+                if let Some(receiver) = self.video_decoder.decode_async(
+                    &item.path,
+                    item.frame_time,
+                    decode_mode,
+                    item.lane_id,
+                ) {
+                    requests.push((item, receiver));
+                }
+            }
+
+            for (item, receiver) in requests {
+                if let Ok(response) = receiver.recv() {
+                    let timings = response.timings;
+                    stats.video_decode_ms += timings.total_ms();
+                    stats.video_decode_seek_ms += timings.seek_ms;
+                    stats.video_decode_packet_ms += timings.packet_ms;
+                    stats.video_decode_transfer_ms += timings.transfer_ms;
+                    stats.video_decode_scale_ms += timings.scale_ms;
+                    stats.video_decode_copy_ms += timings.copy_ms;
+                    if let Some(image) = response.image {
+                        let image = Arc::new(image);
+                        if let Ok(mut cache) = self.frame_cache.lock() {
+                            cache.insert(item.cache_key, Arc::clone(&image));
+                        }
+                        if response.used_hw {
+                            stats.hw_decode_frames += 1;
+                        } else {
+                            stats.sw_decode_frames += 1;
+                        }
+                        layers.push(PreviewLayer {
+                            track_index: item.track_index,
+                            start_time: item.start_time,
+                            image,
+                            transform: item.transform,
+                        });
+                    }
+                }
             }
         }
 
@@ -441,6 +549,7 @@ impl PreviewRenderer {
                     source_time,
                     fps,
                     decode_mode,
+                    track_lane_id(clip.track_id),
                     None,
                 );
             }
@@ -533,6 +642,7 @@ impl PreviewRenderer {
         time_seconds: f64,
         fps: f64,
         decode_mode: PreviewDecodeMode,
+        lane_id: u64,
         mut stats: Option<&mut PreviewStats>,
     ) -> Option<Arc<RgbaImage>> {
         let (path, is_video, duration) =
@@ -565,27 +675,47 @@ impl PreviewRenderer {
             stats.cache_misses += 1;
         }
 
-        let decode_start = Instant::now();
         let image = if is_video {
             let mode = match decode_mode {
                 PreviewDecodeMode::Seek => DecodeMode::Seek,
                 PreviewDecodeMode::Sequential => DecodeMode::Sequential,
             };
-            match mode {
-                DecodeMode::Seek => self.video_decoder.decode(&path, frame_time)?,
-                DecodeMode::Sequential => self.video_decoder.decode_sequential(&path, frame_time)?,
+            let response = match mode {
+                DecodeMode::Seek => self.video_decoder.decode(&path, frame_time, lane_id)?,
+                DecodeMode::Sequential => {
+                    self.video_decoder.decode_sequential(&path, frame_time, lane_id)?
+                }
+            };
+            if let Some(stats) = stats.as_deref_mut() {
+                let timings = response.timings;
+                stats.video_decode_ms += timings.total_ms();
+                stats.video_decode_seek_ms += timings.seek_ms;
+                stats.video_decode_packet_ms += timings.packet_ms;
+                stats.video_decode_transfer_ms += timings.transfer_ms;
+                stats.video_decode_scale_ms += timings.scale_ms;
+                stats.video_decode_copy_ms += timings.copy_ms;
+            }
+            if let Some(image) = response.image {
+                if let Some(stats) = stats.as_deref_mut() {
+                    if response.used_hw {
+                        stats.hw_decode_frames += 1;
+                    } else {
+                        stats.sw_decode_frames += 1;
+                    }
+                }
+                image
+            } else {
+                return None;
             }
         } else {
-            self.load_still(&path)?
-        };
-        let decode_ms = elapsed_ms(decode_start);
-        if let Some(stats) = stats.as_deref_mut() {
-            if is_video {
-                stats.video_decode_ms += decode_ms;
-            } else {
+            let decode_start = Instant::now();
+            let image = self.load_still(&path)?;
+            let decode_ms = elapsed_ms(decode_start);
+            if let Some(stats) = stats.as_deref_mut() {
                 stats.still_load_ms += decode_ms;
             }
-        }
+            image
+        };
 
         let image = Arc::new(image);
         if let Ok(mut cache) = self.frame_cache.lock() {
@@ -601,6 +731,16 @@ impl PreviewRenderer {
     }
 
     // Video decoding handled by the in-process decoder worker.
+}
+
+struct PendingDecode {
+    track_index: usize,
+    start_time: f64,
+    path: PathBuf,
+    frame_time: f64,
+    cache_key: FrameKey,
+    transform: ClipTransform,
+    lane_id: u64,
 }
 
 struct PreviewLayer {
@@ -730,6 +870,11 @@ fn frame_index_to_time(frame_index: i64, fps: f64) -> f64 {
     let fps = fps.max(1.0);
     let frame_index = frame_index.max(0) as f64;
     frame_index / fps
+}
+
+fn track_lane_id(track_id: uuid::Uuid) -> u64 {
+    let raw = track_id.as_u128();
+    (raw as u64) ^ ((raw >> 64) as u64)
 }
 
 fn image_size_bytes(image: &RgbaImage) -> usize {

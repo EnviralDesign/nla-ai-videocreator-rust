@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use ffmpeg_next as ffmpeg;
 use image::RgbaImage;
@@ -10,12 +11,38 @@ use image::RgbaImage;
 const AV_TIME_BASE: i64 = 1_000_000;
 const MAX_DECODERS: usize = 8;
 const MAX_SEQUENTIAL_JUMP_SECONDS: f64 = 2.0;
+const MAX_DECODE_WORKERS: usize = 4;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DecodeTimings {
+    pub seek_ms: f64,
+    pub packet_ms: f64,
+    pub transfer_ms: f64,
+    pub scale_ms: f64,
+    pub copy_ms: f64,
+}
+
+impl DecodeTimings {
+    pub fn total_ms(&self) -> f64 {
+        self.seek_ms + self.packet_ms + self.transfer_ms + self.scale_ms + self.copy_ms
+    }
+}
+
+#[cfg(target_os = "windows")]
+const HW_DEVICE_CANDIDATES: &[ffmpeg::ffi::AVHWDeviceType] = &[
+    ffmpeg::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
+    ffmpeg::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_DXVA2,
+];
+
+#[cfg(not(target_os = "windows"))]
+const HW_DEVICE_CANDIDATES: &[ffmpeg::ffi::AVHWDeviceType] = &[];
 
 struct DecodeRequest {
     path: PathBuf,
     time_seconds: f64,
     mode: DecodeMode,
-    respond_to: mpsc::Sender<Option<RgbaImage>>,
+    lane_id: u64,
+    respond_to: mpsc::Sender<DecodeResponse>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -24,72 +51,123 @@ pub enum DecodeMode {
     Sequential,
 }
 
-/// A dedicated worker for in-process video decoding with FFmpeg.
+pub struct DecodeResponse {
+    pub image: Option<RgbaImage>,
+    pub timings: DecodeTimings,
+    pub used_hw: bool,
+}
+
+/// A dedicated worker pool for in-process video decoding with FFmpeg.
 #[derive(Clone)]
 pub struct VideoDecodeWorker {
-    sender: mpsc::Sender<DecodeRequest>,
+    senders: Vec<mpsc::Sender<DecodeRequest>>,
 }
 
 impl VideoDecodeWorker {
-    /// Create a worker that decodes frames scaled to the preview bounds.
+    /// Create workers that decode frames scaled to the preview bounds.
     pub fn new(max_width: u32, max_height: u32) -> Self {
-        let (sender, receiver) = mpsc::channel::<DecodeRequest>();
+        let worker_count = std::thread::available_parallelism()
+            .map(|value| value.get().min(MAX_DECODE_WORKERS).max(1))
+            .unwrap_or(1);
 
-        thread::spawn(move || {
-            let _ = ffmpeg::init();
-            let mut decoders: HashMap<PathBuf, DecoderEntry> = HashMap::new();
-            let mut access_counter: u64 = 0;
+        let mut senders = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let (sender, receiver) = mpsc::channel::<DecodeRequest>();
+            senders.push(sender);
 
-            for request in receiver {
-                let DecodeRequest {
-                    path,
-                    time_seconds,
-                    mode,
-                    respond_to,
-                } = request;
+            thread::spawn(move || {
+                let _ = ffmpeg::init();
+                let mut decoders: HashMap<DecoderKey, DecoderEntry> = HashMap::new();
+                let mut access_counter: u64 = 0;
 
-                let image = match decoders.entry(path.clone()) {
-                    Entry::Occupied(mut entry) => {
-                        access_counter = access_counter.wrapping_add(1);
-                        entry.get_mut().last_used = access_counter;
-                        entry
-                            .get_mut()
-                            .decoder
-                            .decode_frame_at_time(time_seconds, mode)
-                    }
-                    Entry::Vacant(entry) => match VideoDecoder::open(&path, max_width, max_height) {
-                        Ok(mut decoder) => {
+                for request in receiver {
+                    let DecodeRequest {
+                        path,
+                        time_seconds,
+                        mode,
+                        lane_id,
+                        respond_to,
+                    } = request;
+
+                    let key = DecoderKey {
+                        path: path.clone(),
+                        lane_id,
+                    };
+
+                    let outcome = match decoders.entry(key) {
+                        Entry::Occupied(mut entry) => {
                             access_counter = access_counter.wrapping_add(1);
-                            let image = decoder.decode_frame_at_time(time_seconds, mode);
-                            entry.insert(DecoderEntry {
-                                decoder,
-                                last_used: access_counter,
-                            });
-                            image
+                            entry.get_mut().last_used = access_counter;
+                            entry
+                                .get_mut()
+                                .decoder
+                                .decode_frame_at_time(time_seconds, mode)
                         }
-                        Err(_) => None,
-                    },
-                };
+                        Entry::Vacant(entry) => match VideoDecoder::open(&path, max_width, max_height)
+                        {
+                            Ok(mut decoder) => {
+                                access_counter = access_counter.wrapping_add(1);
+                                let outcome = decoder.decode_frame_at_time(time_seconds, mode);
+                                entry.insert(DecoderEntry {
+                                    decoder,
+                                    last_used: access_counter,
+                                });
+                                outcome
+                            }
+                            Err(_) => DecodeOutcome::none(),
+                        },
+                    };
 
-                if decoders.len() > MAX_DECODERS {
-                    evict_least_used(&mut decoders);
+                    if decoders.len() > MAX_DECODERS {
+                        evict_least_used(&mut decoders);
+                    }
+
+                    let _ = respond_to.send(DecodeResponse {
+                        image: outcome.image,
+                        timings: outcome.timings,
+                        used_hw: outcome.used_hw,
+                    });
                 }
+            });
+        }
 
-                let _ = respond_to.send(image);
-            }
-        });
-
-        Self { sender }
+        Self { senders }
     }
 
     /// Decode a single frame at the requested timestamp (seconds).
-    pub fn decode(&self, path: &Path, time_seconds: f64) -> Option<RgbaImage> {
-        self.decode_with_mode(path, time_seconds, DecodeMode::Seek)
+    pub fn decode(&self, path: &Path, time_seconds: f64, lane_id: u64) -> Option<DecodeResponse> {
+        self.decode_with_mode(path, time_seconds, DecodeMode::Seek, lane_id)
     }
 
     /// Decode a single frame using sequential decode when possible.
-    pub fn decode_sequential(&self, path: &Path, time_seconds: f64) -> Option<RgbaImage> {
-        self.decode_with_mode(path, time_seconds, DecodeMode::Sequential)
+    pub fn decode_sequential(
+        &self,
+        path: &Path,
+        time_seconds: f64,
+        lane_id: u64,
+    ) -> Option<DecodeResponse> {
+        self.decode_with_mode(path, time_seconds, DecodeMode::Sequential, lane_id)
+    }
+
+    pub fn decode_async(
+        &self,
+        path: &Path,
+        time_seconds: f64,
+        mode: DecodeMode,
+        lane_id: u64,
+    ) -> Option<mpsc::Receiver<DecodeResponse>> {
+        let sender = self.select_sender(lane_id)?;
+        let (respond_to, response) = mpsc::channel();
+        let request = DecodeRequest {
+            path: path.to_path_buf(),
+            time_seconds,
+            mode,
+            lane_id,
+            respond_to,
+        };
+
+        sender.send(request).ok()?;
+        Some(response)
     }
 
     fn decode_with_mode(
@@ -97,18 +175,25 @@ impl VideoDecodeWorker {
         path: &Path,
         time_seconds: f64,
         mode: DecodeMode,
-    ) -> Option<RgbaImage> {
-        let (respond_to, response) = mpsc::channel();
-        let request = DecodeRequest {
-            path: path.to_path_buf(),
-            time_seconds,
-            mode,
-            respond_to,
-        };
-
-        self.sender.send(request).ok()?;
-        response.recv().ok().flatten()
+        lane_id: u64,
+    ) -> Option<DecodeResponse> {
+        let response = self.decode_async(path, time_seconds, mode, lane_id)?;
+        response.recv().ok()
     }
+
+    fn select_sender(&self, lane_id: u64) -> Option<&mpsc::Sender<DecodeRequest>> {
+        if self.senders.is_empty() {
+            return None;
+        }
+        let index = (lane_id as usize) % self.senders.len();
+        self.senders.get(index)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct DecoderKey {
+    path: PathBuf,
+    lane_id: u64,
 }
 
 struct DecoderEntry {
@@ -116,9 +201,9 @@ struct DecoderEntry {
     last_used: u64,
 }
 
-fn evict_least_used(decoders: &mut HashMap<PathBuf, DecoderEntry>) {
+fn evict_least_used(decoders: &mut HashMap<DecoderKey, DecoderEntry>) {
     while decoders.len() > MAX_DECODERS {
-        let mut oldest_key: Option<PathBuf> = None;
+        let mut oldest_key: Option<DecoderKey> = None;
         let mut oldest_stamp: u64 = u64::MAX;
         for (key, entry) in decoders.iter() {
             if entry.last_used < oldest_stamp {
@@ -134,11 +219,134 @@ fn evict_least_used(decoders: &mut HashMap<PathBuf, DecoderEntry>) {
     }
 }
 
+struct DecodeOutcome {
+    image: Option<RgbaImage>,
+    used_hw: bool,
+    timings: DecodeTimings,
+}
+
+impl DecodeOutcome {
+    fn none() -> Self {
+        Self {
+            image: None,
+            used_hw: false,
+            timings: DecodeTimings::default(),
+        }
+    }
+}
+
+struct HwDecodeState {
+    hw_pix_fmt: ffmpeg::ffi::AVPixelFormat,
+    device_ctx: *mut ffmpeg::ffi::AVBufferRef,
+}
+
+impl Drop for HwDecodeState {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.device_ctx.is_null() {
+                ffmpeg::ffi::av_buffer_unref(&mut self.device_ctx);
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn get_hw_format(
+    ctx: *mut ffmpeg::ffi::AVCodecContext,
+    pix_fmts: *const ffmpeg::ffi::AVPixelFormat,
+) -> ffmpeg::ffi::AVPixelFormat {
+    if ctx.is_null() || pix_fmts.is_null() {
+        return ffmpeg::ffi::AVPixelFormat::AV_PIX_FMT_NONE;
+    }
+    let state = (*ctx).opaque as *mut HwDecodeState;
+    if state.is_null() {
+        return ffmpeg::ffi::AVPixelFormat::AV_PIX_FMT_NONE;
+    }
+    let desired = (*state).hw_pix_fmt;
+    let mut p = pix_fmts;
+    while *p != ffmpeg::ffi::AVPixelFormat::AV_PIX_FMT_NONE {
+        if *p == desired {
+            return desired;
+        }
+        p = p.add(1);
+    }
+    ffmpeg::ffi::AVPixelFormat::AV_PIX_FMT_NONE
+}
+
+fn setup_hwaccel(
+    context: &mut ffmpeg::codec::context::Context,
+    codec: &ffmpeg::Codec,
+) -> Option<Box<HwDecodeState>> {
+    if HW_DEVICE_CANDIDATES.is_empty() {
+        return None;
+    }
+    unsafe {
+        for &device_type in HW_DEVICE_CANDIDATES {
+            let Some(hw_pix_fmt) = find_hw_pix_fmt(codec, device_type) else {
+                continue;
+            };
+
+            let mut device_ctx: *mut ffmpeg::ffi::AVBufferRef = std::ptr::null_mut();
+            if ffmpeg::ffi::av_hwdevice_ctx_create(
+                &mut device_ctx,
+                device_type,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                0,
+            ) < 0
+            {
+                continue;
+            }
+
+            if device_ctx.is_null() {
+                continue;
+            }
+
+            let mut state = Box::new(HwDecodeState {
+                hw_pix_fmt,
+                device_ctx,
+            });
+
+            let ctx_ptr = context.as_mut_ptr();
+            (*ctx_ptr).opaque = state.as_mut() as *mut _ as *mut _;
+            (*ctx_ptr).get_format = Some(get_hw_format);
+            (*ctx_ptr).hw_device_ctx = ffmpeg::ffi::av_buffer_ref(device_ctx);
+
+            return Some(state);
+        }
+    }
+    None
+}
+
+unsafe fn find_hw_pix_fmt(
+    codec: &ffmpeg::Codec,
+    device_type: ffmpeg::ffi::AVHWDeviceType,
+) -> Option<ffmpeg::ffi::AVPixelFormat> {
+    let mut index = 0;
+    loop {
+        let config = ffmpeg::ffi::avcodec_get_hw_config(codec.as_ptr(), index);
+        if config.is_null() {
+            break;
+        }
+        let config = &*config;
+        if (config.methods & ffmpeg::ffi::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX as i32) != 0
+            && config.device_type == device_type
+        {
+            return Some(config.pix_fmt);
+        }
+        index += 1;
+    }
+    None
+}
+
 struct VideoDecoder {
     input: ffmpeg::format::context::Input,
     stream_index: usize,
     decoder: ffmpeg::decoder::Video,
-    scaler: ffmpeg::software::scaling::Context,
+    hw_state: Option<Box<HwDecodeState>>,
+    scaler: Option<ffmpeg::software::scaling::Context>,
+    scaler_src: Option<(ffmpeg::util::format::Pixel, u32, u32)>,
+    target_width: u32,
+    target_height: u32,
     time_base: ffmpeg::Rational,
     last_pts: Option<i64>,
     last_time_seconds: Option<f64>,
@@ -154,7 +362,15 @@ impl VideoDecoder {
         let stream_index = stream.index();
         let time_base = stream.time_base();
 
-        let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
+        let mut context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
+        let hw_state = if let Some(codec) =
+            context.codec().or_else(|| ffmpeg::codec::decoder::find(context.id()))
+        {
+            setup_hwaccel(&mut context, &codec)
+        } else {
+            None
+        };
+
         let decoder = context.decoder().video()?;
 
         let src_width = decoder.width().max(1);
@@ -162,35 +378,30 @@ impl VideoDecoder {
         let (target_width, target_height) =
             fit_dimensions(src_width, src_height, max_width, max_height);
 
-        let scaler = ffmpeg::software::scaling::Context::get(
-            decoder.format(),
-            src_width,
-            src_height,
-            ffmpeg::util::format::Pixel::RGBA,
-            target_width,
-            target_height,
-            ffmpeg::software::scaling::Flags::BILINEAR,
-        )?;
-
         Ok(Self {
             input,
             stream_index,
             decoder,
-            scaler,
+            hw_state,
+            scaler: None,
+            scaler_src: None,
+            target_width,
+            target_height,
             time_base,
             last_pts: None,
             last_time_seconds: None,
         })
     }
 
-    fn decode_frame_at_time(&mut self, time_seconds: f64, mode: DecodeMode) -> Option<RgbaImage> {
+    fn decode_frame_at_time(&mut self, time_seconds: f64, mode: DecodeMode) -> DecodeOutcome {
         match mode {
             DecodeMode::Seek => self.decode_with_seek(time_seconds),
             DecodeMode::Sequential => self.decode_sequential(time_seconds),
         }
     }
 
-    fn decode_sequential(&mut self, time_seconds: f64) -> Option<RgbaImage> {
+    fn decode_sequential(&mut self, time_seconds: f64) -> DecodeOutcome {
+        let mut timings = DecodeTimings::default();
         let last_time = self.last_time_seconds.unwrap_or(f64::NEG_INFINITY);
         let delta = time_seconds - last_time;
         if self.last_pts.is_none() || delta < 0.0 || delta > MAX_SEQUENTIAL_JUMP_SECONDS {
@@ -198,63 +409,230 @@ impl VideoDecoder {
         }
 
         let target_pts = seconds_to_pts(time_seconds.max(0.0), self.time_base);
-        let mut decoded = ffmpeg::util::frame::Video::empty();
-        let mut rgba_frame = ffmpeg::util::frame::Video::empty();
+        if let Some((image, pts, used_hw)) = self.decode_forward(target_pts, &mut timings) {
+            self.last_pts = Some(pts);
+            self.last_time_seconds = Some(pts_to_seconds(pts, self.time_base));
+            return DecodeOutcome {
+                image: Some(image),
+                used_hw,
+                timings,
+            };
+        }
 
-        self.decode_forward(target_pts, &mut decoded, &mut rgba_frame)
-            .or_else(|| self.decode_with_seek(time_seconds))
+        self.decode_with_seek(time_seconds)
     }
 
-    fn decode_with_seek(&mut self, time_seconds: f64) -> Option<RgbaImage> {
+    fn decode_with_seek(&mut self, time_seconds: f64) -> DecodeOutcome {
+        let mut timings = DecodeTimings::default();
+        let seek_start = Instant::now();
         let target_ts = (time_seconds.max(0.0) * AV_TIME_BASE as f64).round() as i64;
         if self.input.seek(target_ts, ..).is_err() {
-            return None;
+            timings.seek_ms = elapsed_ms(seek_start);
+            return DecodeOutcome {
+                image: None,
+                used_hw: false,
+                timings,
+            };
         }
         self.decoder.flush();
+        timings.seek_ms = elapsed_ms(seek_start);
 
         let target_pts = seconds_to_pts(time_seconds.max(0.0), self.time_base);
-        let mut decoded = ffmpeg::util::frame::Video::empty();
-        let mut rgba_frame = ffmpeg::util::frame::Video::empty();
-        self.decode_forward(target_pts, &mut decoded, &mut rgba_frame)
+        if let Some((image, pts, used_hw)) = self.decode_forward(target_pts, &mut timings) {
+            self.last_pts = Some(pts);
+            self.last_time_seconds = Some(pts_to_seconds(pts, self.time_base));
+            return DecodeOutcome {
+                image: Some(image),
+                used_hw,
+                timings,
+            };
+        }
+
+        DecodeOutcome {
+            image: None,
+            used_hw: false,
+            timings,
+        }
     }
 
     fn decode_forward(
         &mut self,
         target_pts: i64,
-        decoded: &mut ffmpeg::util::frame::Video,
-        rgba_frame: &mut ffmpeg::util::frame::Video,
-    ) -> Option<RgbaImage> {
-        let time_base = self.time_base;
-        let decoder = &mut self.decoder;
-        let scaler = &mut self.scaler;
+        timings: &mut DecodeTimings,
+    ) -> Option<(RgbaImage, i64, bool)> {
+        let mut decoded = ffmpeg::util::frame::Video::empty();
+        let mut sw_frame = ffmpeg::util::frame::Video::empty();
+        let mut rgba_frame = ffmpeg::util::frame::Video::empty();
+        let stream_index = self.stream_index;
+        let forward_start = Instant::now();
 
-        if let Some((frame, pts)) =
-            receive_until_target(decoder, scaler, target_pts, decoded, rgba_frame)
-        {
-            self.last_pts = Some(pts);
-            self.last_time_seconds = Some(pts_to_seconds(pts, time_base));
-            return Some(frame);
+        let VideoDecoder {
+            input,
+            decoder,
+            hw_state,
+            scaler,
+            scaler_src,
+            target_width,
+            target_height,
+            ..
+        } = self;
+        let target_width = *target_width;
+        let target_height = *target_height;
+
+        let mut result = receive_until_target(
+            decoder,
+            hw_state.as_deref(),
+            scaler,
+            scaler_src,
+            target_width,
+            target_height,
+            target_pts,
+            &mut decoded,
+            &mut sw_frame,
+            &mut rgba_frame,
+            timings,
+        );
+
+        if result.is_none() {
+            for (stream, packet) in input.packets() {
+                if stream.index() != stream_index {
+                    continue;
+                }
+                if decoder.send_packet(&packet).is_err() {
+                    continue;
+                }
+                result = receive_until_target(
+                    decoder,
+                    hw_state.as_deref(),
+                    scaler,
+                    scaler_src,
+                    target_width,
+                    target_height,
+                    target_pts,
+                    &mut decoded,
+                    &mut sw_frame,
+                    &mut rgba_frame,
+                    timings,
+                );
+                if result.is_some() {
+                    break;
+                }
+            }
         }
 
-        let input = &mut self.input;
-        for (stream, packet) in input.packets() {
-            if stream.index() != self.stream_index {
-                continue;
-            }
-            if decoder.send_packet(&packet).is_err() {
-                continue;
-            }
-            if let Some((frame, pts)) =
-                receive_until_target(decoder, scaler, target_pts, decoded, rgba_frame)
-            {
-                self.last_pts = Some(pts);
-                self.last_time_seconds = Some(pts_to_seconds(pts, time_base));
-                return Some(frame);
-            }
-        }
+        let elapsed = elapsed_ms(forward_start);
+        let accounted = timings.transfer_ms + timings.scale_ms + timings.copy_ms;
+        timings.packet_ms += (elapsed - accounted).max(0.0);
 
-        None
+        result
     }
+}
+
+fn receive_until_target(
+    decoder: &mut ffmpeg::decoder::Video,
+    hw_state: Option<&HwDecodeState>,
+    scaler: &mut Option<ffmpeg::software::scaling::Context>,
+    scaler_src: &mut Option<(ffmpeg::util::format::Pixel, u32, u32)>,
+    target_width: u32,
+    target_height: u32,
+    target_pts: i64,
+    decoded: &mut ffmpeg::util::frame::Video,
+    sw_frame: &mut ffmpeg::util::frame::Video,
+    rgba_frame: &mut ffmpeg::util::frame::Video,
+    timings: &mut DecodeTimings,
+) -> Option<(RgbaImage, i64, bool)> {
+    while decoder.receive_frame(decoded).is_ok() {
+        let frame_pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0);
+        if frame_pts < target_pts {
+            continue;
+        }
+
+        let (source, used_hw) = if let Some(hw_state) = hw_state {
+            let hw_pix = ffmpeg::util::format::Pixel::from(hw_state.hw_pix_fmt);
+            if decoded.format() == hw_pix {
+                unsafe {
+                    let transfer_start = Instant::now();
+                    ffmpeg::ffi::av_frame_unref(sw_frame.as_mut_ptr());
+                    if ffmpeg::ffi::av_hwframe_transfer_data(
+                        sw_frame.as_mut_ptr(),
+                        decoded.as_ptr() as *mut _,
+                        0,
+                    ) < 0
+                    {
+                        timings.transfer_ms += elapsed_ms(transfer_start);
+                        continue;
+                    }
+                    timings.transfer_ms += elapsed_ms(transfer_start);
+                }
+                (sw_frame, true)
+            } else {
+                (decoded, false)
+            }
+        } else {
+            (decoded, false)
+        };
+
+        let image = scale_to_rgba(
+            source,
+            rgba_frame,
+            scaler,
+            scaler_src,
+            target_width,
+            target_height,
+            timings,
+        )?;
+        return Some((image, frame_pts, used_hw));
+    }
+
+    None
+}
+
+fn scale_to_rgba(
+    source: &ffmpeg::util::frame::Video,
+    rgba_frame: &mut ffmpeg::util::frame::Video,
+    scaler: &mut Option<ffmpeg::software::scaling::Context>,
+    scaler_src: &mut Option<(ffmpeg::util::format::Pixel, u32, u32)>,
+    target_width: u32,
+    target_height: u32,
+    timings: &mut DecodeTimings,
+) -> Option<RgbaImage> {
+    let src_width = source.width().max(1);
+    let src_height = source.height().max(1);
+    let src_format = source.format();
+
+    let needs_new = match scaler_src {
+        Some((fmt, width, height)) => {
+            *fmt != src_format || *width != src_width || *height != src_height
+        }
+        None => true,
+    };
+
+    if needs_new {
+        let new_scaler = ffmpeg::software::scaling::Context::get(
+            src_format,
+            src_width,
+            src_height,
+            ffmpeg::util::format::Pixel::RGBA,
+            target_width,
+            target_height,
+            ffmpeg::software::scaling::Flags::BILINEAR,
+        )
+        .ok()?;
+        *scaler = Some(new_scaler);
+        *scaler_src = Some((src_format, src_width, src_height));
+    }
+
+    let scaler = scaler.as_mut()?;
+    let scale_start = Instant::now();
+    if scaler.run(source, rgba_frame).is_err() {
+        return None;
+    }
+    timings.scale_ms += elapsed_ms(scale_start);
+
+    let copy_start = Instant::now();
+    let image = frame_to_rgba(rgba_frame)?;
+    timings.copy_ms += elapsed_ms(copy_start);
+    Some(image)
 }
 
 fn fit_dimensions(src_width: u32, src_height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
@@ -295,29 +673,6 @@ fn pts_to_seconds(pts: i64, time_base: ffmpeg::Rational) -> f64 {
     pts as f64 * numerator / denominator
 }
 
-fn receive_until_target(
-    decoder: &mut ffmpeg::decoder::Video,
-    scaler: &mut ffmpeg::software::scaling::Context,
-    target_pts: i64,
-    decoded: &mut ffmpeg::util::frame::Video,
-    rgba_frame: &mut ffmpeg::util::frame::Video,
-) -> Option<(RgbaImage, i64)> {
-    while decoder.receive_frame(decoded).is_ok() {
-        let frame_pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0);
-        if frame_pts < target_pts {
-            continue;
-        }
-
-        if scaler.run(decoded, rgba_frame).is_err() {
-            continue;
-        }
-
-        let image = frame_to_rgba(rgba_frame)?;
-        return Some((image, frame_pts));
-    }
-    None
-}
-
 fn frame_to_rgba(frame: &ffmpeg::util::frame::Video) -> Option<RgbaImage> {
     let width = frame.width() as usize;
     let height = frame.height() as usize;
@@ -342,4 +697,8 @@ fn frame_to_rgba(frame: &ffmpeg::util::frame::Video) -> Option<RgbaImage> {
     }
 
     RgbaImage::from_vec(width as u32, height as u32, buffer)
+}
+
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
 }
