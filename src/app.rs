@@ -2291,7 +2291,7 @@ fn PreviewPanel(
             }
 
             div {
-                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 0; position: relative;",
+                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 0; position: relative; min-height: 0; overflow: hidden;",
                 div {
                     id: "preview-native-host",
                     style: "position: absolute; inset: 0; background-color: transparent; pointer-events: none; z-index: 0;",
