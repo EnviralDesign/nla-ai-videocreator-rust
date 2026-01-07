@@ -2261,7 +2261,7 @@ fn PreviewPanel(
     let stats_line = stats_line.unwrap_or_default();
     rsx! {
         div {
-            style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
+            style: "display: flex; flex-direction: column; flex: 1; min-height: 0; background-color: {BG_DEEPEST};",
 
             div {
                 style: "

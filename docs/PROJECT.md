@@ -759,6 +759,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Allowed the preview panel to shrink vertically to avoid the native surface overlapping the timeline in short windows
 - **2026-01-07:** Added a small Windows-only native preview offset to compensate for WebView2 client-area inset
 - **2026-01-07:** Kept preview header layout stable when stats are hidden and removed preview padding to align the native surface
 - **2026-01-07:** Added a title-bar toggle for preview stats and anchored native preview bounds to a dedicated host rectangle
