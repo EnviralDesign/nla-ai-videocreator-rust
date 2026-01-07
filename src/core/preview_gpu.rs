@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
+use crate::core::preview::{PreviewLayerPlacement, PreviewLayerStack};
+#[cfg(not(target_os = "windows"))]
+use crate::core::preview::PreviewLayerStack;
+#[cfg(target_os = "windows")]
 use dioxus::desktop::tao::platform::windows::WindowExtWindows;
 #[cfg(target_os = "windows")]
 use std::num::NonZeroU64;
@@ -8,14 +12,15 @@ use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
+    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOP, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
 #[cfg(target_os = "windows")]
 const PREVIEW_NATIVE_OFFSET_X: i32 = -8;
 #[cfg(target_os = "windows")]
 const PREVIEW_NATIVE_OFFSET_Y: i32 = -1;
+
 #[cfg(target_os = "windows")]
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -49,45 +54,45 @@ impl Vertex {
 #[cfg(target_os = "windows")]
 const QUAD_VERTICES: [Vertex; 6] = [
     Vertex {
-        position: [-1.0, -1.0],
-        uv: [0.0, 1.0],
+        position: [0.0, 0.0],
+        uv: [0.0, 0.0],
     },
     Vertex {
-        position: [1.0, -1.0],
+        position: [1.0, 0.0],
+        uv: [1.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, 1.0],
         uv: [1.0, 1.0],
     },
     Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, -1.0],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0],
+        position: [0.0, 0.0],
         uv: [0.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, 1.0],
+        uv: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.0, 1.0],
+        uv: [0.0, 1.0],
     },
 ];
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ScaleUniform {
-    scale: [f32; 2],
-    _pad: [f32; 2],
+struct LayerUniform {
+    scale_translate: [f32; 4],
+    opacity_pad: [f32; 4],
 }
 
 #[cfg(target_os = "windows")]
-impl ScaleUniform {
-    fn new(scale: [f32; 2]) -> Self {
+impl LayerUniform {
+    fn new(scale: [f32; 2], translate: [f32; 2], opacity: f32) -> Self {
         Self {
-            scale,
-            _pad: [0.0, 0.0],
+            scale_translate: [scale[0], scale[1], translate[0], translate[1]],
+            opacity_pad: [opacity, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -104,30 +109,33 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 };
 
-struct ScaleUniform {
-    scale: vec2<f32>,
-    _pad: vec2<f32>,
+struct LayerUniform {
+    scale_translate: vec4<f32>,
+    opacity_pad: vec4<f32>,
 };
 
 @group(0) @binding(0)
-var frame_tex: texture_2d<f32>;
+var layer_tex: texture_2d<f32>;
 @group(0) @binding(1)
-var frame_sampler: sampler;
+var layer_sampler: sampler;
 @group(1) @binding(0)
-var<uniform> scale_uniform: ScaleUniform;
+var<uniform> layer_uniform: LayerUniform;
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let scaled = input.position * scale_uniform.scale;
-    out.position = vec4<f32>(scaled, 0.0, 1.0);
+    let scale = layer_uniform.scale_translate.xy;
+    let translate = layer_uniform.scale_translate.zw;
+    let pos = input.position * scale + translate;
+    out.position = vec4<f32>(pos, 0.0, 1.0);
     out.uv = input.uv;
     return out;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(frame_tex, frame_sampler, input.uv);
+    let color = textureSample(layer_tex, layer_sampler, input.uv);
+    return vec4<f32>(color.rgb, color.a * layer_uniform.opacity_pad.x);
 }
 "#;
 
@@ -158,6 +166,16 @@ impl PreviewBounds {
 }
 
 #[cfg(target_os = "windows")]
+struct GpuLayer {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
+    size: (u32, u32),
+    placement: PreviewLayerPlacement,
+}
+
+#[cfg(target_os = "windows")]
 pub struct PreviewGpuSurface {
     window: dioxus::desktop::tao::window::Window,
     surface: wgpu::Surface<'static>,
@@ -166,18 +184,13 @@ pub struct PreviewGpuSurface {
     config: wgpu::SurfaceConfiguration,
     size: dioxus::desktop::tao::dpi::PhysicalSize<u32>,
     position: dioxus::desktop::tao::dpi::PhysicalPosition<i32>,
-    texture: wgpu::Texture,
-    texture_view: wgpu::TextureView,
     sampler: wgpu::Sampler,
-    texture_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
-    scale_buffer: wgpu::Buffer,
-    scale_bind_group: wgpu::BindGroup,
+    uniform_bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
-    frame_size: (u32, u32),
-    has_frame: bool,
-    last_version: u64,
+    layers: Vec<GpuLayer>,
+    canvas_size: (u32, u32),
     upload_scratch: Vec<u8>,
 }
 
@@ -251,8 +264,6 @@ impl PreviewGpuSurface {
             ..Default::default()
         });
 
-        let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
-        let (texture, texture_view) = Self::create_frame_texture(&device, 1, 1, texture_format);
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("preview_gpu_texture_bind_group_layout"),
@@ -276,51 +287,22 @@ impl PreviewGpuSurface {
                 ],
             });
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("preview_gpu_texture_bind_group"),
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-
-        let scale_uniform = ScaleUniform::new([1.0, 1.0]);
-        let scale_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("preview_gpu_scale_buffer"),
-            contents: bytemuck::bytes_of(&scale_uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let scale_bind_group_layout =
+        let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("preview_gpu_scale_bind_group_layout"),
+                label: Some("preview_gpu_layer_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: NonZeroU64::new(
-                            std::mem::size_of::<ScaleUniform>() as u64,
+                            std::mem::size_of::<LayerUniform>() as u64,
                         ),
                     },
                     count: None,
                 }],
             });
-        let scale_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("preview_gpu_scale_bind_group"),
-            layout: &scale_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scale_buffer.as_entire_binding(),
-            }],
-        });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preview_gpu_shader"),
@@ -328,7 +310,7 @@ impl PreviewGpuSurface {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("preview_gpu_pipeline_layout"),
-            bind_group_layouts: &[&texture_bind_group_layout, &scale_bind_group_layout],
+            bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -393,30 +375,25 @@ impl PreviewGpuSurface {
             config,
             size,
             position: dioxus::desktop::tao::dpi::PhysicalPosition::new(0, 0),
-            texture,
-            texture_view,
             sampler,
-            texture_bind_group,
             texture_bind_group_layout,
-            scale_buffer,
-            scale_bind_group,
+            uniform_bind_group_layout,
             pipeline,
             vertex_buffer,
-            frame_size: (1, 1),
-            has_frame: false,
-            last_version: 0,
+            layers: Vec::new(),
+            canvas_size: (1, 1),
             upload_scratch: Vec::new(),
         })
     }
 
-    fn create_frame_texture(
+    fn create_layer_texture(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("preview_gpu_frame_texture"),
+            label: Some("preview_gpu_layer_texture"),
             size: wgpu::Extent3d {
                 width: width.max(1),
                 height: height.max(1),
@@ -433,25 +410,99 @@ impl PreviewGpuSurface {
         (texture, view)
     }
 
-    fn update_texture(&mut self, width: u32, height: u32) {
+    fn create_layer(
+        device: &wgpu::Device,
+        sampler: &wgpu::Sampler,
+        texture_layout: &wgpu::BindGroupLayout,
+        uniform_layout: &wgpu::BindGroupLayout,
+        width: u32,
+        height: u32,
+        placement: PreviewLayerPlacement,
+    ) -> GpuLayer {
         let (texture, view) =
-            Self::create_frame_texture(&self.device, width, height, wgpu::TextureFormat::Rgba8UnormSrgb);
-        self.texture = texture;
-        self.texture_view = view;
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("preview_gpu_texture_bind_group"),
-            layout: &self.texture_bind_group_layout,
+            Self::create_layer_texture(device, width, height, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("preview_gpu_layer_texture_bind_group"),
+            layout: texture_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.texture_view),
+                    resource: wgpu::BindingResource::TextureView(&view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
         });
+
+        let uniform = LayerUniform::new([0.0, 0.0], [0.0, 0.0], placement.opacity);
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("preview_gpu_layer_uniform"),
+            contents: bytemuck::bytes_of(&uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("preview_gpu_layer_uniform_bind_group"),
+            layout: uniform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        GpuLayer {
+            texture,
+            bind_group,
+            uniform_buffer,
+            uniform_bind_group,
+            size: (width, height),
+            placement,
+        }
+    }
+
+    fn compute_layer_uniform(
+        &self,
+        placement: PreviewLayerPlacement,
+        canvas_size: (u32, u32),
+    ) -> Option<LayerUniform> {
+        let surface_w = self.size.width.max(1) as f32;
+        let surface_h = self.size.height.max(1) as f32;
+        let canvas_w = canvas_size.0.max(1) as f32;
+        let canvas_h = canvas_size.1.max(1) as f32;
+        if surface_w <= 0.0 || surface_h <= 0.0 {
+            return None;
+        }
+
+        let preview_scale = (surface_w / canvas_w).min(surface_h / canvas_h).max(0.0);
+        if preview_scale <= 0.0 {
+            return None;
+        }
+
+        let preview_w = canvas_w * preview_scale;
+        let preview_h = canvas_h * preview_scale;
+        let offset_x = (surface_w - preview_w) * 0.5;
+        let offset_y = (surface_h - preview_h) * 0.5;
+
+        let rect_w = placement.scaled_w * preview_scale;
+        let rect_h = placement.scaled_h * preview_scale;
+        if rect_w <= 0.0 || rect_h <= 0.0 {
+            return None;
+        }
+
+        let rect_x = offset_x + placement.offset_x * preview_scale;
+        let rect_y = offset_y + placement.offset_y * preview_scale;
+
+        let scale_x = rect_w / surface_w * 2.0;
+        let scale_y = -(rect_h / surface_h) * 2.0;
+        let translate_x = rect_x / surface_w * 2.0 - 1.0;
+        let translate_y = 1.0 - rect_y / surface_h * 2.0;
+
+        Some(LayerUniform::new(
+            [scale_x, scale_y],
+            [translate_x, translate_y],
+            placement.opacity,
+        ))
     }
 
     pub fn apply_bounds(&mut self, bounds: PreviewBounds) -> bool {
@@ -460,23 +511,23 @@ impl PreviewGpuSurface {
         const INSET_LEFT: i32 = 8;
         const INSET_RIGHT: i32 = 8;
         const INSET_TOP: i32 = 4;
-        const INSET_BOTTOM: i32 = 12;  // Larger to clear the timeline resize handle
+        const INSET_BOTTOM: i32 = 12; // Larger to clear the timeline resize handle
 
         let mut size = bounds.to_physical_size();
         let mut position = bounds.to_physical_position();
-        
+
         // TODO: Remove once we can anchor to the WebView HWND directly.
         // This compensates for a small WebView2 client-area inset on Windows.
         position.x = position.x.saturating_add(PREVIEW_NATIVE_OFFSET_X);
         position.y = position.y.saturating_add(PREVIEW_NATIVE_OFFSET_Y);
-        
+
         // Apply inset to prevent overlap with resize handles
         position.x = position.x.saturating_add(INSET_LEFT);
         position.y = position.y.saturating_add(INSET_TOP);
         let new_width = size.width.saturating_sub((INSET_LEFT + INSET_RIGHT) as u32);
         let new_height = size.height.saturating_sub((INSET_TOP + INSET_BOTTOM) as u32);
         size = dioxus::desktop::tao::dpi::PhysicalSize::new(new_width.max(1), new_height.max(1));
-        
+
         if size.width == 0 || size.height == 0 {
             return false;
         }
@@ -501,74 +552,109 @@ impl PreviewGpuSurface {
         changed
     }
 
-    pub fn upload_frame(&mut self, version: u64, width: u32, height: u32, bytes: &[u8]) -> bool {
-        if width == 0 || height == 0 {
-            return false;
-        }
-        let expected = width as usize * height as usize * 4;
-        if bytes.len() != expected {
-            return false;
-        }
-        if self.last_version == version && self.frame_size == (width, height) {
-            return false;
-        }
-
-        if self.frame_size != (width, height) {
-            self.update_texture(width, height);
-            self.frame_size = (width, height);
-        }
-
-        let row_bytes = width * 4;
-        let aligned_row_bytes = align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u32);
-        let data = if aligned_row_bytes == row_bytes {
-            bytes
-        } else {
-            let rows = height as usize;
-            let padded_len = aligned_row_bytes as usize * rows;
-            self.upload_scratch.resize(padded_len, 0);
-            self.upload_scratch.fill(0);
-            let row_bytes_usize = row_bytes as usize;
-            let aligned_row_bytes_usize = aligned_row_bytes as usize;
-            for row in 0..rows {
-                let src_offset = row * row_bytes_usize;
-                let dst_offset = row * aligned_row_bytes_usize;
-                self.upload_scratch[dst_offset..dst_offset + row_bytes_usize]
-                    .copy_from_slice(&bytes[src_offset..src_offset + row_bytes_usize]);
-            }
-            &self.upload_scratch
-        };
-
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(aligned_row_bytes),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+    pub fn upload_layers(&mut self, stack: &PreviewLayerStack) -> bool {
+        self.canvas_size = (
+            stack.canvas_width.max(1),
+            stack.canvas_height.max(1),
         );
 
-        self.last_version = version;
-        self.has_frame = true;
-        true
+        if stack.layers.is_empty() {
+            self.layers.clear();
+            return true;
+        }
+
+        if self.layers.len() > stack.layers.len() {
+            self.layers.truncate(stack.layers.len());
+        }
+
+        let mut uploaded = false;
+        for (index, layer) in stack.layers.iter().enumerate() {
+            let width = layer.image.width().max(1);
+            let height = layer.image.height().max(1);
+
+            if index >= self.layers.len() {
+                self.layers.push(Self::create_layer(
+                    &self.device,
+                    &self.sampler,
+                    &self.texture_bind_group_layout,
+                    &self.uniform_bind_group_layout,
+                    width,
+                    height,
+                    layer.placement,
+                ));
+            } else if self.layers[index].size != (width, height) {
+                self.layers[index] = Self::create_layer(
+                    &self.device,
+                    &self.sampler,
+                    &self.texture_bind_group_layout,
+                    &self.uniform_bind_group_layout,
+                    width,
+                    height,
+                    layer.placement,
+                );
+            }
+
+            if let Some(gpu_layer) = self.layers.get_mut(index) {
+                gpu_layer.placement = layer.placement;
+                let bytes = layer.image.as_raw();
+                let expected = width as usize * height as usize * 4;
+                if bytes.len() != expected {
+                    continue;
+                }
+
+                let row_bytes = width * 4;
+                let aligned_row_bytes =
+                    align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u32);
+                let data = if aligned_row_bytes == row_bytes {
+                    bytes.as_slice()
+                } else {
+                    let rows = height as usize;
+                    let padded_len = aligned_row_bytes as usize * rows;
+                    self.upload_scratch.resize(padded_len, 0);
+                    self.upload_scratch.fill(0);
+                    let row_bytes_usize = row_bytes as usize;
+                    let aligned_row_bytes_usize = aligned_row_bytes as usize;
+                    for row in 0..rows {
+                        let src_offset = row * row_bytes_usize;
+                        let dst_offset = row * aligned_row_bytes_usize;
+                        self.upload_scratch[dst_offset..dst_offset + row_bytes_usize]
+                            .copy_from_slice(&bytes[src_offset..src_offset + row_bytes_usize]);
+                    }
+                    self.upload_scratch.as_slice()
+                };
+
+                self.queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &gpu_layer.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(aligned_row_bytes),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                uploaded = true;
+            }
+        }
+
+        uploaded
     }
 
-    pub fn clear_frame(&mut self) {
-        self.has_frame = false;
-        self.last_version = 0;
+    pub fn clear_layers(&mut self) {
+        self.layers.clear();
+        self.canvas_size = (1, 1);
     }
 
-    pub fn render(&mut self) {
+    pub fn render_layers(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
@@ -608,33 +694,26 @@ impl PreviewGpuSurface {
                 timestamp_writes: None,
             });
 
-            if self.has_frame {
-                let (frame_w, frame_h) = self.frame_size;
-                let surface_w = self.size.width.max(1) as f32;
-                let surface_h = self.size.height.max(1) as f32;
-                let scale = if frame_w > 0 && frame_h > 0 {
-                    let frame_w = frame_w as f32;
-                    let frame_h = frame_h as f32;
-                    let scale_factor = (surface_w / frame_w).min(surface_h / frame_h);
-                    let scaled_w = frame_w * scale_factor;
-                    let scaled_h = frame_h * scale_factor;
-                    [
-                        (scaled_w / surface_w).min(1.0),
-                        (scaled_h / surface_h).min(1.0),
-                    ]
-                } else {
-                    [0.0, 0.0]
-                };
-
-                let uniform = ScaleUniform::new(scale);
-                self.queue
-                    .write_buffer(&self.scale_buffer, 0, bytemuck::bytes_of(&uniform));
-
+            if !self.layers.is_empty() {
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.texture_bind_group, &[]);
-                pass.set_bind_group(1, &self.scale_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                pass.draw(0..QUAD_VERTICES.len() as u32, 0..1);
+
+                let canvas_size = self.canvas_size;
+                for layer in &self.layers {
+                    let Some(uniform) =
+                        self.compute_layer_uniform(layer.placement, canvas_size)
+                    else {
+                        continue;
+                    };
+                    self.queue.write_buffer(
+                        &layer.uniform_buffer,
+                        0,
+                        bytemuck::bytes_of(&uniform),
+                    );
+                    pass.set_bind_group(0, &layer.bind_group, &[]);
+                    pass.set_bind_group(1, &layer.uniform_bind_group, &[]);
+                    pass.draw(0..QUAD_VERTICES.len() as u32, 0..1);
+                }
             }
         }
 
@@ -681,11 +760,11 @@ impl PreviewGpuSurface {
         false
     }
 
-    pub fn upload_frame(&mut self, _version: u64, _width: u32, _height: u32, _bytes: &[u8]) -> bool {
+    pub fn upload_layers(&mut self, _stack: &PreviewLayerStack) -> bool {
         false
     }
 
-    pub fn clear_frame(&mut self) {}
+    pub fn clear_layers(&mut self) {}
 
-    pub fn render(&mut self) {}
+    pub fn render_layers(&mut self) {}
 }

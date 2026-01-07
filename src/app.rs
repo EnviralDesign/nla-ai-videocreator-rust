@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
-use crate::core::preview_store;
 use crate::timeline::TimelinePanel;
 
 // =============================================================================
@@ -188,8 +187,11 @@ pub fn App() -> Element {
     let mut preview_native_active = use_signal(|| false);
     let mut preview_native_enabled = use_signal(|| false);
     let preview_native_attempted = use_signal(|| false);
-    let mut preview_native_uploaded = use_signal(|| None::<(u64, u32, u32)>);
+    let mut preview_native_uploaded = use_signal(|| None::<u64>);
     let mut preview_gpu_upload_ms = use_signal(|| None::<f64>);
+    let mut preview_layers =
+        use_signal(|| None::<(u64, crate::core::preview::PreviewLayerStack)>);
+    let mut preview_native_ready = use_signal(|| false);
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
     let mut show_preview_stats = use_signal(|| true);
     let desktop = use_window();
@@ -277,8 +279,10 @@ pub fn App() -> Element {
         let current_time = current_time.clone();
         let previewer = previewer.clone();
         let mut preview_frame = preview_frame.clone();
+        let mut preview_layers = preview_layers.clone();
         let mut preview_stats = preview_stats.clone();
         let mut preview_dirty = preview_dirty.clone();
+        let preview_native_ready = preview_native_ready.clone();
         async move {
             let render_request_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let render_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
@@ -303,15 +307,20 @@ pub fn App() -> Element {
 
                 let project_snapshot = project.read().clone();
                 let renderer = previewer.read().clone();
+                let use_gpu = preview_native_ready();
                 let render_task = tokio::task::spawn_blocking(move || {
-                    let result = renderer.render_frame(&project_snapshot, time);
+                    let result = if use_gpu {
+                        renderer.render_layers(&project_snapshot, time)
+                    } else {
+                        renderer.render_frame(&project_snapshot, time)
+                    };
                     drop(permit);
-                    (result, project_snapshot)
+                    (result, project_snapshot, use_gpu)
                 })
                 .await
                 .ok();
 
-                let Some((render_output, project_snapshot)) = render_task else {
+                let Some((render_output, project_snapshot, use_gpu)) = render_task else {
                     continue;
                 };
 
@@ -319,10 +328,24 @@ pub fn App() -> Element {
                     continue;
                 }
 
-                preview_stats.set(Some(render_output.stats));
+                let crate::core::preview::RenderOutput { frame, layers, stats } = render_output;
+                preview_stats.set(Some(stats));
 
-                let rendered = render_output.frame.is_some();
-                preview_frame.set(render_output.frame);
+                let rendered = if use_gpu {
+                    if let Some(layers) = layers {
+                        preview_layers.set(Some((request_id, layers)));
+                        preview_frame.set(None);
+                        true
+                    } else {
+                        preview_layers.set(None);
+                        preview_frame.set(None);
+                        false
+                    }
+                } else {
+                    preview_layers.set(None);
+                    preview_frame.set(frame);
+                    frame.is_some()
+                };
 
                 preview_dirty.set(false);
                 let direction = if last_time < 0.0 {
@@ -426,14 +449,17 @@ pub fn App() -> Element {
             preview_native_active.set(false);
             preview_native_uploaded.set(None);
             preview_gpu_upload_ms.set(None);
+            preview_layers.set(None);
+            preview_native_ready.set(false);
         }
     });
 
+    let preview_layers_for_redraw = preview_layers.clone();
     use_effect(move || {
         if !preview_native_enabled() {
             return;
         }
-        if preview_frame().is_some() {
+        if preview_frame().is_some() || preview_layers_for_redraw().is_some() {
             desktop_for_redraw.window.request_redraw();
         }
     });
@@ -446,7 +472,8 @@ pub fn App() -> Element {
         let mut preview_native_attempted = preview_native_attempted.clone();
         let mut preview_native_uploaded = preview_native_uploaded.clone();
         let mut preview_gpu_upload_ms = preview_gpu_upload_ms.clone();
-        let preview_frame = preview_frame.clone();
+        let preview_layers = preview_layers.clone();
+        let mut preview_native_ready = preview_native_ready.clone();
         let desktop = desktop_for_events.clone();
         move |event, target| {
             if !preview_native_enabled() {
@@ -489,6 +516,7 @@ pub fn App() -> Element {
                 preview_native_attempted.set(true);
                 if let Some(gpu) = PreviewGpuSurface::new(&desktop.window, target) {
                     *gpu_state = Some(gpu);
+                    preview_native_ready.set(true);
                 } else {
                     return;
                 }
@@ -496,18 +524,16 @@ pub fn App() -> Element {
 
             if let Some(gpu) = gpu_state.as_mut() {
                 let mut uploaded = false;
-                let upload_ms = if let Some(frame) = preview_frame() {
-                    let frame_key = (frame.version, frame.width, frame.height);
-                    if preview_native_uploaded() != Some(frame_key) {
+                let upload_ms = if let Some((stack_id, stack)) = preview_layers() {
+                    if !preview_native_active() {
+                        preview_native_active.set(true);
+                    }
+                    if preview_native_uploaded() != Some(stack_id) {
                         let upload_start = Instant::now();
-                        if let Some(bytes) = preview_store::get_preview_bytes(frame.version) {
-                            uploaded =
-                                gpu.upload_frame(frame.version, frame.width, frame.height, &bytes);
-                        }
+                        uploaded = gpu.upload_layers(&stack);
                         let elapsed_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
                         if uploaded {
-                            preview_native_uploaded.set(Some(frame_key));
-                            preview_native_active.set(true);
+                            preview_native_uploaded.set(Some(stack_id));
                         }
                         Some(elapsed_ms)
                     } else {
@@ -518,7 +544,8 @@ pub fn App() -> Element {
                         preview_native_active.set(false);
                     }
                     preview_native_uploaded.set(None);
-                    gpu.clear_frame();
+                    gpu.clear_layers();
+                    uploaded = true;
                     Some(0.0)
                 };
                 if let Some(ms) = upload_ms {
@@ -527,7 +554,7 @@ pub fn App() -> Element {
 
                 let changed = gpu.apply_bounds(bounds);
                 if should_render || changed || uploaded {
-                    gpu.render();
+                    gpu.render_layers();
                 }
             }
         }

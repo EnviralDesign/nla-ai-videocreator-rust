@@ -467,8 +467,8 @@ my-project/
   - [x] Compositor v0: layer stack with opacity + basic scale/translate
   - [x] Preview panel renders composited frame via direct RGBA canvas upload
   - [ ] Transform pipeline v1: rotation + anchor/pivot support
-  - [ ] Canvas compositor + direct buffer upload (replace PNG cache)
-  - [ ] Native preview surface (wgpu) integration
+  - [x] Canvas compositor + direct buffer upload (replace PNG cache)
+  - [x] Native preview surface (wgpu) integration
   - [x] Frame caching/prefetch for smooth scrubbing
 
 ### Nice to Have (v0.2+)
@@ -759,6 +759,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Fixed WGPU preview shader uniform layout to prevent pipeline validation crashes
+- **2026-01-07:** Switched native preview to upload per-layer textures and composite them in WGPU using per-layer transforms and opacity
+- **2026-01-07:** Preview render loop now emits layer stacks for the GPU path and triggers native redraws when layers update
 - **2026-01-07:** Reworked preview stats labeling to show scan time (excluding decode/still) for clearer left-to-right stage timing
 - **2026-01-07:** Allowed the preview panel to shrink vertically to avoid the native surface overlapping the timeline in short windows
 - **2026-01-07:** Added a small Windows-only native preview offset to compensate for WebView2 client-area inset
@@ -829,5 +832,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-06*
+*Last updated: 2026-01-07*
 

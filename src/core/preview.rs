@@ -35,9 +35,32 @@ pub struct PreviewFrameInfo {
     pub height: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PreviewLayerPlacement {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub scaled_w: f32,
+    pub scaled_h: f32,
+    pub opacity: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreviewLayerGpu {
+    pub image: Arc<RgbaImage>,
+    pub placement: PreviewLayerPlacement,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreviewLayerStack {
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub layers: Vec<PreviewLayerGpu>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderOutput {
     pub frame: Option<PreviewFrameInfo>,
+    pub layers: Option<PreviewLayerStack>,
     pub stats: PreviewStats,
 }
 
@@ -177,7 +200,11 @@ impl PreviewRenderer {
 
         if layers.is_empty() && !has_visual_assets {
             stats.total_ms = elapsed_ms(render_start);
-            return RenderOutput { frame: None, stats };
+            return RenderOutput {
+                frame: None,
+                layers: None,
+                stats,
+            };
         }
 
         let mut canvas = RgbaImage::from_pixel(canvas_w, canvas_h, Rgba([0, 0, 0, 255]));
@@ -204,7 +231,79 @@ impl PreviewRenderer {
             width: canvas_w,
             height: canvas_h,
         });
-        RenderOutput { frame, stats }
+        RenderOutput {
+            frame,
+            layers: None,
+            stats,
+        }
+    }
+
+    /// Render the per-layer stack for GPU compositing.
+    pub fn render_layers(&self, project: &Project, time_seconds: f64) -> RenderOutput {
+        let render_start = Instant::now();
+        let mut stats = PreviewStats::default();
+        let project_root = project
+            .project_path
+            .as_ref()
+            .unwrap_or(&self.project_root);
+
+        let (canvas_w, canvas_h, preview_scale) = preview_canvas_size(
+            project.settings.width,
+            project.settings.height,
+            self.max_width,
+            self.max_height,
+        );
+
+        let fps = project.settings.fps.max(1.0);
+        let collect_start = Instant::now();
+        let layers = self.collect_layers(project, project_root, time_seconds, fps, &mut stats);
+        stats.collect_ms = elapsed_ms(collect_start);
+        stats.layers = layers.len();
+
+        let has_visual_assets = project.clips.iter().any(|clip| {
+            project
+                .find_asset(clip.asset_id)
+                .map(|asset| asset.is_visual())
+                .unwrap_or(false)
+        });
+
+        if layers.is_empty() && !has_visual_assets {
+            stats.total_ms = elapsed_ms(render_start);
+            return RenderOutput {
+                frame: None,
+                layers: None,
+                stats,
+            };
+        }
+
+        let mut gpu_layers = Vec::new();
+        let canvas_w_f = canvas_w as f32;
+        let canvas_h_f = canvas_h as f32;
+        for layer in layers {
+            if let Some(placement) = compute_layer_placement(
+                &layer.image,
+                layer.transform,
+                preview_scale,
+                canvas_w_f,
+                canvas_h_f,
+            ) {
+                gpu_layers.push(PreviewLayerGpu {
+                    image: layer.image,
+                    placement,
+                });
+            }
+        }
+
+        stats.total_ms = elapsed_ms(render_start);
+        RenderOutput {
+            frame: None,
+            layers: Some(PreviewLayerStack {
+                canvas_width: canvas_w,
+                canvas_height: canvas_h,
+                layers: gpu_layers,
+            }),
+            stats,
+        }
     }
 
     fn collect_layers(
@@ -430,36 +529,69 @@ fn composite_layer(
     transform: ClipTransform,
     preview_scale: f32,
 ) {
-    let opacity = transform.opacity.clamp(0.0, 1.0);
-    let image = if opacity < 1.0 {
+    let placement = match compute_layer_placement(
+        image,
+        transform,
+        preview_scale,
+        canvas.width() as f32,
+        canvas.height() as f32,
+    ) {
+        Some(placement) => placement,
+        None => return,
+    };
+
+    let image = if placement.opacity < 1.0 {
         let mut working = image.clone();
-        apply_opacity(&mut working, opacity);
+        apply_opacity(&mut working, placement.opacity);
         Cow::Owned(working)
     } else {
         Cow::Borrowed(image)
     };
-
-    let (canvas_w, canvas_h) = (canvas.width() as f32, canvas.height() as f32);
-    let (src_w, src_h) = (image.width() as f32, image.height() as f32);
-
-    if src_w <= 0.0 || src_h <= 0.0 {
-        return;
-    }
-
-    let base_scale = (canvas_w / src_w).min(canvas_h / src_h);
-    let scaled_w = (src_w * base_scale * transform.scale_x.max(0.01)).round() as u32;
-    let scaled_h = (src_h * base_scale * transform.scale_y.max(0.01)).round() as u32;
-
+    let scaled_w = placement.scaled_w.round() as u32;
+    let scaled_h = placement.scaled_h.round() as u32;
     if scaled_w == 0 || scaled_h == 0 {
         return;
     }
 
     let resized = resize(image.as_ref(), scaled_w, scaled_h, FilterType::Triangle);
+    overlay(
+        canvas,
+        &resized,
+        placement.offset_x.round() as i64,
+        placement.offset_y.round() as i64,
+    );
+}
 
-    let offset_x = ((canvas_w - scaled_w as f32) * 0.5) + (transform.position_x * preview_scale);
-    let offset_y = ((canvas_h - scaled_h as f32) * 0.5) + (transform.position_y * preview_scale);
+fn compute_layer_placement(
+    image: &RgbaImage,
+    transform: ClipTransform,
+    preview_scale: f32,
+    canvas_w: f32,
+    canvas_h: f32,
+) -> Option<PreviewLayerPlacement> {
+    let (src_w, src_h) = (image.width() as f32, image.height() as f32);
+    if src_w <= 0.0 || src_h <= 0.0 {
+        return None;
+    }
 
-    overlay(canvas, &resized, offset_x.round() as i64, offset_y.round() as i64);
+    let base_scale = (canvas_w / src_w).min(canvas_h / src_h);
+    let scaled_w = src_w * base_scale * transform.scale_x.max(0.01);
+    let scaled_h = src_h * base_scale * transform.scale_y.max(0.01);
+    if scaled_w <= 0.0 || scaled_h <= 0.0 {
+        return None;
+    }
+
+    let offset_x = ((canvas_w - scaled_w) * 0.5) + (transform.position_x * preview_scale);
+    let offset_y = ((canvas_h - scaled_h) * 0.5) + (transform.position_y * preview_scale);
+    let opacity = transform.opacity.clamp(0.0, 1.0);
+
+    Some(PreviewLayerPlacement {
+        offset_x,
+        offset_y,
+        scaled_w,
+        scaled_h,
+        opacity,
+    })
 }
 
 fn apply_opacity(image: &mut RgbaImage, opacity: f32) {
