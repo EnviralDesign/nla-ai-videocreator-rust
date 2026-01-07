@@ -201,6 +201,7 @@ impl PreviewRenderer {
         project: &Project,
         time_seconds: f64,
         decode_mode: PreviewDecodeMode,
+        allow_hw_decode: bool,
     ) -> RenderOutput {
         let render_start = Instant::now();
         let mut stats = PreviewStats::default();
@@ -218,8 +219,15 @@ impl PreviewRenderer {
 
         let fps = project.settings.fps.max(1.0);
         let collect_start = Instant::now();
-        let layers =
-            self.collect_layers(project, project_root, time_seconds, fps, decode_mode, &mut stats);
+        let layers = self.collect_layers(
+            project,
+            project_root,
+            time_seconds,
+            fps,
+            decode_mode,
+            allow_hw_decode,
+            &mut stats,
+        );
         stats.collect_ms = elapsed_ms(collect_start);
         stats.layers = layers.len();
 
@@ -276,6 +284,7 @@ impl PreviewRenderer {
         project: &Project,
         time_seconds: f64,
         decode_mode: PreviewDecodeMode,
+        allow_hw_decode: bool,
     ) -> RenderOutput {
         let render_start = Instant::now();
         let mut stats = PreviewStats::default();
@@ -293,8 +302,15 @@ impl PreviewRenderer {
 
         let fps = project.settings.fps.max(1.0);
         let collect_start = Instant::now();
-        let layers =
-            self.collect_layers(project, project_root, time_seconds, fps, decode_mode, &mut stats);
+        let layers = self.collect_layers(
+            project,
+            project_root,
+            time_seconds,
+            fps,
+            decode_mode,
+            allow_hw_decode,
+            &mut stats,
+        );
         stats.collect_ms = elapsed_ms(collect_start);
         stats.layers = layers.len();
 
@@ -351,6 +367,7 @@ impl PreviewRenderer {
         time_seconds: f64,
         fps: f64,
         decode_mode: PreviewDecodeMode,
+        allow_hw_decode: bool,
         stats: &mut PreviewStats,
     ) -> Vec<PreviewLayer> {
         let mut track_order: HashMap<uuid::Uuid, usize> = HashMap::new();
@@ -462,6 +479,7 @@ impl PreviewRenderer {
                     item.frame_time,
                     decode_mode,
                     item.lane_id,
+                    allow_hw_decode,
                 ) {
                     requests.push((item, receiver));
                 }
@@ -513,6 +531,7 @@ impl PreviewRenderer {
         direction: i32,
         window_frames: u32,
         decode_mode: PreviewDecodeMode,
+        allow_hw_decode: bool,
     ) {
         if window_frames == 0 || direction == 0 {
             return;
@@ -550,6 +569,7 @@ impl PreviewRenderer {
                     fps,
                     decode_mode,
                     track_lane_id(clip.track_id),
+                    allow_hw_decode,
                     None,
                 );
             }
@@ -643,6 +663,7 @@ impl PreviewRenderer {
         fps: f64,
         decode_mode: PreviewDecodeMode,
         lane_id: u64,
+        allow_hw_decode: bool,
         mut stats: Option<&mut PreviewStats>,
     ) -> Option<Arc<RgbaImage>> {
         let (path, is_video, duration) =
@@ -681,9 +702,13 @@ impl PreviewRenderer {
                 PreviewDecodeMode::Sequential => DecodeMode::Sequential,
             };
             let response = match mode {
-                DecodeMode::Seek => self.video_decoder.decode(&path, frame_time, lane_id)?,
+                DecodeMode::Seek => {
+                    self.video_decoder
+                        .decode(&path, frame_time, lane_id, allow_hw_decode)?
+                }
                 DecodeMode::Sequential => {
-                    self.video_decoder.decode_sequential(&path, frame_time, lane_id)?
+                    self.video_decoder
+                        .decode_sequential(&path, frame_time, lane_id, allow_hw_decode)?
                 }
             };
             if let Some(stats) = stats.as_deref_mut() {

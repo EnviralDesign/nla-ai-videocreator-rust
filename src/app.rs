@@ -197,6 +197,7 @@ pub fn App() -> Element {
     let mut preview_native_ready = use_signal(|| false);
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
     let mut show_preview_stats = use_signal(|| false);
+    let mut use_hw_decode = use_signal(|| true);
     let mut clip_cache_buckets =
         use_signal(|| std::sync::Arc::new(HashMap::<uuid::Uuid, Vec<bool>>::new()));
     let preview_cache_tick = use_signal(|| 0_u64);
@@ -291,6 +292,7 @@ pub fn App() -> Element {
         let mut preview_dirty = preview_dirty.clone();
         let mut preview_cache_tick = preview_cache_tick.clone();
         let preview_native_ready = preview_native_ready.clone();
+        let use_hw_decode = use_hw_decode.clone();
         async move {
             let render_request_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let render_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
@@ -321,19 +323,20 @@ pub fn App() -> Element {
                 } else {
                     crate::core::preview::PreviewDecodeMode::Seek
                 };
+                let allow_hw_decode = use_hw_decode();
                 let render_task = tokio::task::spawn_blocking(move || {
                     let result = if use_gpu {
-                        renderer.render_layers(&project_snapshot, time, decode_mode)
+                        renderer.render_layers(&project_snapshot, time, decode_mode, allow_hw_decode)
                     } else {
-                        renderer.render_frame(&project_snapshot, time, decode_mode)
+                        renderer.render_frame(&project_snapshot, time, decode_mode, allow_hw_decode)
                     };
                     drop(permit);
-                    (result, project_snapshot, use_gpu, decode_mode)
+                    (result, project_snapshot, use_gpu, decode_mode, allow_hw_decode)
                 })
                 .await
                 .ok();
 
-                let Some((render_output, project_snapshot, use_gpu, decode_mode)) = render_task else {
+                let Some((render_output, project_snapshot, use_gpu, decode_mode, allow_hw_decode)) = render_task else {
                     continue;
                 };
 
@@ -393,6 +396,7 @@ pub fn App() -> Element {
                                     direction,
                                     prefetch_frames,
                                     decode_mode,
+                                    allow_hw_decode,
                                 );
                                 drop(prefetch_permit);
                             });
@@ -756,6 +760,11 @@ pub fn App() -> Element {
                 show_preview_stats: show_preview_stats(),
                 on_toggle_preview_stats: move |_| {
                     show_preview_stats.set(!show_preview_stats());
+                },
+                use_hw_decode: use_hw_decode(),
+                on_toggle_hw_decode: move |_| {
+                    use_hw_decode.set(!use_hw_decode());
+                    preview_dirty.set(true);
                 },
             }
 
@@ -1812,8 +1821,11 @@ fn TitleBar(
     on_save: EventHandler<MouseEvent>,
     show_preview_stats: bool,
     on_toggle_preview_stats: EventHandler<MouseEvent>,
+    use_hw_decode: bool,
+    on_toggle_hw_decode: EventHandler<MouseEvent>,
 ) -> Element {
     let stats_toggle_bg = if show_preview_stats { BG_HOVER } else { BG_BASE };
+    let hw_toggle_bg = if use_hw_decode { BG_HOVER } else { BG_BASE };
     rsx! {
         div {
             style: "
@@ -1852,21 +1864,42 @@ fn TitleBar(
             span { style: "font-size: 13px; color: {TEXT_MUTED};", "{project_name}" }
             
             div {
-                style: "display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 160px;",
-                span {
-                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.6px;",
-                    "Stats"
+                style: "display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 220px;",
+                div {
+                    style: "display: flex; align-items: center; gap: 6px;",
+                    span {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.6px;",
+                        "Stats"
+                    }
+                    button {
+                        class: "collapse-btn",
+                        style: "
+                            background: {stats_toggle_bg};
+                            border: 1px solid {BORDER_DEFAULT};
+                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
+                            padding: 4px 10px; border-radius: 999px;
+                        ",
+                        onclick: move |e| on_toggle_preview_stats.call(e),
+                        if show_preview_stats { "On" } else { "Off" }
+                    }
                 }
-                button {
-                    class: "collapse-btn",
-                    style: "
-                        background: {stats_toggle_bg};
-                        border: 1px solid {BORDER_DEFAULT};
-                        color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
-                        padding: 4px 10px; border-radius: 999px;
-                    ",
-                    onclick: move |e| on_toggle_preview_stats.call(e),
-                    if show_preview_stats { "On" } else { "Off" }
+                div {
+                    style: "display: flex; align-items: center; gap: 6px;",
+                    span {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.6px;",
+                        "HW Dec"
+                    }
+                    button {
+                        class: "collapse-btn",
+                        style: "
+                            background: {hw_toggle_bg};
+                            border: 1px solid {BORDER_DEFAULT};
+                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
+                            padding: 4px 10px; border-radius: 999px;
+                        ",
+                        onclick: move |e| on_toggle_hw_decode.call(e),
+                        if use_hw_decode { "On" } else { "Off" }
+                    }
                 }
             }
         }

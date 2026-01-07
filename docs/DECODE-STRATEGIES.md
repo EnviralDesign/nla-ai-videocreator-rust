@@ -2,6 +2,14 @@ Fast timeline preview in desktop NLEs – architecture & design
 
 This report reviews how professional non‑linear editors (NLEs) like DaVinci Resolve and Adobe Premiere Pro achieve smooth timeline preview and scrubbing, and what practices can be applied when implementing a Rust desktop NLE using Dioxus (WebView2) and modern Windows APIs. The goal is to understand the architecture of the preview pipeline and identify Rust technologies for decoding, caching and GPU compositing.
 
+## Local Implementation Notes (NLA AI Video Creator)
+
+- Current preview path decodes via `ffmpeg-next` into CPU RGBA. When hardware decode is enabled, FFmpeg uses D3D11VA/DXVA2 and frames are transferred back to CPU (`xfer`) before CPU swscale and WGPU upload.
+- GPU compositing (wgpu) handles scale/translate/opacity; rotation is still pending.
+- Preview stats now include a detailed `vdec` breakdown (`seek`, `pkt`, `xfer`, `scale`, `copy`) plus `hwdec` percent. Use these to pinpoint the hottest stages.
+- A UI toggle in the title bar (“HW Dec”) forces CPU decode for A/B comparisons.
+- Future optimization: keep decoded NV12 textures on GPU and composite directly (avoid GPU→CPU→GPU round‑trip).
+
 1 Typical preview pipeline architecture
 
 Professional NLEs implement a multi‑stage pipeline to display the timeline preview efficiently. A simplified architecture is shown below:

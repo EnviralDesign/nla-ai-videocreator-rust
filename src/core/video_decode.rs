@@ -42,6 +42,7 @@ struct DecodeRequest {
     time_seconds: f64,
     mode: DecodeMode,
     lane_id: u64,
+    allow_hw: bool,
     respond_to: mpsc::Sender<DecodeResponse>,
 }
 
@@ -86,12 +87,14 @@ impl VideoDecodeWorker {
                         time_seconds,
                         mode,
                         lane_id,
+                        allow_hw,
                         respond_to,
                     } = request;
 
                     let key = DecoderKey {
                         path: path.clone(),
                         lane_id,
+                        allow_hw,
                     };
 
                     let outcome = match decoders.entry(key) {
@@ -103,7 +106,7 @@ impl VideoDecodeWorker {
                                 .decoder
                                 .decode_frame_at_time(time_seconds, mode)
                         }
-                        Entry::Vacant(entry) => match VideoDecoder::open(&path, max_width, max_height)
+                        Entry::Vacant(entry) => match VideoDecoder::open(&path, max_width, max_height, allow_hw)
                         {
                             Ok(mut decoder) => {
                                 access_counter = access_counter.wrapping_add(1);
@@ -135,8 +138,14 @@ impl VideoDecodeWorker {
     }
 
     /// Decode a single frame at the requested timestamp (seconds).
-    pub fn decode(&self, path: &Path, time_seconds: f64, lane_id: u64) -> Option<DecodeResponse> {
-        self.decode_with_mode(path, time_seconds, DecodeMode::Seek, lane_id)
+    pub fn decode(
+        &self,
+        path: &Path,
+        time_seconds: f64,
+        lane_id: u64,
+        allow_hw: bool,
+    ) -> Option<DecodeResponse> {
+        self.decode_with_mode(path, time_seconds, DecodeMode::Seek, lane_id, allow_hw)
     }
 
     /// Decode a single frame using sequential decode when possible.
@@ -145,8 +154,9 @@ impl VideoDecodeWorker {
         path: &Path,
         time_seconds: f64,
         lane_id: u64,
+        allow_hw: bool,
     ) -> Option<DecodeResponse> {
-        self.decode_with_mode(path, time_seconds, DecodeMode::Sequential, lane_id)
+        self.decode_with_mode(path, time_seconds, DecodeMode::Sequential, lane_id, allow_hw)
     }
 
     pub fn decode_async(
@@ -155,6 +165,7 @@ impl VideoDecodeWorker {
         time_seconds: f64,
         mode: DecodeMode,
         lane_id: u64,
+        allow_hw: bool,
     ) -> Option<mpsc::Receiver<DecodeResponse>> {
         let sender = self.select_sender(lane_id)?;
         let (respond_to, response) = mpsc::channel();
@@ -163,6 +174,7 @@ impl VideoDecodeWorker {
             time_seconds,
             mode,
             lane_id,
+            allow_hw,
             respond_to,
         };
 
@@ -176,8 +188,9 @@ impl VideoDecodeWorker {
         time_seconds: f64,
         mode: DecodeMode,
         lane_id: u64,
+        allow_hw: bool,
     ) -> Option<DecodeResponse> {
-        let response = self.decode_async(path, time_seconds, mode, lane_id)?;
+        let response = self.decode_async(path, time_seconds, mode, lane_id, allow_hw)?;
         response.recv().ok()
     }
 
@@ -194,6 +207,7 @@ impl VideoDecodeWorker {
 struct DecoderKey {
     path: PathBuf,
     lane_id: u64,
+    allow_hw: bool,
 }
 
 struct DecoderEntry {
@@ -353,7 +367,12 @@ struct VideoDecoder {
 }
 
 impl VideoDecoder {
-    fn open(path: &Path, max_width: u32, max_height: u32) -> Result<Self, ffmpeg::Error> {
+    fn open(
+        path: &Path,
+        max_width: u32,
+        max_height: u32,
+        allow_hw: bool,
+    ) -> Result<Self, ffmpeg::Error> {
         let input = ffmpeg::format::input(path)?;
         let stream = input
             .streams()
@@ -363,10 +382,15 @@ impl VideoDecoder {
         let time_base = stream.time_base();
 
         let mut context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
-        let hw_state = if let Some(codec) =
-            context.codec().or_else(|| ffmpeg::codec::decoder::find(context.id()))
-        {
-            setup_hwaccel(&mut context, &codec)
+        let hw_state = if allow_hw {
+            if let Some(codec) = context
+                .codec()
+                .or_else(|| ffmpeg::codec::decoder::find(context.id()))
+            {
+                setup_hwaccel(&mut context, &codec)
+            } else {
+                None
+            }
         } else {
             None
         };

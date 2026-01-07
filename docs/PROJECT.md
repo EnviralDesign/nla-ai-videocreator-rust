@@ -759,6 +759,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added a title-bar "HW Dec" toggle to force CPU decode for A/B comparisons
 - **2026-01-07:** Defaulted preview stats toggle to off (still available via the header toggle)
 - **2026-01-07:** Moved preview stats into a docked right-side column so they stay visible above the native wgpu surface
 - **2026-01-07:** Expanded preview stats into a vertical overlay with detailed video decode breakdown (seek, packet, transfer, scale, copy)
