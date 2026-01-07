@@ -761,6 +761,7 @@ src/
 - **2026-01-06:** Added preview performance overlay (cache hit rate + per-stage timing) to guide optimization work
 - **2026-01-06:** Served preview frames from in-memory PNG store to remove per-frame disk writes
 - **2026-01-06:** Switched preview output to raw RGBA canvas uploads (removed PNG encode from the loop)
+- **2026-01-06:** Added preview stats reference doc (overlay field definitions)
 - **2026-01-06:** Updated ffmpeg-next to v8.0.0 to align with FFmpeg 7.x headers from vcpkg
 - **2026-01-06:** Added in-process FFmpeg decode worker for preview frame extraction
 - **2026-01-06:** Removed ffmpeg scale filter from preview decode to avoid empty frames; scaling happens in Rust after decode
