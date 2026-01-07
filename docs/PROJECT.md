@@ -465,7 +465,7 @@ my-project/
   - [x] Preview render loop (playhead-driven frame requests)
   - [x] Frame server v0: load stills + in-process FFmpeg decode worker
   - [x] Compositor v0: layer stack with opacity + basic scale/translate
-  - [x] Preview panel renders composited frame via cached PNG
+  - [x] Preview panel renders composited frame via direct RGBA canvas upload
   - [ ] Transform pipeline v1: rotation + anchor/pivot support
   - [ ] Canvas compositor + direct buffer upload (replace PNG cache)
   - [x] Frame caching/prefetch for smooth scrubbing
@@ -758,6 +758,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-06:** Added preview performance overlay (cache hit rate + per-stage timing) to guide optimization work
+- **2026-01-06:** Served preview frames from in-memory PNG store to remove per-frame disk writes
+- **2026-01-06:** Switched preview output to raw RGBA canvas uploads (removed PNG encode from the loop)
 - **2026-01-06:** Updated ffmpeg-next to v8.0.0 to align with FFmpeg 7.x headers from vcpkg
 - **2026-01-06:** Added in-process FFmpeg decode worker for preview frame extraction
 - **2026-01-06:** Removed ffmpeg scale filter from preview decode to avoid empty frames; scaling happens in Rust after decode

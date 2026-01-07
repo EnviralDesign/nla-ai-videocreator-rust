@@ -8,6 +8,7 @@ mod timeline;
 mod core;
 
 use dioxus::desktop::{Config, WindowBuilder, LogicalSize};
+use crate::core::preview_store;
 
 mod utils;
 
@@ -25,9 +26,37 @@ fn main() {
         .with_menu(None) // Disable default menu bar
         .with_custom_head(r#"<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: http: https: nla: data: file:;">"#.to_string())
         .with_custom_protocol("nla".to_string(), |_id, request| {
+            let request_path = request.uri().path();
+            if request_path.starts_with("/preview/raw/") {
+                let version_str = request_path.trim_start_matches("/preview/raw/");
+                let version = version_str.parse::<u64>().ok();
+                let bytes = match version {
+                    Some(version) => preview_store::get_preview_bytes(version),
+                    None => preview_store::get_latest_preview_bytes(),
+                };
+
+                return match bytes {
+                    Some(bytes) => http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/octet-stream")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(std::borrow::Cow::from(bytes))
+                        .unwrap_or_else(|_| {
+                            http::Response::builder()
+                                .status(500)
+                                .body(std::borrow::Cow::from(Vec::new()))
+                                .unwrap()
+                        }),
+                    None => http::Response::builder()
+                        .status(404)
+                        .body(std::borrow::Cow::from(Vec::new()))
+                        .unwrap(),
+                };
+            }
+
             // request.uri().path() will be like "/C:/Users/Dev/.cache/thumb.jpg"
             // We need to strip the leading slash to get the Windows path
-            let raw_path = request.uri().path().trim_start_matches('/');
+            let raw_path = request_path.trim_start_matches('/');
 
             // Decode URL-encoded characters (e.g., spaces)
             let decoded = percent_encoding::percent_decode_str(raw_path).decode_utf8_lossy();

@@ -3,6 +3,7 @@
 //! This defines the main App component and the overall layout structure.
 
 use dioxus::prelude::*;
+use serde::Serialize;
 use std::time::{Duration, Instant};
 use crate::timeline::TimelinePanel;
 
@@ -44,6 +45,71 @@ const PREVIEW_FPS: u64 = 24;
 const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
 const PREVIEW_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
 const PREVIEW_PREFETCH_SECONDS: f64 = 0.5;
+const PREVIEW_CANVAS_SCRIPT: &str = r#"
+let canvas = null;
+let ctx = null;
+
+function getCanvas() {
+    if (!canvas || !document.body.contains(canvas)) {
+        canvas = document.getElementById("preview-canvas");
+        ctx = canvas ? canvas.getContext("2d") : null;
+    }
+    return { canvas, ctx };
+}
+
+while (true) {
+    const msg = await dioxus.recv();
+    if (!msg) {
+        continue;
+    }
+    if (msg.kind === "clear") {
+        const state = getCanvas();
+        if (state.ctx && state.canvas) {
+            state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+        }
+        continue;
+    }
+    if (msg.kind !== "frame") {
+        continue;
+    }
+
+    const version = msg.version;
+    const width = msg.width;
+    const height = msg.height;
+
+    const state = getCanvas();
+    if (!state.ctx || !state.canvas) {
+        continue;
+    }
+
+    if (state.canvas.width !== width || state.canvas.height !== height) {
+        state.canvas.width = width;
+        state.canvas.height = height;
+    }
+
+    try {
+        const response = await fetch("http://nla.localhost/preview/raw/" + version);
+        if (!response.ok) {
+            continue;
+        }
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength !== width * height * 4) {
+            continue;
+        }
+        const imageData = new ImageData(new Uint8ClampedArray(buffer), width, height);
+        state.ctx.putImageData(imageData, 0, 0);
+    } catch (_) {
+        // Ignore transient decode or fetch errors.
+    }
+}
+"#;
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PreviewCanvasMessage {
+    Frame { version: u64, width: u32, height: u32 },
+    Clear,
+}
 
 /// Main application component
 #[component]
@@ -61,8 +127,9 @@ pub fn App() -> Element {
             PREVIEW_CACHE_BUDGET_BYTES,
         ),
     ));
-    let preview_image_url = use_signal(|| None::<String>);
-    let preview_cache_buster = use_signal(|| 0_u64);
+    let preview_frame = use_signal(|| None::<crate::core::preview::PreviewFrameInfo>);
+    let preview_stats = use_signal(|| None::<crate::core::preview::PreviewStats>);
+    let mut preview_eval = use_signal(|| None::<document::Eval>);
     let mut preview_dirty = use_signal(|| true);
     
     // Panel state
@@ -139,8 +206,8 @@ pub fn App() -> Element {
         let project = project.clone();
         let current_time = current_time.clone();
         let previewer = previewer.clone();
-        let mut preview_image_url = preview_image_url.clone();
-        let mut preview_cache_buster = preview_cache_buster.clone();
+        let mut preview_frame = preview_frame.clone();
+        let mut preview_stats = preview_stats.clone();
         let mut preview_dirty = preview_dirty.clone();
         async move {
             let render_request_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -174,7 +241,7 @@ pub fn App() -> Element {
                 .await
                 .ok();
 
-                let Some((render_result, project_snapshot)) = render_task else {
+                let Some((render_output, project_snapshot)) = render_task else {
                     continue;
                 };
 
@@ -182,16 +249,10 @@ pub fn App() -> Element {
                     continue;
                 }
 
-                let rendered = if let Some(path) = render_result {
-                    let url = crate::utils::get_local_file_url(&path);
-                    let next_buster = preview_cache_buster() + 1;
-                    preview_cache_buster.set(next_buster);
-                    preview_image_url.set(Some(format!("{}?v={}", url, next_buster)));
-                    true
-                } else {
-                    preview_image_url.set(None);
-                    false
-                };
+                preview_stats.set(Some(render_output.stats));
+
+                let rendered = render_output.frame.is_some();
+                preview_frame.set(render_output.frame);
 
                 preview_dirty.set(false);
                 let direction = if last_time < 0.0 {
@@ -225,6 +286,29 @@ pub fn App() -> Element {
                 }
             }
         }
+    });
+
+    use_effect(move || {
+        if preview_eval().is_some() {
+            return;
+        }
+        let eval = document::eval(PREVIEW_CANVAS_SCRIPT);
+        preview_eval.set(Some(eval));
+    });
+
+    use_effect(move || {
+        let frame = preview_frame();
+        let Some(eval) = preview_eval() else {
+            return;
+        };
+        let _ = match frame {
+            Some(frame) => eval.send(PreviewCanvasMessage::Frame {
+                version: frame.version,
+                width: frame.width,
+                height: frame.height,
+            }),
+            None => eval.send(PreviewCanvasMessage::Clear),
+        };
     });
 
     // Dialog state
@@ -486,7 +570,8 @@ pub fn App() -> Element {
                         width: project.read().settings.width,
                         height: project.read().settings.height,
                         fps: project.read().settings.fps,
-                        preview_image_url: preview_image_url(),
+                        preview_frame: preview_frame(),
+                        preview_stats: preview_stats(),
                     }
 
                     // Timeline resize handle
@@ -1888,9 +1973,12 @@ fn PreviewPanel(
     width: u32,
     height: u32,
     fps: f64,
-    preview_image_url: Option<String>,
+    preview_frame: Option<crate::core::preview::PreviewFrameInfo>,
+    preview_stats: Option<crate::core::preview::PreviewStats>,
 ) -> Element {
     let fps_label = format!("{:.0}", fps);
+    let has_frame = preview_frame.is_some();
+    let canvas_visibility = if has_frame { "visible" } else { "hidden" };
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
@@ -1911,14 +1999,46 @@ fn PreviewPanel(
             }
 
             div {
-                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 16px;",
-                if let Some(src) = preview_image_url {
-                    img {
-                        src: "{src}",
-                        style: "max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;",
-                        draggable: "false",
+                style: "flex: 1; display: flex; align-items: center; justify-content: center; background-color: {BG_DEEPEST}; padding: 16px; position: relative;",
+                if let Some(stats) = preview_stats {
+                    {
+                        let total_queries = stats.cache_hits + stats.cache_misses;
+                        let hit_ratio = if total_queries > 0 {
+                            (stats.cache_hits as f64 / total_queries as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+
+                        rsx! {
+                            div {
+                                style: "
+                                    position: absolute; left: 12px; bottom: 12px;
+                                    display: flex; flex-wrap: wrap; gap: 8px;
+                                    font-family: 'SF Mono', Consolas, monospace;
+                                    font-size: 10px; color: {TEXT_DIM};
+                                    background-color: rgba(0,0,0,0.45);
+                                    border: 1px solid {BORDER_SUBTLE};
+                                    border-radius: 6px; padding: 6px 8px;
+                                ",
+                                span { "total {stats.total_ms:.1}ms" }
+                                span { "collect {stats.collect_ms:.1}ms" }
+                                span { "vdec {stats.video_decode_ms:.1}ms" }
+                                span { "still {stats.still_load_ms:.1}ms" }
+                                span { "comp {stats.composite_ms:.1}ms" }
+                                span { "upload {stats.encode_ms:.1}ms" }
+                                span { "hit {hit_ratio:.0}%" }
+                                span { "layers {stats.layers}" }
+                            }
+                        }
                     }
-                } else {
+                }
+                canvas {
+                    id: "preview-canvas",
+                    width: "1",
+                    height: "1",
+                    style: "max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: #000; visibility: {canvas_visibility};",
+                }
+                if !has_frame {
                     div {
                         style: "display: flex; flex-direction: column; align-items: center; gap: 12px; color: {TEXT_DIM};",
                         div {

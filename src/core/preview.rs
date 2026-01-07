@@ -2,17 +2,44 @@ use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-use image::{DynamicImage, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage};
 use image::imageops::{overlay, resize, FilterType};
 
+use crate::core::preview_store;
 use crate::core::video_decode::VideoDecodeWorker;
 use crate::state::{Asset, AssetKind, ClipTransform, Project, TrackType};
 
 const DEFAULT_MAX_PREVIEW_WIDTH: u32 = 960;
 const DEFAULT_MAX_PREVIEW_HEIGHT: u32 = 540;
-const PREVIEW_FRAME_FILENAME: &str = "frame.png";
 const FFMPEG_TIME_EPSILON: f64 = 0.001;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PreviewStats {
+    pub total_ms: f64,
+    pub collect_ms: f64,
+    pub composite_ms: f64,
+    pub encode_ms: f64,
+    pub video_decode_ms: f64,
+    pub still_load_ms: f64,
+    pub layers: usize,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreviewFrameInfo {
+    pub version: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderOutput {
+    pub frame: Option<PreviewFrameInfo>,
+    pub stats: PreviewStats,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct FrameKey {
@@ -98,7 +125,6 @@ impl FrameCache {
 /// Generates composited preview frames for the current timeline time.
 pub struct PreviewRenderer {
     project_root: PathBuf,
-    cache_root: PathBuf,
     max_width: u32,
     max_height: u32,
     video_decoder: VideoDecodeWorker,
@@ -108,12 +134,8 @@ pub struct PreviewRenderer {
 impl PreviewRenderer {
     /// Create a new preview renderer rooted at the project's folder.
     pub fn new(project_root: PathBuf, max_cache_bytes: usize) -> Self {
-        let cache_root = project_root.join(".cache").join("preview");
-        let _ = std::fs::create_dir_all(&cache_root);
-
         Self {
             project_root,
-            cache_root,
             max_width: DEFAULT_MAX_PREVIEW_WIDTH,
             max_height: DEFAULT_MAX_PREVIEW_HEIGHT,
             video_decoder: VideoDecodeWorker::new(
@@ -124,8 +146,10 @@ impl PreviewRenderer {
         }
     }
 
-    /// Render a preview frame for the given time and write it to the preview cache.
-    pub fn render_frame(&self, project: &Project, time_seconds: f64) -> Option<PathBuf> {
+    /// Render a preview frame for the given time and store the encoded PNG in memory.
+    pub fn render_frame(&self, project: &Project, time_seconds: f64) -> RenderOutput {
+        let render_start = Instant::now();
+        let mut stats = PreviewStats::default();
         let project_root = project
             .project_path
             .as_ref()
@@ -139,7 +163,10 @@ impl PreviewRenderer {
         );
 
         let fps = project.settings.fps.max(1.0);
-        let layers = self.collect_layers(project, project_root, time_seconds, fps);
+        let collect_start = Instant::now();
+        let layers = self.collect_layers(project, project_root, time_seconds, fps, &mut stats);
+        stats.collect_ms = elapsed_ms(collect_start);
+        stats.layers = layers.len();
 
         let has_visual_assets = project.clips.iter().any(|clip| {
             project
@@ -149,11 +176,13 @@ impl PreviewRenderer {
         });
 
         if layers.is_empty() && !has_visual_assets {
-            return None;
+            stats.total_ms = elapsed_ms(render_start);
+            return RenderOutput { frame: None, stats };
         }
 
         let mut canvas = RgbaImage::from_pixel(canvas_w, canvas_h, Rgba([0, 0, 0, 255]));
 
+        let composite_start = Instant::now();
         for layer in layers {
             composite_layer(
                 &mut canvas,
@@ -162,14 +191,20 @@ impl PreviewRenderer {
                 preview_scale,
             );
         }
+        stats.composite_ms = elapsed_ms(composite_start);
 
-        let output_path = self.cache_root.join(PREVIEW_FRAME_FILENAME);
-        let output_image = DynamicImage::ImageRgba8(canvas);
-        if output_image.save(&output_path).is_err() {
-            return None;
-        }
+        let encode_start = Instant::now();
+        let bytes = canvas.into_raw();
+        let saved = preview_store::store_preview_frame(canvas_w, canvas_h, bytes);
+        stats.encode_ms = elapsed_ms(encode_start);
+        stats.total_ms = elapsed_ms(render_start);
 
-        Some(output_path)
+        let frame = saved.map(|version| PreviewFrameInfo {
+            version,
+            width: canvas_w,
+            height: canvas_h,
+        });
+        RenderOutput { frame, stats }
     }
 
     fn collect_layers(
@@ -178,6 +213,7 @@ impl PreviewRenderer {
         project_root: &Path,
         time_seconds: f64,
         fps: f64,
+        stats: &mut PreviewStats,
     ) -> Vec<PreviewLayer> {
         let mut track_order: HashMap<uuid::Uuid, usize> = HashMap::new();
         let mut video_tracks = 0;
@@ -205,7 +241,13 @@ impl PreviewRenderer {
             };
 
             let source_time = (time_seconds - clip.start_time + clip.trim_in_seconds).max(0.0);
-            if let Some(image) = self.load_clip_frame(project_root, asset, source_time, fps) {
+            if let Some(image) = self.load_clip_frame(
+                project_root,
+                asset,
+                source_time,
+                fps,
+                Some(stats),
+            ) {
                 layers.push(PreviewLayer {
                     track_index,
                     start_time: clip.start_time,
@@ -260,7 +302,7 @@ impl PreviewRenderer {
                 };
 
                 let source_time = (frame_time - clip.start_time + clip.trim_in_seconds).max(0.0);
-                let _ = self.load_clip_frame(project_root, asset, source_time, fps);
+                let _ = self.load_clip_frame(project_root, asset, source_time, fps, None);
             }
         }
     }
@@ -271,6 +313,7 @@ impl PreviewRenderer {
         asset: &Asset,
         time_seconds: f64,
         fps: f64,
+        mut stats: Option<&mut PreviewStats>,
     ) -> Option<Arc<RgbaImage>> {
         let (path, is_video, duration) = match &asset.kind {
             AssetKind::Image { path } => (project_root.join(path), false, asset.duration_seconds),
@@ -312,15 +355,31 @@ impl PreviewRenderer {
 
         if let Ok(mut cache) = self.frame_cache.lock() {
             if let Some(image) = cache.get(&cache_key) {
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.cache_hits += 1;
+                }
                 return Some(image);
             }
         }
 
+        if let Some(stats) = stats.as_deref_mut() {
+            stats.cache_misses += 1;
+        }
+
+        let decode_start = Instant::now();
         let image = if is_video {
             self.video_decoder.decode(&path, frame_time)?
         } else {
             self.load_still(&path)?
         };
+        let decode_ms = elapsed_ms(decode_start);
+        if let Some(stats) = stats.as_deref_mut() {
+            if is_video {
+                stats.video_decode_ms += decode_ms;
+            } else {
+                stats.still_load_ms += decode_ms;
+            }
+        }
 
         let image = Arc::new(image);
         if let Ok(mut cache) = self.frame_cache.lock() {
@@ -417,6 +476,10 @@ fn clamp_time(time_seconds: f64, duration: Option<f64>) -> f64 {
         time = time.min(limit);
     }
     time
+}
+
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
 }
 
 fn time_to_frame_index(time_seconds: f64, fps: f64) -> i64 {
