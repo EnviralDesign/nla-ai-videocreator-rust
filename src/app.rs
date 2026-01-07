@@ -2,9 +2,15 @@
 //! 
 //! This defines the main App component and the overall layout structure.
 
+use dioxus::desktop::{use_window, use_wry_event_handler};
+use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent as TaoWindowEvent};
 use dioxus::prelude::*;
 use serde::Serialize;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
+use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
+use crate::core::preview_store;
 use crate::timeline::TimelinePanel;
 
 // =============================================================================
@@ -104,6 +110,53 @@ while (true) {
 }
 "#;
 
+const PREVIEW_NATIVE_HOST_SCRIPT: &str = r#"
+const hostId = "preview-native-host";
+let last = null;
+
+function sendBounds() {
+    const host = document.getElementById(hostId);
+    if (!host) {
+        return;
+    }
+    const rect = host.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const next = {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        dpr: dpr
+    };
+    if (last &&
+        Math.abs(last.x - next.x) < 0.5 &&
+        Math.abs(last.y - next.y) < 0.5 &&
+        Math.abs(last.width - next.width) < 0.5 &&
+        Math.abs(last.height - next.height) < 0.5 &&
+        Math.abs(last.dpr - next.dpr) < 0.01) {
+        return;
+    }
+    last = next;
+    dioxus.send(next);
+}
+
+function attach() {
+    const host = document.getElementById(hostId);
+    if (!host) {
+        setTimeout(attach, 100);
+        return;
+    }
+    const observer = new ResizeObserver(() => sendBounds());
+    observer.observe(host);
+    window.addEventListener("resize", sendBounds, { passive: true });
+    window.addEventListener("scroll", sendBounds, { passive: true });
+    sendBounds();
+}
+
+attach();
+await new Promise(() => {});
+"#;
+
 #[derive(Clone, Copy, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PreviewCanvasMessage {
@@ -130,7 +183,23 @@ pub fn App() -> Element {
     let preview_frame = use_signal(|| None::<crate::core::preview::PreviewFrameInfo>);
     let preview_stats = use_signal(|| None::<crate::core::preview::PreviewStats>);
     let mut preview_eval = use_signal(|| None::<document::Eval>);
+    let mut preview_host_eval = use_signal(|| None::<document::Eval>);
+    let preview_native_bounds = use_signal(|| None::<PreviewBounds>);
+    let mut preview_native_active = use_signal(|| false);
+    let mut preview_native_enabled = use_signal(|| false);
+    let preview_native_attempted = use_signal(|| false);
+    let mut preview_native_uploaded = use_signal(|| None::<(u64, u32, u32)>);
+    let mut preview_gpu_upload_ms = use_signal(|| None::<f64>);
+    let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
+    let desktop = use_window();
+    let desktop_for_bounds = desktop.clone();
+    let desktop_for_events = desktop.clone();
+    let desktop_for_redraw = desktop.clone();
     let mut preview_dirty = use_signal(|| true);
+
+    // Startup Modal state - check if we have a valid project path on load
+    // For MVP, we start with a dummy project, so we check if project_path is None
+    let mut startup_done = use_signal(|| false);
     
     // Panel state
     let mut left_width = use_signal(|| PANEL_DEFAULT_WIDTH);
@@ -301,6 +370,9 @@ pub fn App() -> Element {
         let Some(eval) = preview_eval() else {
             return;
         };
+        if preview_native_active() {
+            return;
+        }
         let _ = match frame {
             Some(frame) => eval.send(PreviewCanvasMessage::Frame {
                 version: frame.version,
@@ -311,12 +383,158 @@ pub fn App() -> Element {
         };
     });
 
+    use_effect(move || {
+        if preview_host_eval().is_some() {
+            return;
+        }
+        let eval = document::eval(PREVIEW_NATIVE_HOST_SCRIPT);
+        preview_host_eval.set(Some(eval));
+    });
+
+    use_future(move || {
+        let mut preview_native_bounds = preview_native_bounds.clone();
+        let preview_host_eval = preview_host_eval.clone();
+        let desktop = desktop_for_bounds.clone();
+        async move {
+            loop {
+                let Some(eval) = preview_host_eval() else {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                };
+                let mut eval = eval;
+                loop {
+                    match eval.recv::<PreviewBounds>().await {
+                        Ok(bounds) => {
+                            if preview_native_bounds() != Some(bounds) {
+                                preview_native_bounds.set(Some(bounds));
+                                desktop.window.request_redraw();
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    });
+
+    use_effect(move || {
+        let enabled = project.read().project_path.is_some() && startup_done();
+        preview_native_enabled.set(enabled);
+        if !enabled {
+            preview_native_active.set(false);
+            preview_native_uploaded.set(None);
+            preview_gpu_upload_ms.set(None);
+        }
+    });
+
+    use_effect(move || {
+        if !preview_native_enabled() {
+            return;
+        }
+        if preview_frame().is_some() {
+            desktop_for_redraw.window.request_redraw();
+        }
+    });
+
+    use_wry_event_handler({
+        let preview_gpu = preview_gpu.clone();
+        let preview_native_bounds = preview_native_bounds.clone();
+        let mut preview_native_active = preview_native_active.clone();
+        let preview_native_enabled = preview_native_enabled.clone();
+        let mut preview_native_attempted = preview_native_attempted.clone();
+        let mut preview_native_uploaded = preview_native_uploaded.clone();
+        let mut preview_gpu_upload_ms = preview_gpu_upload_ms.clone();
+        let preview_frame = preview_frame.clone();
+        let desktop = desktop_for_events.clone();
+        move |event, target| {
+            if !preview_native_enabled() {
+                return;
+            }
+            let Some(bounds) = preview_native_bounds() else {
+                return;
+            };
+
+            let is_main_window = match event {
+                TaoEvent::RedrawRequested(window_id) => *window_id == desktop.window.id(),
+                TaoEvent::WindowEvent { window_id, .. } => *window_id == desktop.window.id(),
+                _ => false,
+            };
+            if !is_main_window {
+                return;
+            }
+
+            let should_render = matches!(
+                event,
+                TaoEvent::RedrawRequested(window_id) if *window_id == desktop.window.id()
+            );
+            let should_update = should_render
+                || matches!(
+                    event,
+                    TaoEvent::WindowEvent {
+                        event: TaoWindowEvent::Resized(_) | TaoWindowEvent::Moved(_),
+                        ..
+                    }
+                );
+            if !should_update {
+                return;
+            }
+
+            let mut gpu_state = preview_gpu.borrow_mut();
+            if gpu_state.is_none() {
+                if preview_native_attempted() {
+                    return;
+                }
+                preview_native_attempted.set(true);
+                if let Some(gpu) = PreviewGpuSurface::new(&desktop.window, target) {
+                    *gpu_state = Some(gpu);
+                } else {
+                    return;
+                }
+            }
+
+            if let Some(gpu) = gpu_state.as_mut() {
+                let mut uploaded = false;
+                let upload_ms = if let Some(frame) = preview_frame() {
+                    let frame_key = (frame.version, frame.width, frame.height);
+                    if preview_native_uploaded() != Some(frame_key) {
+                        let upload_start = Instant::now();
+                        if let Some(bytes) = preview_store::get_preview_bytes(frame.version) {
+                            uploaded =
+                                gpu.upload_frame(frame.version, frame.width, frame.height, &bytes);
+                        }
+                        let elapsed_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
+                        if uploaded {
+                            preview_native_uploaded.set(Some(frame_key));
+                            preview_native_active.set(true);
+                        }
+                        Some(elapsed_ms)
+                    } else {
+                        Some(0.0)
+                    }
+                } else {
+                    if preview_native_active() {
+                        preview_native_active.set(false);
+                    }
+                    preview_native_uploaded.set(None);
+                    gpu.clear_frame();
+                    Some(0.0)
+                };
+                if let Some(ms) = upload_ms {
+                    preview_gpu_upload_ms.set(Some(ms));
+                }
+
+                let origin = desktop.window.inner_position().ok();
+                let changed = gpu.apply_bounds(bounds, origin);
+                if should_render || changed || uploaded {
+                    gpu.render();
+                }
+            }
+        }
+    });
+
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
-    
-    // Startup Modal state - check if we have a valid project path on load
-    // For MVP, we start with a dummy project, so we check if project_path is None
-    let mut startup_done = use_signal(|| false); 
     
     // On first load, if project has no path effectively, treat as "No Project Loaded"
     // But since we initialize with default(), we need a flag to block interaction until New/Open
@@ -566,13 +784,15 @@ pub fn App() -> Element {
                     class: "center-area",
                     style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
 
-                    PreviewPanel {
-                        width: project.read().settings.width,
-                        height: project.read().settings.height,
-                        fps: project.read().settings.fps,
-                        preview_frame: preview_frame(),
-                        preview_stats: preview_stats(),
-                    }
+    PreviewPanel {
+        width: project.read().settings.width,
+        height: project.read().settings.height,
+        fps: project.read().settings.fps,
+        preview_frame: preview_frame(),
+        preview_stats: preview_stats(),
+        preview_gpu_upload_ms: preview_gpu_upload_ms(),
+        preview_native_active: preview_native_active(),
+    }
 
                     // Timeline resize handle
                     div {
@@ -1975,10 +2195,19 @@ fn PreviewPanel(
     fps: f64,
     preview_frame: Option<crate::core::preview::PreviewFrameInfo>,
     preview_stats: Option<crate::core::preview::PreviewStats>,
+    preview_gpu_upload_ms: Option<f64>,
+    preview_native_active: bool,
 ) -> Element {
     let fps_label = format!("{:.0}", fps);
     let has_frame = preview_frame.is_some();
-    let canvas_visibility = if has_frame { "visible" } else { "hidden" };
+    let canvas_visibility = if preview_native_active {
+        "hidden"
+    } else if has_frame {
+        "visible"
+    } else {
+        "hidden"
+    };
+    let show_placeholder = !preview_native_active && !has_frame;
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; min-height: 200px; background-color: {BG_DEEPEST};",
@@ -2019,6 +2248,7 @@ fn PreviewPanel(
                                     background-color: rgba(0,0,0,0.45);
                                     border: 1px solid {BORDER_SUBTLE};
                                     border-radius: 6px; padding: 6px 8px;
+                                    z-index: 3; pointer-events: none;
                                 ",
                                 span { "total {stats.total_ms:.1}ms" }
                                 span { "collect {stats.collect_ms:.1}ms" }
@@ -2026,19 +2256,26 @@ fn PreviewPanel(
                                 span { "still {stats.still_load_ms:.1}ms" }
                                 span { "comp {stats.composite_ms:.1}ms" }
                                 span { "upload {stats.encode_ms:.1}ms" }
+                                if let Some(gpu_ms) = preview_gpu_upload_ms {
+                                    span { "gpu {gpu_ms:.1}ms" }
+                                }
                                 span { "hit {hit_ratio:.0}%" }
                                 span { "layers {stats.layers}" }
                             }
                         }
                     }
                 }
+                div {
+                    id: "preview-native-host",
+                    style: "position: absolute; inset: 16px; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: transparent; pointer-events: none; z-index: 0;",
+                }
                 canvas {
                     id: "preview-canvas",
                     width: "1",
                     height: "1",
-                    style: "max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: #000; visibility: {canvas_visibility};",
+                    style: "position: relative; z-index: 1; max-width: 100%; max-height: 100%; width: auto; height: auto; border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; background-color: #000; visibility: {canvas_visibility};",
                 }
-                if !has_frame {
+                if show_placeholder {
                     div {
                         style: "display: flex; flex-direction: column; align-items: center; gap: 12px; color: {TEXT_DIM};",
                         div {

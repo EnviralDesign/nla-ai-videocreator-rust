@@ -20,10 +20,16 @@ mime_guess = "2.0.5"
 percent-encoding = "2.3.2"
 image = "0.25"
 ffmpeg-next = { version = "8.0.0", default-features = false, features = ["codec", "format", "software-scaling"] }
+wgpu = "0.20"
+pollster = "0.3"
+bytemuck = { version = "1.15", features = ["derive"] }
 
 # Future dependencies:
 # tokio = { version = "1", features = ["full"] }
 # reqwest = { version = "0.12", features = ["json"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 default = []

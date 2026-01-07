@@ -468,6 +468,7 @@ my-project/
   - [x] Preview panel renders composited frame via direct RGBA canvas upload
   - [ ] Transform pipeline v1: rotation + anchor/pivot support
   - [ ] Canvas compositor + direct buffer upload (replace PNG cache)
+  - [ ] Native preview surface (wgpu) integration
   - [x] Frame caching/prefetch for smooth scrubbing
 
 ### Nice to Have (v0.2+)
@@ -758,10 +759,16 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Adjusted native preview window positioning to use window-origin coordinates and raised the child window to the top of the z-order
+- **2026-01-07:** Added wgpu upload timing to the preview performance overlay
+- **2026-01-07:** WGPU preview now uploads RGBA frames to a texture and renders via a quad (canvas uploads suppressed once native preview is active)
+- **2026-01-07:** Restored preview canvas visibility while the native host is active and fixed preview overlay stacking so stats stay visible
 - **2026-01-06:** Added preview performance overlay (cache hit rate + per-stage timing) to guide optimization work
 - **2026-01-06:** Served preview frames from in-memory PNG store to remove per-frame disk writes
 - **2026-01-06:** Switched preview output to raw RGBA canvas uploads (removed PNG encode from the loop)
 - **2026-01-06:** Added preview stats reference doc (overlay field definitions)
+- **2026-01-06:** Added wgpu native preview surface spike (child window + bounds sync)
+- **2026-01-06:** Throttled native preview init/update to avoid UI stalls (bounds change + redraw gating)
 - **2026-01-06:** Updated ffmpeg-next to v8.0.0 to align with FFmpeg 7.x headers from vcpkg
 - **2026-01-06:** Added in-process FFmpeg decode worker for preview frame extraction
 - **2026-01-06:** Removed ffmpeg scale filter from preview decode to avoid empty frames; scaling happens in Rust after decode

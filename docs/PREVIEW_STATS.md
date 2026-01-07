@@ -10,5 +10,6 @@ Each value reflects the most recent preview render request.
 - `still`: Time spent loading still images (ms).
 - `comp`: Time spent compositing layers into the RGBA canvas (ms).
 - `upload`: Time spent preparing the preview buffer for display (ms).
+- `gpu`: Time spent uploading the latest preview frame to the native wgpu texture (ms).
 - `hit`: Cache hit percentage for frame lookups during this render.
 - `layers`: Number of visual layers composited for this render.
