@@ -759,6 +759,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added a `SHOW_CACHE_TICKS` toggle to enable/disable the timeline cache bucket overlay
+- **2026-01-07:** Cache tick overlay now uses a per-asset frame index to mark buckets based on any cached frame in the clip range (stills fill all buckets once cached)
 - **2026-01-07:** Added per-clip cache tick overlay to visualize cached frame buckets on the timeline
 - **2026-01-07:** Capped in-process FFmpeg decoders with an LRU eviction policy (8 max) and added sequential playback decode mode
 - **2026-01-07:** Increased playback prefetch window to 1s and forced a preview render after GPU init; native overlay stays hidden until first upload

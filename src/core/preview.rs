@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -89,6 +89,7 @@ struct FrameCache {
     access_counter: u64,
     entries: HashMap<FrameKey, CacheEntry>,
     lru_order: VecDeque<(FrameKey, u64)>,
+    asset_index: HashMap<PathBuf, HashSet<i64>>,
 }
 
 impl FrameCache {
@@ -99,6 +100,7 @@ impl FrameCache {
             access_counter: 0,
             entries: HashMap::new(),
             lru_order: VecDeque::new(),
+            asset_index: HashMap::new(),
         }
     }
 
@@ -122,6 +124,10 @@ impl FrameCache {
 
         self.access_counter = self.access_counter.wrapping_add(1);
         let last_used = self.access_counter;
+        self.asset_index
+            .entry(key.path.clone())
+            .or_default()
+            .insert(key.frame_index);
         self.entries.insert(
             key.clone(),
             CacheEntry {
@@ -148,6 +154,12 @@ impl FrameCache {
             }
             self.total_bytes = self.total_bytes.saturating_sub(entry.size_bytes);
             self.entries.remove(&key);
+            if let Some(frames) = self.asset_index.get_mut(&key.path) {
+                frames.remove(&key.frame_index);
+                if frames.is_empty() {
+                    self.asset_index.remove(&key.path);
+                }
+            }
         }
     }
 }
@@ -461,7 +473,7 @@ impl PreviewRenderer {
                 continue;
             }
 
-            let Some((path, is_video, duration)) = resolve_asset_source(
+            let Some((path, is_video, _duration)) = resolve_asset_source(
                 project_root,
                 asset,
                 &["png", "jpg", "jpeg", "webp"],
@@ -479,19 +491,33 @@ impl PreviewRenderer {
             bucket_seconds = bucket_seconds.max(min_bucket_seconds);
             let bucket_count = (clip_duration / bucket_seconds).ceil().max(1.0) as usize;
 
-            let mut buckets = Vec::with_capacity(bucket_count);
-            for index in 0..bucket_count {
-                let time_in_clip = (index as f64 * bucket_seconds).min(clip_duration);
-                let mut time_in_asset = clip.trim_in_seconds.max(0.0) + time_in_clip;
-                if is_video {
-                    time_in_asset = clamp_time(time_in_asset, duration);
+            let mut buckets = vec![false; bucket_count];
+            let Some(asset_frames) = cache.asset_index.get(&path) else {
+                result.insert(clip.id, buckets);
+                continue;
+            };
+
+            if !is_video {
+                let cached = asset_frames.contains(&0);
+                for bucket in buckets.iter_mut() {
+                    *bucket = cached;
                 }
-                let frame_index = time_to_frame_index(time_in_asset, fps);
-                let key = FrameKey {
-                    path: path.clone(),
-                    frame_index,
-                };
-                buckets.push(cache.entries.contains_key(&key));
+                result.insert(clip.id, buckets);
+                continue;
+            }
+
+            let clip_start = clip.trim_in_seconds.max(0.0);
+            let clip_end = clip_start + clip_duration;
+            for frame_index in asset_frames.iter() {
+                let frame_time = frame_index_to_time(*frame_index, fps);
+                if frame_time < clip_start || frame_time > clip_end {
+                    continue;
+                }
+                let time_in_clip = (frame_time - clip_start).max(0.0);
+                let bucket_index = (time_in_clip / bucket_seconds).floor() as usize;
+                if let Some(bucket) = buckets.get_mut(bucket_index) {
+                    *bucket = true;
+                }
             }
 
             result.insert(clip.id, buckets);

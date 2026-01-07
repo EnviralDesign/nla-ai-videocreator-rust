@@ -52,6 +52,7 @@ const PREVIEW_FRAME_INTERVAL_MS: u64 = 1000 / PREVIEW_FPS;
 const PREVIEW_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
 const PREVIEW_PREFETCH_SCRUB_SECONDS: f64 = 0.5;
 const PREVIEW_PREFETCH_PLAYBACK_SECONDS: f64 = 1.0;
+const SHOW_CACHE_TICKS: bool = false;
 const PREVIEW_CANVAS_SCRIPT: &str = r#"
 let canvas = null;
 let ctx = null;
@@ -342,7 +343,9 @@ pub fn App() -> Element {
 
                 let crate::core::preview::RenderOutput { frame, layers, stats } = render_output;
                 preview_stats.set(Some(stats));
-                preview_cache_tick.set(preview_cache_tick() + 1);
+                if SHOW_CACHE_TICKS {
+                    preview_cache_tick.set(preview_cache_tick() + 1);
+                }
 
                 let rendered = if use_gpu {
                     if let Some(layers) = layers {
@@ -402,6 +405,12 @@ pub fn App() -> Element {
 
     use_effect(move || {
         let _tick = preview_cache_tick();
+        if !SHOW_CACHE_TICKS {
+            if !clip_cache_buckets().is_empty() {
+                clip_cache_buckets.set(std::sync::Arc::new(HashMap::new()));
+            }
+            return;
+        }
         let zoom_value = zoom().max(1.0);
         let project_snapshot = project.read().clone();
         let renderer = previewer.read().clone();
