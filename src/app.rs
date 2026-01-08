@@ -795,7 +795,7 @@ pub fn App() -> Element {
     let timeline_h = if timeline_collapsed() { TIMELINE_COLLAPSED_HEIGHT } else { timeline_height() };
     
     // Is currently dragging? (for cursor and user-select styling)
-    let is_dragging = dragging().is_some();
+
     // Always disable text selection for UI elements to feel like a native app
     // Specific text areas that need selection (e.g. inputs, logs) must override this
     let user_select_style = "none";
