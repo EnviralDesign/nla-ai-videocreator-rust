@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::state::Asset;
+use crate::state::{Asset, AssetKind, GenerativeConfig};
 
 // =============================================================================
 // Project Settings
@@ -665,6 +665,7 @@ impl Project {
         let json = fs::read_to_string(&project_file)?;
         let mut project: Project = serde_json::from_str(&json)?;
         project.project_path = Some(folder.to_path_buf());
+        project.sync_generative_configs();
         Ok(project)
     }
 
@@ -696,6 +697,50 @@ impl Project {
         self.project_path = Some(folder.to_path_buf());
         self.save_to(folder)?;
         Ok(())
+    }
+
+    fn sync_generative_configs(&mut self) {
+        let Some(project_root) = self.project_path.clone() else {
+            return;
+        };
+
+        for asset in self.assets.iter_mut() {
+            let (folder, active_version) = match &mut asset.kind {
+                AssetKind::GenerativeVideo {
+                    folder,
+                    active_version,
+                }
+                | AssetKind::GenerativeImage {
+                    folder,
+                    active_version,
+                }
+                | AssetKind::GenerativeAudio {
+                    folder,
+                    active_version,
+                } => (folder, active_version),
+                _ => continue,
+            };
+
+            let folder_path = project_root.join(folder);
+            let config_path = folder_path.join("config.json");
+            let mut config = GenerativeConfig::load(&folder_path).unwrap_or_default();
+            let mut changed = !config_path.exists();
+
+            if config.active_version.is_none() {
+                if let Some(existing) = active_version.clone() {
+                    config.active_version = Some(existing);
+                    changed = true;
+                }
+            }
+
+            if config.active_version != *active_version {
+                *active_version = config.active_version.clone();
+            }
+
+            if changed {
+                let _ = config.save(&folder_path);
+            }
+        }
     }
 }
 

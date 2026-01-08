@@ -763,6 +763,7 @@ src/
 ├── main.rs          # Entry point, window config
 ├── app.rs           # Main App component, UI shell, dialogs
 ├── timeline.rs      # TimelinePanel, ruler, tracks, playback controls
+├── hotkeys/         # Hotkey system (Registry, Actions, Context)
 └── state/
     ├── mod.rs       # Module exports
     ├── asset.rs     # Asset, AssetKind (file & generative)
@@ -770,6 +771,10 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Implemented centralized hotkey system (`src/hotkeys/`) with action-based architecture and context awareness
+- **2026-01-07:** Added global hotkeys for Timeline Zoom (+/- on Numpad and standard keys)
+- **2026-01-07:** Project load now syncs generative asset config.json and active version state
+- **2026-01-07:** Generative asset creation now writes a default config.json in the asset folder
 - **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + .providers)
 - **2026-01-07:** Expanded the Generative/Provider/Generation TODOs into an atomic ComfyUI MVP plan
 - **2026-01-07:** Defaulted timeline zoom to Fit on project open/create once the viewport width is known

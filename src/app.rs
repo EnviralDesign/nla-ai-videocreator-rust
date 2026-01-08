@@ -8,10 +8,12 @@ use dioxus::prelude::*;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::timeline::TimelinePanel;
+use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 
 // =============================================================================
 // COLOR SCHEME - Charcoal Monochrome with Functional Accents
@@ -891,6 +893,52 @@ pub fn App() -> Element {
             },
             // Suppress the browser's default context menu - we'll use custom menus
             oncontextmenu: move |e| e.prevent_default(),
+            // Enable keyboard focus on this container for hotkeys
+            tabindex: "0",
+            // Hotkey handler
+            onkeydown: move |e: KeyboardEvent| {
+                // Build context for hotkey dispatch
+                let hotkey_context = HotkeyContext {
+                    timeline_visible: !timeline_collapsed(),
+                    has_selection: !selection.read().clip_ids.is_empty(),
+                    input_focused: false, // TODO: track when input fields have focus
+                };
+
+                // Get modifier states
+                let modifiers = e.modifiers();
+                let shift = modifiers.shift();
+                let ctrl = modifiers.ctrl();
+                let alt = modifiers.alt();
+                let meta = modifiers.meta();
+
+                // Dispatch the hotkey
+                match handle_hotkey(&e.key(), shift, ctrl, alt, meta, &hotkey_context) {
+                    HotkeyResult::Action(action) => {
+                        e.prevent_default();
+                        match action {
+                            HotkeyAction::TimelineZoomIn => {
+                                let (min_zoom, max_zoom) = timeline_zoom_bounds(
+                                    duration,
+                                    timeline_viewport_width(),
+                                    project.read().settings.fps,
+                                );
+                                let new_zoom = (zoom() * 1.25).clamp(min_zoom, max_zoom);
+                                zoom.set(new_zoom);
+                            }
+                            HotkeyAction::TimelineZoomOut => {
+                                let (min_zoom, max_zoom) = timeline_zoom_bounds(
+                                    duration,
+                                    timeline_viewport_width(),
+                                    project.read().settings.fps,
+                                );
+                                let new_zoom = (zoom() * 0.8).clamp(min_zoom, max_zoom);
+                                zoom.set(new_zoom);
+                            }
+                        }
+                    }
+                    HotkeyResult::NoMatch | HotkeyResult::Suppressed => {}
+                }
+            },
             // Note: We intentionally don't clear drag on mouseleave so drag continues
             // if the user moves outside the window and back in while still holding mouse button
 
@@ -958,7 +1006,11 @@ pub fn App() -> Element {
                         thumbnail_cache_buster: thumbnail_cache_buster(),
                         thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         on_import: move |asset: crate::state::Asset| {
+                            let project_root = project.read().project_path.clone();
                             project.write().add_asset(asset.clone());
+                            if let Some(project_root) = project_root {
+                                ensure_generative_config(&project_root, &asset);
+                            }
                             preview_dirty.set(true);
                             let thumbs = thumbnailer.read().clone();
                             let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
@@ -2775,6 +2827,29 @@ fn resolve_asset_duration_seconds(
     }
 
     None
+}
+
+fn ensure_generative_config(project_root: &Path, asset: &crate::state::Asset) {
+    use crate::state::AssetKind;
+    let folder = match &asset.kind {
+        AssetKind::GenerativeVideo { folder, .. }
+        | AssetKind::GenerativeImage { folder, .. }
+        | AssetKind::GenerativeAudio { folder, .. } => folder,
+        _ => return,
+    };
+
+    let folder_path = project_root.join(folder);
+    let config_path = folder_path.join("config.json");
+    if config_path.exists() {
+        return;
+    }
+
+    if let Err(err) = crate::state::GenerativeConfig::default().save(&folder_path) {
+        println!(
+            "Failed to create generative config at {:?}: {}",
+            config_path, err
+        );
+    }
 }
 
 fn timeline_zoom_bounds(duration: f64, viewport_width: Option<f64>, fps: f64) -> (f64, f64) {
