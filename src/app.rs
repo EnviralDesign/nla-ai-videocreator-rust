@@ -24,7 +24,10 @@ use crate::state::{ensure_generative_config, ProviderEntry};
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 use crate::constants::*;
-use crate::components::{PreviewPanel, SidePanel, StatusBar, StartupModal, TitleBar};
+use crate::components::{
+    NewProjectModal, PreviewPanel, ProvidersModal, SidePanel, StartupModal, StatusBar,
+    TitleBar, TrackContextMenu,
+};
 use crate::components::assets::AssetsPanelContent;
 use crate::components::attributes::AttributesPanelContent;
 
@@ -633,11 +636,11 @@ pub fn App() -> Element {
 
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
-    let mut show_providers_dialog = use_signal(|| false);
-    let mut provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
-    let mut provider_editor_text = use_signal(String::new);
-    let mut provider_editor_error = use_signal(|| None::<String>);
-    let mut provider_editor_dirty = use_signal(|| false);
+    let show_providers_dialog = use_signal(|| false);
+    let provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
+    let provider_editor_text = use_signal(String::new);
+    let provider_editor_error = use_signal(|| None::<String>);
+    let provider_editor_dirty = use_signal(|| false);
     let provider_files = use_signal(|| Vec::<std::path::PathBuf>::new());
 
     let mut open_providers_dialog = {
@@ -1288,100 +1291,11 @@ pub fn App() -> Element {
 
             StatusBar {}
             
-            // Context menu overlay
-            if let Some((x, y, track_id)) = context_menu() {
-                // Backdrop to catch clicks outside menu
-                div {
-                    style: "
-                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                        z-index: 999;
-                    ",
-                    onclick: move |_| context_menu.set(None),
-                }
-                // The actual menu
-                div {
-                    style: "
-                        position: fixed; 
-                        left: min({x}px, calc(100vw - 150px)); 
-                        top: min({y}px, calc(100vh - 120px));
-                        background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
-                        border-radius: 6px; padding: 4px 0; min-width: 140px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                        z-index: 1000; font-size: 12px;
-                    ",
-                    // Check if this is the Markers track (can't delete)
-                    {
-                        let is_markers = project.read().find_track(track_id)
-                            .map(|t| t.track_type == crate::state::TrackType::Marker)
-                            .unwrap_or(false);
-                        let track_name = project.read().find_track(track_id)
-                            .map(|t| t.name.clone())
-                            .unwrap_or_default();
-                        
-                        if is_markers {
-                            rsx! {
-                                div {
-                                    style: "
-                                        padding: 6px 12px; color: {TEXT_DIM};
-                                        cursor: not-allowed;
-                                    ",
-                                    "Cannot delete Markers track"
-                                }
-                            }
-                        } else {
-                            rsx! {
-                                div {
-                                    style: "
-                                        padding: 6px 12px; color: #ef4444; cursor: pointer;
-                                        transition: background-color 0.1s ease;
-                                    ",
-                                    onmouseenter: move |_| {
-                                        // Would need state for hover, skipping for now
-                                    },
-                                    onclick: move |_| {
-                                        project.write().remove_track(track_id);
-                                        selection.write().clear();
-                                        preview_dirty.set(true);
-                                        context_menu.set(None);
-                                    },
-                                    "🗑 Delete \"{track_name}\""
-                                }
-
-                                div {
-                                    style: "height: 1px; background-color: {BORDER_SUBTLE}; margin: 2px 0;",
-                                }
-
-                                div {
-                                    style: "
-                                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
-                                        transition: background-color 0.1s ease;
-                                    ",
-                                    onmouseenter: move |_| {},
-                                    onclick: move |_| {
-                                        project.write().move_track_up(track_id);
-                                        preview_dirty.set(true);
-                                        context_menu.set(None);
-                                    },
-                                    "↑ Move Up"
-                                }
-
-                                div {
-                                    style: "
-                                        padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
-                                        transition: background-color 0.1s ease;
-                                    ",
-                                    onmouseenter: move |_| {},
-                                    onclick: move |_| {
-                                        project.write().move_track_down(track_id);
-                                        preview_dirty.set(true);
-                                        context_menu.set(None);
-                                    },
-                                    "↓ Move Down"
-                                }
-                            }
-                        }
-                    }
-                }
+            TrackContextMenu {
+                context_menu: context_menu,
+                project: project,
+                selection: selection,
+                preview_dirty: preview_dirty,
             }
 
             // Startup Modal (Blocks everything until Project is created/loaded)
@@ -1432,256 +1346,29 @@ pub fn App() -> Element {
                 }
             }
 
-            // New Project Modal (File > New Project)
-            if show_new_project_dialog() {
-                // ... reusing the existing modal structure but purely for NEW projects
-                // We reuse the startup modal logic essentially, but let's keep the existing simple one for now
-                // just adapted to immediate creation
-                div {
-                    style: "
-                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                        background-color: rgba(0, 0, 0, 0.5);
-                        display: flex; align-items: center; justify-content: center;
-                        z-index: 2000;
-                    ",
-                    onclick: move |_| show_new_project_dialog.set(false),
-                    
-                    div {
-                         style: "
-                            width: 400px; background-color: {BG_ELEVATED};
-                            border: 1px solid {BORDER_DEFAULT}; border-radius: 8px;
-                            padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-                        ",
-                         onclick: move |e| e.stop_propagation(),
-                         
-                         h3 { style: "margin: 0 0 16px 0; font-size: 16px; color: {TEXT_PRIMARY};", "New Project" }
-                         // ... (keep existing simple input for now) ...
-                         // NOTE: We should probably unify this with StartupModal eventually
-                         div {
-                            style: "margin-bottom: 20px;",
-                             button {
-                                style: "width: 100%; padding: 10px; background: {ACCENT_VIDEO}; border: none; border-radius: 4px; color: white; cursor: pointer;",
-                                onclick: move |_| {
-                                     // Quick hack: just reset to startup modal for now to force the flow
-                                    project.set(crate::state::Project::default()); // Reset to untitled
-                                    startup_done.set(false); // Trigger startup modal
-                                    show_new_project_dialog.set(false);
-                                },
-                                "Go to Project Wizard"
-                             }
-                         }
-                    }
+            NewProjectModal {
+                show: show_new_project_dialog,
+                on_go_to_wizard: move |_| {
+                    project.set(crate::state::Project::default());
+                    startup_done.set(false);
+                    show_new_project_dialog.set(false);
                 }
             }
 
-            // Providers Modal (Global JSON Editor)
-            if show_providers_dialog() {
-                // Backdrop
-                div {
-                    style: "
-                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                        background-color: rgba(0, 0, 0, 0.6);
-                        z-index: 3000;
-                    ",
-                    onclick: move |_| show_providers_dialog.set(false),
-                }
-                // Modal
-                div {
-                    style: "
-                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                        display: flex; align-items: center; justify-content: center;
-                        z-index: 3001;
-                    ",
-                    onclick: move |e| e.stop_propagation(),
-                    div {
-                        style: "
-                            width: 920px; height: 620px;
-                            background-color: {BG_ELEVATED};
-                            border: 1px solid {BORDER_DEFAULT};
-                            border-radius: 10px;
-                            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
-                            display: flex; flex-direction: column;
-                            overflow: hidden;
-                        ",
-                        div {
-                            style: "
-                                display: flex; align-items: center; justify-content: space-between;
-                                padding: 14px 18px;
-                                background-color: {BG_SURFACE};
-                                border-bottom: 1px solid {BORDER_DEFAULT};
-                            ",
-                            div {
-                                style: "display: flex; flex-direction: column; gap: 4px;",
-                                span { style: "font-size: 13px; font-weight: 600; color: {TEXT_PRIMARY};", "Providers (Global)" }
-                                span { style: "font-size: 10px; color: {TEXT_DIM};", "{providers_root_label}" }
-                            }
-                            button {
-                                class: "collapse-btn",
-                                style: "
-                                    background: transparent; border: none; color: {TEXT_SECONDARY};
-                                    font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
-                                ",
-                                onclick: move |_| show_providers_dialog.set(false),
-                                "Close"
-                            }
-                        }
-
-                        div {
-                            style: "flex: 1; display: flex; min-height: 0;",
-                            // Left list
-                            div {
-                                style: "
-                                    width: 240px; padding: 12px;
-                                    border-right: 1px solid {BORDER_SUBTLE};
-                                    background-color: {BG_BASE};
-                                    display: flex; flex-direction: column; gap: 8px;
-                                ",
-                                div {
-                                    style: "display: flex; gap: 6px;",
-                                    button {
-                                        class: "collapse-btn",
-                                        style: "
-                                            flex: 1; padding: 6px 8px;
-                                            background-color: {BG_SURFACE};
-                                            border: 1px solid {BORDER_DEFAULT};
-                                            border-radius: 6px;
-                                            color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
-                                        ",
-                                        onclick: on_provider_new,
-                                        "New"
-                                    }
-                                    button {
-                                        class: "collapse-btn",
-                                        style: "
-                                            flex: 1; padding: 6px 8px;
-                                            background-color: {BG_SURFACE};
-                                            border: 1px solid {BORDER_DEFAULT};
-                                            border-radius: 6px;
-                                            color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
-                                        ",
-                                        onclick: on_provider_reload,
-                                        "Reload"
-                                    }
-                                }
-                                div {
-                                    style: "
-                                        flex: 1; overflow-y: auto;
-                                        border: 1px solid {BORDER_SUBTLE};
-                                        border-radius: 6px;
-                                        background-color: {BG_ELEVATED};
-                                        padding: 6px;
-                                    ",
-                                    if provider_files().is_empty() {
-                                        div {
-                                            style: "
-                                                padding: 10px; font-size: 11px; color: {TEXT_DIM};
-                                                text-align: center;
-                                            ",
-                                            "No providers yet"
-                                        }
-                                    } else {
-                                        for path in provider_files().iter() {
-                                            {
-                                                let file_name = path
-                                                    .file_name()
-                                                    .and_then(|name| name.to_str())
-                                                    .unwrap_or("provider.json");
-                                                let path_clone = path.clone();
-                                                let selected = provider_editor_path()
-                                                    .as_ref()
-                                                    .map(|selected| selected == path)
-                                                    .unwrap_or(false);
-                                                let item_bg = if selected { BG_HOVER } else { "transparent" };
-                                                let item_border = if selected { BORDER_ACCENT } else { BORDER_SUBTLE };
-                                                rsx! {
-                                                    div {
-                                                        key: "{path.display()}",
-                                                        class: "collapse-btn",
-                                                        style: "
-                                                            padding: 6px 8px; margin-bottom: 6px;
-                                                            border: 1px solid {item_border};
-                                                            background-color: {item_bg};
-                                                            border-radius: 6px;
-                                                            font-size: 11px; color: {TEXT_PRIMARY};
-                                                            cursor: pointer;
-                                                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-                                                        ",
-                                                        onclick: move |_: MouseEvent| {
-                                                            provider_editor_path.set(Some(path_clone.clone()));
-                                                            provider_editor_text.set(read_provider_file(&path_clone).unwrap_or_default());
-                                                            provider_editor_error.set(None);
-                                                            provider_editor_dirty.set(false);
-                                                        },
-                                                        "{file_name}"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                button {
-                                    class: "collapse-btn",
-                                    style: "
-                                        width: 100%; padding: 6px 8px;
-                                        background-color: transparent;
-                                        border: 1px solid {BORDER_DEFAULT};
-                                        border-radius: 6px;
-                                        color: #ef4444; font-size: 11px; cursor: pointer;
-                                    ",
-                                    onclick: on_provider_delete,
-                                    "Delete"
-                                }
-                            }
-
-                            // Right editor
-                            div {
-                                style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;",
-                                textarea {
-                                    style: "
-                                        flex: 1; width: 100%;
-                                        background-color: {BG_SURFACE};
-                                        border: 1px solid {BORDER_DEFAULT};
-                                        border-radius: 6px;
-                                        color: {TEXT_PRIMARY};
-                                        font-family: 'SF Mono', Consolas, monospace;
-                                        font-size: 11px; line-height: 1.5;
-                                        padding: 10px; resize: none;
-                                        white-space: pre;
-                                        user-select: text;
-                                    ",
-                                    value: "{provider_editor_text()}",
-                                    oninput: move |e| {
-                                        provider_editor_text.set(e.value());
-                                        provider_editor_dirty.set(true);
-                                        provider_editor_error.set(None);
-                                    }
-                                }
-                                if let Some(error) = provider_editor_error() {
-                                    div {
-                                        style: "font-size: 11px; color: #f97316;",
-                                        "{error}"
-                                    }
-                                }
-                                div {
-                                    style: "display: flex; align-items: center; justify-content: space-between;",
-                                    span { style: "font-size: 10px; color: {TEXT_DIM};", "File: {provider_selected_label}" }
-                                    button {
-                                        class: "collapse-btn",
-                                        style: "
-                                            padding: 6px 12px;
-                                            background-color: {BG_SURFACE};
-                                            border: 1px solid {BORDER_DEFAULT};
-                                            border-radius: 6px;
-                                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
-                                        ",
-                                        onclick: on_provider_save,
-                                        "{provider_save_label}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            ProvidersModal {
+                show: show_providers_dialog,
+                provider_files: provider_files,
+                provider_editor_path: provider_editor_path,
+                provider_editor_text: provider_editor_text,
+                provider_editor_error: provider_editor_error,
+                provider_editor_dirty: provider_editor_dirty,
+                providers_root_label: providers_root_label.clone(),
+                provider_save_label: provider_save_label.to_string(),
+                provider_selected_label: provider_selected_label.to_string(),
+                on_provider_new: on_provider_new,
+                on_provider_reload: on_provider_reload,
+                on_provider_save: on_provider_save,
+                on_provider_delete: on_provider_delete,
             }
         }
     }

@@ -780,6 +780,9 @@ src/
 ├── app.rs           # Main App component, UI shell, dialogs
 ├── constants.rs     # Shared UI constants (colors, sizing, scripts)
 ├── components/      # UI components (startup modal, panels, fields)
+│   ├── providers_modal.rs    # Global providers JSON editor
+│   ├── new_project_modal.rs  # Simple new-project redirect modal
+│   └── track_context_menu.rs # Track context menu overlay
 ├── timeline/        # TimelinePanel, ruler, tracks, playback controls
 ├── hotkeys/         # Hotkey system (Registry, Actions, Context)
 ├── core/            # Core logic (preview renderer, GPU surface, media helpers)
@@ -792,6 +795,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Extracted Providers modal, New Project modal, and track context menu into `src/components/`.
 - **2026-01-08:** Split Attributes panel UI into `generative_controls` and `provider_inputs` helpers under `src/components/attributes/`.
 - **2026-01-08:** Fixed native preview Y-flip by inverting V coordinates in the GPU preview shader.
 - **2026-01-08:** Split GPU preview into `src/core/preview_gpu/` (surface, shaders, types, layers) and cleaned up module boundaries.
