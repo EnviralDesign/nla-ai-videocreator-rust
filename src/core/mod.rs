@@ -5,6 +5,7 @@ pub mod preview_store;
 pub mod preview_gpu;
 pub mod provider_store;
 pub mod generation;
+pub mod comfyui_workflow;
 mod video_decode;
 // pub mod ffmpeg; // Placeholder for future imports
 // pub mod audio;  // Placeholder for future imports

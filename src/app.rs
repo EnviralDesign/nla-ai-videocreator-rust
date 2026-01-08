@@ -20,13 +20,16 @@ use crate::core::provider_store::{
     read_provider_file,
     write_provider_file,
 };
-use crate::state::{ensure_generative_config, ProviderEntry};
+use crate::state::{
+    ensure_generative_config, ProviderConnection, ProviderEntry, ProviderManifest,
+};
+use crate::providers::comfyui;
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 use crate::constants::*;
 use crate::components::{
-    NewProjectModal, PreviewPanel, ProvidersModal, SidePanel, StartupModal, StatusBar,
-    TitleBar, TrackContextMenu,
+    NewProjectModal, PreviewPanel, ProviderBuilderModal, ProviderBuilderSaved, ProviderBuilderSeed,
+    ProvidersModal, SidePanel, StartupModal, StatusBar, TitleBar, TrackContextMenu,
 };
 use crate::components::assets::AssetsPanelContent;
 use crate::components::attributes::AttributesPanelContent;
@@ -637,6 +640,8 @@ pub fn App() -> Element {
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
     let show_providers_dialog = use_signal(|| false);
+    let show_provider_builder = use_signal(|| false);
+    let builder_seed = use_signal(|| ProviderBuilderSeed::New);
     let mut menu_open = use_signal(|| false); // Track if any dropdown menu is open
     let provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
     let provider_editor_text = use_signal(String::new);
@@ -718,6 +723,84 @@ pub fn App() -> Element {
         }
     };
 
+    let on_provider_build = {
+        let mut show_provider_builder = show_provider_builder.clone();
+        let mut builder_seed = builder_seed.clone();
+        let provider_editor_path = provider_editor_path.clone();
+        let provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        move |_: MouseEvent| {
+            let seed = if let Some(provider_path) = provider_editor_path() {
+                let text = provider_editor_text();
+                let entry: ProviderEntry = match serde_json::from_str(&text) {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        provider_editor_error.set(Some(format!("Invalid JSON: {}", err)));
+                        return;
+                    }
+                };
+
+                let (manifest_path, manifest, error) = match &entry.connection {
+                    ProviderConnection::ComfyUi { manifest_path, .. } => {
+                        let manifest_path_buf =
+                            manifest_path.as_ref().map(|path| std::path::PathBuf::from(path));
+                        let mut manifest_error = None;
+                        let mut manifest_value = None;
+                        if let Some(path) = manifest_path.as_deref() {
+                            let resolved = comfyui::resolve_manifest_path(Some(path));
+                            let resolved = match resolved {
+                                Some(path) => path,
+                                None => {
+                                    manifest_error =
+                                        Some("Unable to resolve manifest path.".to_string());
+                                    std::path::PathBuf::from(path)
+                                }
+                            };
+                            match std::fs::read_to_string(&resolved) {
+                                Ok(json) => match serde_json::from_str::<ProviderManifest>(&json)
+                                {
+                                    Ok(value) => {
+                                        manifest_value = Some(value);
+                                    }
+                                    Err(err) => {
+                                        manifest_error = Some(format!(
+                                            "Failed to parse manifest JSON: {}",
+                                            err
+                                        ));
+                                    }
+                                },
+                                Err(err) => {
+                                    manifest_error =
+                                        Some(format!("Failed to read manifest: {}", err));
+                                }
+                            }
+                        }
+                        (manifest_path_buf, manifest_value, manifest_error)
+                    }
+                    _ => {
+                        provider_editor_error.set(Some(
+                            "Provider Builder only supports ComfyUI providers.".to_string(),
+                        ));
+                        return;
+                    }
+                };
+
+                ProviderBuilderSeed::Edit {
+                    provider_path,
+                    provider_entry: entry,
+                    manifest_path,
+                    manifest,
+                    error,
+                }
+            } else {
+                ProviderBuilderSeed::New
+            };
+
+            builder_seed.set(seed);
+            show_provider_builder.set(true);
+        }
+    };
+
     let on_provider_save = {
         let mut provider_entries = provider_entries.clone();
         let mut provider_files = provider_files.clone();
@@ -778,10 +861,33 @@ pub fn App() -> Element {
         }
     };
 
+    let on_builder_saved = {
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        let mut show_providers_dialog = show_providers_dialog.clone();
+        move |payload: ProviderBuilderSaved| {
+            provider_entries.set(load_global_provider_entries_or_empty());
+            let files = list_global_provider_files();
+            provider_files.set(files.clone());
+            provider_editor_path.set(Some(payload.provider_path.clone()));
+            provider_editor_text.set(read_provider_file(&payload.provider_path).unwrap_or_default());
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            show_providers_dialog.set(true);
+        }
+    };
+
     let desktop_for_modal_redraw = desktop.clone();
     let preview_gpu_for_modal = preview_gpu.clone();
     use_effect(move || {
-        let suspended = show_providers_dialog() || show_new_project_dialog() || menu_open();
+        let suspended = show_providers_dialog()
+            || show_provider_builder()
+            || show_new_project_dialog()
+            || menu_open();
         if preview_native_suspended() == suspended {
             return;
         }
@@ -1375,10 +1481,16 @@ pub fn App() -> Element {
                 provider_selected_label: provider_selected_label.to_string(),
                 on_provider_new: on_provider_new,
                 on_provider_reload: on_provider_reload,
+                on_provider_build: on_provider_build,
                 on_provider_save: on_provider_save,
                 on_provider_delete: on_provider_delete,
+            }
+
+            ProviderBuilderModal {
+                show: show_provider_builder,
+                seed: builder_seed,
+                on_saved: on_builder_saved,
             }
         }
     }
 }
-

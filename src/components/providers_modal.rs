@@ -16,6 +16,7 @@ pub fn ProvidersModal(
     provider_selected_label: String,
     on_provider_new: EventHandler<MouseEvent>,
     on_provider_reload: EventHandler<MouseEvent>,
+    on_provider_build: EventHandler<MouseEvent>,
     on_provider_save: EventHandler<MouseEvent>,
     on_provider_delete: EventHandler<MouseEvent>,
 ) -> Element {
@@ -85,6 +86,18 @@ pub fn ProvidersModal(
                         ",
                         div {
                             style: "display: flex; gap: 6px;",
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    flex: 1; padding: 6px 8px;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px;
+                                    color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
+                                ",
+                                onclick: on_provider_build,
+                                "Build"
+                            }
                             button {
                                 class: "collapse-btn",
                                 style: "

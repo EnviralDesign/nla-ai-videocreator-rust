@@ -18,11 +18,11 @@ ComfyUI is the primary open-source path today; other adapter styles are planned.
 5. Edit the JSON to point at your `base_url` and `workflow_path`, then `Save`.
 6. Select that provider on a generative image clip and click **Generate**.
 
-## Quick Start (Planned Builder - ComfyUI)
+## Quick Start (Builder - ComfyUI)
 
-This is the intended flow once the Provider Builder UI lands:
+The Provider Builder UI is now available for ComfyUI workflows:
 
-1. `Settings > AI Providers...` -> **Build from Workflow**.
+1. `Settings > AI Providers...` -> **Build**.
 2. Pick a ComfyUI API workflow JSON file.
 3. Use search + dropdowns to select node inputs to expose.
 4. Choose a single output node (image/video/audio).
@@ -40,7 +40,7 @@ Provider entries are stored globally (not per project) as JSON files:
 
 Each provider file is named after its UUID: `<provider-id>.json`.
 
-Planned: workflow manifests will live alongside the workflow JSON:
+Workflow manifests live alongside the workflow JSON:
 
 ```
 workflows/
@@ -53,8 +53,8 @@ workflows/
 Open the Providers dialog:
 
 - `Settings > AI Providers...`
-- Click `New` to create a draft provider JSON (MVP).
-- Planned: click **Build from Workflow** to use the builder UI.
+- Click `New` to create a draft provider JSON (manual).
+- Click **Build** to use the builder UI (recommended).
 
 ### Provider JSON Example (ComfyUI Image Gen - MVP)
 
@@ -79,7 +79,8 @@ Open the Providers dialog:
   "connection": {
     "type": "comfy_ui",
     "base_url": "http://127.0.0.1:8188",
-    "workflow_path": "workflows/sdxl_simple_example_API.json"
+    "workflow_path": "workflows/sdxl_simple_example_API.json",
+    "manifest_path": "workflows/sdxl_simple_example_manifest.json"
   }
 }
 ```
@@ -92,6 +93,8 @@ Open the Providers dialog:
 - `connection.type`: Use `comfy_ui` for the current MVP. Other adapters are planned.
 - `workflow_path`: Optional. If omitted, the app uses the default
   `workflows/sdxl_simple_example_API.json`.
+- `manifest_path`: Optional but recommended. When provided, the adapter binds
+  inputs/outputs via selectors instead of legacy node IDs.
 
 ## ComfyUI Workflow Setup
 
@@ -104,40 +107,39 @@ Recommended flow:
 3. Make your edits (swap model, sampler, etc.).
 4. Export as **API** JSON and save over your file.
 
-This preserves node IDs that the current adapter expects.
+This preserves the workflow structure and node titles that selector matching
+uses (tags are optional but recommended for stability).
 
-### Input Mapping (Important - MVP)
+### Input Mapping (Builder / Manifest)
 
-The current ComfyUI adapter is hardwired to specific node IDs and input keys.
-Your workflow must contain these nodes (or the adapter will error).
+The ComfyUI adapter now reads the **manifest** (if present) and binds inputs by
+selector instead of node ID. Each exposed input maps to:
 
 ```
-prompt          -> node 6  : inputs.text
-negative_prompt -> node 7  : inputs.text
-seed            -> node 10 : inputs.noise_seed
-steps           -> node 10 : inputs.steps
-cfg             -> node 10 : inputs.cfg
-width           -> node 5  : inputs.width
-height          -> node 5  : inputs.height
-checkpoint      -> node 4  : inputs.ckpt_name
-sampler         -> node 10 : inputs.sampler_name
-scheduler       -> node 10 : inputs.scheduler
-start_step      -> node 68 : inputs.value
+selector: { tag?, class_type, input_key, title? }
 ```
 
-If you delete or replace these nodes, update your workflow by reusing the
-template or be prepared to change the adapter code.
+Selector matching behavior:
+
+- `tag` (if present) must match `_meta.nla_tag` inside the workflow JSON.
+- `class_type + input_key` must match a node input.
+- `title` is used to disambiguate when multiple nodes match.
+
+If you don't provide a manifest (or omit `manifest_path` in the provider entry),
+the adapter falls back to the legacy node-ID bindings in the SDXL example.
 
 ### Output Expectations
 
-- The adapter looks for an image output on node `53` (PreviewImage).
-- If node `53` is missing, it falls back to the first image output it can find.
-- Only the first image output is used.
+- With a manifest: the output selector identifies the node and the output key.
+- Without a manifest: the adapter looks for an image output on node `53`
+  (PreviewImage) and falls back to the first image output it can find.
+- Only the first image output (or the `index` if specified) is used.
 
-### Planned Binding (Post-MVP)
+### Builder Binding (Current)
 
-The builder will let you bind inputs by **selector** (class type + input key + optional tag),
+The builder lets you bind inputs by **selector** (class type + input key + optional tag),
 so node IDs are no longer required. See `docs/PROVIDER_MANIFEST_SCHEMA.md`.
+Tags are optional and not exposed in the builder UI yet (TODO: auto-tagging).
 
 ## Using Your Provider in the App
 
@@ -154,13 +156,16 @@ so node IDs are no longer required. See `docs/PROVIDER_MANIFEST_SCHEMA.md`.
 - **Relative workflow paths** are resolved from the app working directory first,
   then from the executable directory. Use absolute paths if in doubt.
 - **Provider ID changes** will break existing generative assets that reference it.
-- **MVP uses node IDs.** This will be replaced by selector/tag bindings via the builder.
+- **Manual JSON without a manifest** uses the legacy node ID bindings.
+- **Manifest-based binding** requires selector matches; mismatches will error.
 
 ## Troubleshooting
 
 - "Missing inputs: ..." -> Required fields are not set in the Attributes panel.
-- "Workflow missing node ..." -> Your API workflow JSON does not contain the
-  expected node IDs listed above.
+- "No workflow node matched selector (...)" -> The manifest selector doesn't
+  match your workflow. Check `_meta.nla_tag`, class type, input key, and title.
+- "Multiple workflow nodes matched selector (...)" -> Add a tag or title to
+  narrow the match.
 - "ComfyUI rejected prompt ..." -> Base URL is wrong or ComfyUI is not running.
 - "Timed out waiting for ComfyUI output." -> Workflow stalled or produced no image.
 - "ComfyUI history did not include image outputs." -> Ensure your workflow

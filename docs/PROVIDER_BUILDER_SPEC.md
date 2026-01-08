@@ -1,7 +1,8 @@
 # Provider Builder UI (Draft Spec)
 
 This spec defines the first-pass UX for turning a working workflow/API into a
-clean provider entry without hand-editing JSON.
+clean provider entry without hand-editing JSON. The in-app builder currently
+implements the core ComfyUI flow (workflow picker + node browser + inputs).
 
 The builder supports multiple adapter types:
 - **ComfyUI** (primary OSS path)
@@ -10,8 +11,10 @@ The builder supports multiple adapter types:
 
 ## Entry Point
 
-- **Settings > AI Providers...** -> `Build from Workflow` button.
+- **Settings > AI Providers...** -> `Build` button.
 - The button launches the Provider Builder wizard.
+- If a provider is selected, the builder opens in **Edit** mode and preloads
+  the existing manifest/workflow (when available). Otherwise it starts fresh.
 
 ## Step 1: Choose Adapter
 
@@ -99,7 +102,7 @@ Bindings never show node IDs. Use dropdowns/search:
 
 - **Node dropdown** (filtered by class type/title)
 - **Input dropdown** (keys for the node)
-- **Tag field** (optional, for stable binding)
+- **Tag field** (optional, for stable binding; TODO: expose with auto-tagging)
 - **Conflict warning** if selector matches multiple nodes
 
 ## Workflow Drift Handling

@@ -802,6 +802,13 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Hid tag fields in the Provider Builder UI; tagging is now a documented TODO.
+- **2026-01-08:** Provider Builder now opens in edit mode for selected ComfyUI providers and preloads manifests/workflows.
+- **2026-01-08:** Wired the ComfyUI adapter to consume provider manifests (selector-based input/output binding with optional tags).
+- **2026-01-08:** Updated provider docs and content architecture to reflect manifest-based ComfyUI binding and output selection rules.
+- **2026-01-08:** Added Provider Builder modal scaffold (workflow picker, node browser, exposed inputs, save).
+- **2026-01-08:** Added provider manifest types in state and wired builder saves to manifest + provider entries.
+- **2026-01-08:** Added ComfyUI workflow parser to power the builder node browser.
 - **2026-01-08:** Added provider manifest schema + provider builder spec docs; refreshed setup guide for multi-adapter roadmap.
 - **2026-01-08:** Added example ComfyUI manifest `workflows/sdxl_simple_example_manifest.json`.
 - **2026-01-08:** Expanded provider architecture doc with ComfyUI workflow picker + node binding UI details.

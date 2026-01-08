@@ -42,15 +42,22 @@ load it consistently.
   "output_type": "image",
   "workflow": {
     "workflow_path": "workflows/sdxl_simple_example_API.json",
-    "workflow_hash": "sha256:..."
+    "workflow_hash": "sha256:... (optional)"
   },
   "inputs": [ ... ],
   "output": {
-    "selector": { "class_type": "PreviewImage", "tag": "final_output" },
+    "selector": {
+      "class_type": "PreviewImage",
+      "input_key": "images",
+      "tag": "final_output"
+    },
     "index": 0
   }
 }
 ```
+
+Note: `output.selector.input_key` maps to the output list key in ComfyUI history
+(usually `images`).
 
 ### Input schema
 
@@ -83,9 +90,12 @@ load it consistently.
 
 Selectors resolve without node IDs:
 
-1. Match by `tag` if present.
-2. Otherwise match by `class_type + input_key + title`.
-3. If ambiguous, mark provider **Needs Rebind**.
+1. If `tag` is present, it must match `_meta.nla_tag` in the workflow JSON.
+2. `class_type + input_key` must match a node input.
+3. `title` is used to disambiguate when multiple nodes match.
+4. If still ambiguous, the adapter errors with a selector mismatch.
+
+Tags are optional. The current builder UI does not expose tagging (TODO: auto-tagging).
 
 ### UI hints
 
@@ -146,6 +156,12 @@ REST-style request without custom code.
 - `response_path` or `url_path`: Where to find the result in the response.
 
 This keeps the manifest extensible without assuming ComfyUI.
+
+## Provider Entry Reference
+
+Provider entries can reference a manifest file alongside the workflow using
+`manifest_path` inside the provider connection config. The ComfyUI adapter
+loads the manifest (if present) to bind inputs/outputs.
 
 ## Example: ComfyUI Manifest for `sdxl_simple_example_API.json`
 
@@ -280,3 +296,6 @@ This example mirrors the ComfyUI workflow in `workflows/sdxl_simple_example_API.
 and exposes a minimal, curated UI.
 
 An example file is included at `workflows/sdxl_simple_example_manifest.json`.
+
+Note: the ComfyUI adapter consumes this manifest when `manifest_path` is set on
+the provider entry.

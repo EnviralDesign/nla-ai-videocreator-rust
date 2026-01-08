@@ -1,0 +1,35 @@
+{
+  "adapter_type": "comfy_ui",
+  "schema_version": 1,
+  "name": "New Provider",
+  "output_type": "image",
+  "workflow": {
+    "workflow_path": "C:\\repos\\nla-ai-videocreator-rust\\workflows\\sdxl_simple_example_API.json"
+  },
+  "inputs": [
+    {
+      "name": "positive",
+      "label": "Positive Prompt",
+      "input_type": {
+        "type": "text"
+      },
+      "required": true,
+      "default": "high quality",
+      "bind": {
+        "selector": {
+          "tag": "prompt_positive",
+          "class_type": "CLIPTextEncode",
+          "input_key": "text",
+          "title": "CLIP Text Encode (Prompt)"
+        }
+      }
+    }
+  ],
+  "output": {
+    "selector": {
+      "class_type": "PreviewImage",
+      "input_key": "images",
+      "title": "Preview Image"
+    }
+  }
+}

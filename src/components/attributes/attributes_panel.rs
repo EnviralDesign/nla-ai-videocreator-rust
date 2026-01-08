@@ -458,10 +458,19 @@ pub fn AttributesPanelContent(
                     ProviderConnection::ComfyUi {
                         base_url,
                         workflow_path,
+                        manifest_path,
+                        ..
                     } => {
                         let workflow_path =
                             comfyui::resolve_workflow_path(workflow_path.as_deref());
-                        comfyui::generate_image(&base_url, &workflow_path, &resolved_inputs)
+                        let manifest_path =
+                            comfyui::resolve_manifest_path(manifest_path.as_deref());
+                        comfyui::generate_image(
+                            &base_url,
+                            &workflow_path,
+                            &resolved_inputs,
+                            manifest_path.as_deref(),
+                        )
                             .await
                     }
                     _ => Err("Provider connection not supported yet.".to_string()),
