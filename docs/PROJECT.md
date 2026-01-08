@@ -630,7 +630,8 @@ nla-ai-videocreator-rust/
 ├── assets/                  # Static assets (icons, fonts)
 ├── workflows/               # Example ComfyUI workflows
 └── docs/                    # Additional documentation
-    └── CONTENT_ARCHITECTURE.md  # Content & generation architecture
+    ├── CONTENT_ARCHITECTURE.md  # Content & generation architecture
+    └── PROVIDER_SETUP_GUIDE.md  # End-user provider setup guide
 ```
 
 ### State Architecture
@@ -680,6 +681,8 @@ This allows:
 | Generative Assets Have Versions | Each generation creates a new version; user picks active version; dependent assets use active version | ✅ Decided |
 | Timeline as Implicit Wiring | Overlapping assets auto-surface as input suggestions; no explicit linking required | ✅ Decided |
 | Providers Grouped by Output Type | Video/Image/Audio; input requirements vary per provider via dynamic schema | ✅ Decided |
+| Provider Bindings via Selectors | Bind workflow inputs by selector/tag instead of node IDs | ✅ Decided |
+| Provider Builder UI | Workflow picker + node browser for exposed inputs | ✅ Decided |
 | No Separate Keyframe Track | Images are clips on Video tracks; "keyframes" are just overlapping reference images | ✅ Decided |
 | In-Project Assets Only (MVP) | All assets must be in project folder; external refs are future enhancement | ✅ Decided |
 | Canvas Compositor Strategy | Skip DOM overlay; build robust pixel-buffer compositing for transforms/blending immediately | ✅ Decided |
@@ -795,6 +798,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Expanded provider architecture doc with ComfyUI workflow picker + node binding UI details.
+- **2026-01-08:** Revised provider architecture doc to use selector/tag bindings and a provider builder UI (no node ID reliance).
+- **2026-01-08:** Added end-user provider setup guide `docs/PROVIDER_SETUP_GUIDE.md` covering ComfyUI workflow setup and provider JSON.
 - **2026-01-08:** Extracted Providers modal, New Project modal, and track context menu into `src/components/`.
 - **2026-01-08:** Split Attributes panel UI into `generative_controls` and `provider_inputs` helpers under `src/components/attributes/`.
 - **2026-01-08:** Fixed native preview Y-flip by inverting V coordinates in the GPU preview shader.
