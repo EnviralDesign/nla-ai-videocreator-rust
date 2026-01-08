@@ -1,7 +1,11 @@
 use dioxus::prelude::*;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use crate::components::common::{NumericField, ProviderFloatField, ProviderIntegerField, ProviderTextField};
+
+use crate::components::common::{NumericField, ProviderTextField};
+use super::generative_controls::render_generative_controls;
+use super::provider_inputs::render_provider_inputs;
 use crate::constants::*;
 use crate::core::generation::{next_version_label, resolve_provider_inputs};
 use crate::providers::comfyui;
@@ -9,14 +13,9 @@ use crate::state::{
     asset_display_name,
     delete_generative_version_files,
     generative_info_for_clip,
-    input_value_as_bool,
-    input_value_as_f64,
-    input_value_as_i64,
-    input_value_as_string,
     parse_version_index,
     ProviderConnection,
     ProviderEntry,
-    ProviderInputType,
     ProviderOutputType,
 };
 
@@ -219,12 +218,12 @@ pub fn AttributesPanelContent(
         .active_version
         .clone()
         .unwrap_or_default();
-    let mut confirm_delete_version = use_signal(|| false);
+    let confirm_delete_version = use_signal(|| false);
     let can_delete_version = !selected_version_value.trim().is_empty();
     let on_provider_change = {
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
-        move |e: FormEvent| {
+        Rc::new(RefCell::new(move |e: FormEvent| {
             let value = e.value();
             let provider_id = value
                 .trim()
@@ -238,7 +237,7 @@ pub fn AttributesPanelContent(
                 }
             }
             gen_config.set(Some(config));
-        }
+        }))
     };
     let on_version_change = {
         let mut gen_config = gen_config.clone();
@@ -249,7 +248,7 @@ pub fn AttributesPanelContent(
         let thumbnailer = thumbnailer.clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
         let mut confirm_delete_version = confirm_delete_version.clone();
-        move |e: FormEvent| {
+        Rc::new(RefCell::new(move |e: FormEvent| {
             let value = e.value();
             let trimmed = value.trim();
             let next_version = if trimmed.is_empty() {
@@ -278,7 +277,7 @@ pub fn AttributesPanelContent(
                 });
             }
             confirm_delete_version.set(false);
-        }
+        }))
     };
     let on_delete_version = {
         let gen_config = gen_config.clone();
@@ -293,7 +292,7 @@ pub fn AttributesPanelContent(
         let confirm_delete_version = confirm_delete_version.clone();
         let version_options = version_options.clone();
         let selected_version_value = selected_version_value.clone();
-        Rc::new(move || {
+        Rc::new(RefCell::new(move || {
             let mut gen_config = gen_config.clone();
             let gen_folder_path = gen_folder_path.clone();
             let mut project = project.clone();
@@ -376,16 +375,16 @@ pub fn AttributesPanelContent(
                 confirm_delete_version.set(false);
                 gen_status.set(Some(format!("Deleted {}", version)));
             });
-        })
+        }))
     };
 
     let set_input_value = {
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
-        move |name: &str, value: serde_json::Value| {
+        Rc::new(RefCell::new(move |name: String, value: serde_json::Value| {
             let mut config = gen_config().unwrap_or_default();
             config.inputs.insert(
-                name.to_string(),
+                name,
                 crate::state::InputValue::Literal { value },
             );
             if let Some(folder_path) = gen_folder_path.as_ref() {
@@ -394,7 +393,7 @@ pub fn AttributesPanelContent(
                 }
             }
             gen_config.set(Some(config));
-        }
+        }))
     };
 
     let on_generate = {
@@ -409,7 +408,7 @@ pub fn AttributesPanelContent(
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
         let selected_provider = selected_provider.clone();
         let asset_id = clip.asset_id;
-        move |_| {
+        Rc::new(RefCell::new(move |_evt: MouseEvent| {
             let mut project = project.clone();
             let mut gen_config = gen_config.clone();
             let gen_folder_path = gen_folder_path.clone();
@@ -530,7 +529,7 @@ pub fn AttributesPanelContent(
 
                 gen_busy.set(false);
             });
-        }
+        }))
     };
 
     let transform = clip.transform;
@@ -664,289 +663,30 @@ pub fn AttributesPanelContent(
                 }
             }
 
-            if let Some(_output) = gen_output {
-                div {
-                    style: "
-                        display: flex; flex-direction: column; gap: 10px;
-                        padding: 10px; background-color: {BG_SURFACE};
-                        border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
-                    ",
-                    div {
-                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
-                        "Generative"
-                    }
-                    div {
-                        style: "display: flex; flex-direction: column; gap: 6px;",
-                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
-                        select {
-                            value: "{selected_version_value}",
-                            disabled: version_options.is_empty(),
-                            style: "
-                                width: 100%; padding: 6px 8px; font-size: 12px;
-                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                outline: none;
-                            ",
-                            onchange: on_version_change,
-                            if version_options.is_empty() {
-                                option { value: "", "No versions yet" }
-                            } else {
-                                for version in version_options.iter() {
-                                    option { value: "{version}", "{version}" }
-                                }
-                            }
-                        }
-                    }
-                    if !version_options.is_empty() && can_delete_version {
-                        div {
-                            style: "display: flex; gap: 8px; align-items: center;",
-                            if confirm_delete_version() {
-                                button {
-                                    style: "
-                                        flex: 1; padding: 6px 8px;
-                                        background-color: #b91c1c;
-                                        border: 1px solid #991b1b;
-                                        border-radius: 6px; color: white; font-size: 11px;
-                                        cursor: pointer;
-                                    ",
-                                        onclick: {
-                                            let on_delete_version = on_delete_version.clone();
-                                            move |_| on_delete_version()
-                                        },
-                                    "Confirm Delete"
-                                }
-                                button {
-                                    class: "collapse-btn",
-                                    style: "
-                                        padding: 6px 10px;
-                                        background-color: {BG_SURFACE};
-                                        border: 1px solid {BORDER_DEFAULT};
-                                        border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
-                                        cursor: pointer;
-                                    ",
-                                    onclick: move |_| confirm_delete_version.set(false),
-                                    "Cancel"
-                                }
-                            } else {
-                                button {
-                                    class: "collapse-btn",
-                                    style: "
-                                        padding: 6px 10px;
-                                        background-color: {BG_SURFACE};
-                                        border: 1px solid #7f1d1d;
-                                        border-radius: 6px; color: #fecaca; font-size: 11px;
-                                        cursor: pointer;
-                                    ",
-                                    onclick: move |_| confirm_delete_version.set(true),
-                                    "Delete Version"
-                                }
-                            }
-                        }
-                    }
-                    div {
-                        style: "display: flex; flex-direction: column; gap: 6px;",
-                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
-                        select {
-                            value: "{selected_provider_value}",
-                            style: "
-                                width: 100%; padding: 6px 8px; font-size: 12px;
-                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                outline: none;
-                            ",
-                            onchange: on_provider_change,
-                            option { value: "", "None selected" }
-                            for provider in compatible_providers.iter() {
-                                option { value: "{provider.id}", "{provider.name}" }
-                            }
-                        }
-                    }
-                    if show_missing_provider {
-                        div {
-                            style: "font-size: 11px; color: #f97316;",
-                            "Selected provider missing from global providers."
-                        }
-                    }
-                    if compatible_providers.is_empty() {
-                        div {
-                            style: "font-size: 11px; color: {TEXT_DIM};",
-                            "No providers configured. Add JSON files under {providers_path_label}."
-                        }
-                    }
-                    div {
-                        style: "display: flex; flex-direction: column; gap: 6px;",
-                        button {
-                            class: "collapse-btn",
-                            style: "
-                                width: 100%; padding: 8px 10px;
-                                background-color: {ACCENT_VIDEO};
-                                border: none; border-radius: 6px;
-                                color: white; font-size: 12px; cursor: pointer;
-                                opacity: {generate_opacity};
-                            ",
-                            onclick: on_generate,
-                            "{generate_label}"
-                        }
-                        if let Some(status) = gen_status() {
-                            div { style: "font-size: 11px; color: {TEXT_DIM};", "{status}" }
-                        }
-                    }
-                }
-
-                div {
-                    style: "
-                        display: flex; flex-direction: column; gap: 10px;
-                        padding: 10px; background-color: {BG_SURFACE};
-                        border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
-                    ",
-                    div {
-                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
-                        "Provider Inputs"
-                    }
-                    if show_missing_provider {
-                        span { style: "font-size: 11px; color: {TEXT_DIM};", "Select a valid provider to configure inputs." }
-                    } else if let Some(provider) = selected_provider {
-                        if provider.inputs.is_empty() {
-                            span { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs defined." }
-                        } else {
-                            for input in provider.inputs.iter() {
-                                {
-                                    let label = if input.required {
-                                        format!("{} *", input.label)
-                                    } else {
-                                        input.label.clone()
-                                    };
-                                    let stored_value = config_snapshot.inputs.get(&input.name).and_then(|input| {
-                                        if let crate::state::InputValue::Literal { value } = input {
-                                            Some(value.clone())
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                    let current_value = stored_value.or_else(|| input.default.clone());
-                                    let input_name = input.name.clone();
-                                    let input_type = input.input_type.clone();
-                                    let mut set_input_value = set_input_value.clone();
-                                    match input_type {
-                                        ProviderInputType::Text => {
-                                            let value = current_value
-                                                .as_ref()
-                                                .and_then(input_value_as_string)
-                                                .unwrap_or_default();
-                                            rsx! {
-                                                ProviderTextField {
-                                                    label: label.clone(),
-                                                    value: value.clone(),
-                                                    on_commit: move |next| {
-                                                        set_input_value(&input_name, serde_json::Value::String(next));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProviderInputType::Number => {
-                                            let value = current_value
-                                                .as_ref()
-                                                .and_then(input_value_as_f64)
-                                                .unwrap_or(0.0);
-                                            rsx! {
-                                                ProviderFloatField {
-                                                    label: label.clone(),
-                                                    value,
-                                                    step: "0.1",
-                                                    on_commit: move |next| {
-                                                        if let Some(number) = serde_json::Number::from_f64(next) {
-                                                            set_input_value(&input_name, serde_json::Value::Number(number));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProviderInputType::Integer => {
-                                            let value = current_value
-                                                .as_ref()
-                                                .and_then(input_value_as_i64)
-                                                .unwrap_or(0);
-                                            rsx! {
-                                                ProviderIntegerField {
-                                                    label: label.clone(),
-                                                    value,
-                                                    on_commit: move |next: i64| {
-                                                        set_input_value(&input_name, serde_json::Value::Number(next.into()));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProviderInputType::Boolean => {
-                                            let enabled = current_value
-                                                .as_ref()
-                                                .and_then(input_value_as_bool)
-                                                .unwrap_or(false);
-                                            rsx! {
-                                                div {
-                                                    style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
-                                                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-                                                    button {
-                                                        class: "collapse-btn",
-                                                        style: "
-                                                            padding: 4px 10px;
-                                                            background-color: {BG_SURFACE};
-                                                            border: 1px solid {BORDER_DEFAULT};
-                                                            border-radius: 999px;
-                                                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
-                                                        ",
-                                                        onclick: move |_| {
-                                                            set_input_value(&input_name, serde_json::Value::Bool(!enabled));
-                                                        },
-                                                        if enabled { "On" } else { "Off" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProviderInputType::Enum { options } => {
-                                            let current = current_value
-                                                .as_ref()
-                                                .and_then(input_value_as_string)
-                                                .unwrap_or_default();
-                                            rsx! {
-                                                div {
-                                                    style: "display: flex; flex-direction: column; gap: 4px;",
-                                                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-                                                    select {
-                                                        value: "{current}",
-                                                        style: "
-                                                            width: 100%; padding: 6px 8px; font-size: 12px;
-                                                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                                            outline: none;
-                                                        ",
-                                                        onchange: move |e| {
-                                                            set_input_value(&input_name, serde_json::Value::String(e.value()));
-                                                        },
-                                                        for option in options.iter() {
-                                                            option { value: "{option}", "{option}" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProviderInputType::Image
-                                        | ProviderInputType::Video
-                                        | ProviderInputType::Audio => {
-                                            rsx! {
-                                                div {
-                                                    style: "font-size: 10px; color: {TEXT_DIM};",
-                                                    "{label} (asset inputs not wired yet)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        span { style: "font-size: 11px; color: {TEXT_DIM};", "Select a provider to configure inputs." }
-                    }
-                }
+            if gen_output.is_some() {
+                {render_generative_controls(
+                    &version_options,
+                    &selected_version_value,
+                    confirm_delete_version,
+                    can_delete_version,
+                    on_version_change,
+                    on_delete_version.clone(),
+                    &selected_provider_value,
+                    &compatible_providers,
+                    on_provider_change,
+                    show_missing_provider,
+                    &providers_path_label,
+                    on_generate,
+                    gen_status,
+                    generate_label,
+                    generate_opacity,
+                )}
+                {render_provider_inputs(
+                    selected_provider,
+                    show_missing_provider,
+                    &config_snapshot,
+                    set_input_value.clone(),
+                )}
             }
 
         }
