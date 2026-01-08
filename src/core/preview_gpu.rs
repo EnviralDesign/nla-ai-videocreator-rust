@@ -20,6 +20,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const PREVIEW_NATIVE_OFFSET_X: i32 = -8;
 #[cfg(target_os = "windows")]
 const PREVIEW_NATIVE_OFFSET_Y: i32 = -1;
+#[cfg(target_os = "windows")]
+const PREVIEW_CLEAR_COLOR: wgpu::Color = wgpu::Color {
+    r: 0.035,
+    g: 0.035,
+    b: 0.043,
+    a: 1.0,
+};
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
@@ -722,12 +729,7 @@ impl PreviewGpuSurface {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(PREVIEW_CLEAR_COLOR),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

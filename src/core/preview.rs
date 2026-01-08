@@ -16,6 +16,8 @@ const DEFAULT_MAX_PREVIEW_WIDTH: u32 = 960;
 const DEFAULT_MAX_PREVIEW_HEIGHT: u32 = 540;
 const FFMPEG_TIME_EPSILON: f64 = 0.001;
 const MAX_CACHE_BUCKETS: usize = 120;
+const PLATE_BORDER_WIDTH: u32 = 1;
+const PLATE_BORDER_COLOR: Rgba<u8> = Rgba([0x27, 0x27, 0x2a, 255]);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewStats {
@@ -99,6 +101,13 @@ struct CacheEntry {
     source_height: u32,
     size_bytes: usize,
     last_used: u64,
+}
+
+struct PlateCache {
+    width: u32,
+    height: u32,
+    fill: Arc<RgbaImage>,
+    border: Arc<RgbaImage>,
 }
 
 struct FrameCache {
@@ -201,6 +210,7 @@ pub struct PreviewRenderer {
     max_height: u32,
     video_decoder: VideoDecodeWorker,
     frame_cache: Mutex<FrameCache>,
+    plate_cache: Mutex<Option<PlateCache>>,
 }
 
 impl PreviewRenderer {
@@ -215,6 +225,7 @@ impl PreviewRenderer {
                 DEFAULT_MAX_PREVIEW_HEIGHT,
             ),
             frame_cache: Mutex::new(FrameCache::new(max_cache_bytes)),
+            plate_cache: Mutex::new(None),
         }
     }
 
@@ -283,6 +294,7 @@ impl PreviewRenderer {
                 preview_scale,
             );
         }
+        draw_border(&mut canvas, PLATE_BORDER_COLOR, PLATE_BORDER_WIDTH);
         stats.composite_ms = elapsed_ms(composite_start);
 
         let encode_start = Instant::now();
@@ -356,6 +368,22 @@ impl PreviewRenderer {
         }
 
         let mut gpu_layers = Vec::new();
+        let mut plate_border = None;
+        if let Some((plate_fill, border)) = self.plate_images(canvas_w, canvas_h) {
+            let placement = PreviewLayerPlacement {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                scaled_w: canvas_w as f32,
+                scaled_h: canvas_h as f32,
+                opacity: 1.0,
+                rotation_deg: 0.0,
+            };
+            gpu_layers.push(PreviewLayerGpu {
+                image: plate_fill,
+                placement,
+            });
+            plate_border = Some((border, placement));
+        }
         let canvas_w_f = canvas_w as f32;
         let canvas_h_f = canvas_h as f32;
         for layer in layers {
@@ -373,6 +401,12 @@ impl PreviewRenderer {
                     placement,
                 });
             }
+        }
+        if let Some((border, placement)) = plate_border {
+            gpu_layers.push(PreviewLayerGpu {
+                image: border,
+                placement,
+            });
         }
 
         stats.total_ms = elapsed_ms(render_start);
@@ -817,6 +851,41 @@ impl PreviewRenderer {
     // Video decoding handled by the in-process decoder worker.
 }
 
+impl PreviewRenderer {
+    fn plate_images(&self, width: u32, height: u32) -> Option<(Arc<RgbaImage>, Arc<RgbaImage>)> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        if let Ok(mut cache) = self.plate_cache.lock() {
+            if let Some(entry) = cache.as_ref() {
+                if entry.width == width && entry.height == height {
+                    return Some((Arc::clone(&entry.fill), Arc::clone(&entry.border)));
+                }
+            }
+
+            let fill = Arc::new(RgbaImage::from_pixel(
+                width,
+                height,
+                Rgba([0, 0, 0, 255]),
+            ));
+            let mut border = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 0]));
+            draw_border(&mut border, PLATE_BORDER_COLOR, PLATE_BORDER_WIDTH);
+
+            let border = Arc::new(border);
+            *cache = Some(PlateCache {
+                width,
+                height,
+                fill: Arc::clone(&fill),
+                border: Arc::clone(&border),
+            });
+            return Some((fill, border));
+        }
+
+        None
+    }
+}
+
 struct PendingDecode {
     track_index: usize,
     start_time: f64,
@@ -1045,6 +1114,33 @@ fn scale_image_to_fit(image: RgbaImage, max_width: u32, max_height: u32) -> Rgba
     let target_h = (height as f32 * scale).round().max(1.0) as u32;
 
     resize(&image, target_w, target_h, FilterType::Triangle)
+}
+
+fn draw_border(image: &mut RgbaImage, color: Rgba<u8>, border_width: u32) {
+    let width = image.width();
+    let height = image.height();
+    if width == 0 || height == 0 || border_width == 0 {
+        return;
+    }
+    let border_width = border_width.min(width).min(height);
+
+    for y in 0..border_width {
+        let top = y;
+        let bottom = height - 1 - y;
+        for x in 0..width {
+            image.put_pixel(x, top, color);
+            image.put_pixel(x, bottom, color);
+        }
+    }
+
+    for x in 0..border_width {
+        let left = x;
+        let right = width - 1 - x;
+        for y in 0..height {
+            image.put_pixel(left, y, color);
+            image.put_pixel(right, y, color);
+        }
+    }
 }
 
 fn resolve_generative_path(
