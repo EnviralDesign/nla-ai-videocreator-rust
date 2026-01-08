@@ -1030,6 +1030,10 @@ pub fn App() -> Element {
                             project.write().add_clip(clip);
                             preview_dirty.set(true);
                         },
+                        // Selection
+                        on_deselect_all: move |_| {
+                            selection.write().clear();
+                        },
                     }
                 }
 
@@ -2127,9 +2131,20 @@ fn NumericField(
     on_commit: EventHandler<f32>,
 ) -> Element {
     let mut text = use_signal(|| format!("{:.2}", value));
+    let mut last_prop_value = use_signal(|| value);
+
+    // Sync local text state when prop value changes (e.g., different clip selected)
+    use_effect(move || {
+        let v = value;
+        if (v - last_prop_value()).abs() > 0.0001 {
+            text.set(format!("{:.2}", v));
+            last_prop_value.set(v);
+        }
+    });
 
     let make_commit = || {
         let mut text = text.clone();
+        let mut last_prop_value = last_prop_value.clone();
         let on_commit = on_commit.clone();
         move || {
             let mut parsed = parse_f32_input(&text(), value);
@@ -2141,6 +2156,7 @@ fn NumericField(
             }
             on_commit.call(parsed);
             text.set(format!("{:.2}", parsed));
+            last_prop_value.set(parsed);
         }
     };
 
@@ -2161,12 +2177,19 @@ fn NumericField(
 
     rsx! {
         div {
-            style: "display: flex; flex-direction: column; gap: 4px;",
+            style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
             input {
                 r#type: "number",
                 step: "{step}",
                 value: "{text_value}",
+                style: "
+                    width: 100%; min-width: 0; box-sizing: border-box;
+                    padding: 6px 8px; font-size: 12px;
+                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                    outline: none;
+                ",
                 oninput: move |e| text.set(e.value()),
                 onblur: on_blur,
                 onkeydown: on_keydown,
@@ -2174,6 +2197,7 @@ fn NumericField(
         }
     }
 }
+
 
 #[component]
 fn AttributesPanelContent(
@@ -2284,7 +2308,7 @@ fn AttributesPanelContent(
                     "Transform"
                 }
                 div {
-                    style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px;",
+                    style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px;",
                     NumericField {
                         key: "{clip_id}-position-x",
                         label: "Position X",

@@ -64,6 +64,8 @@ pub fn TimelinePanel(
     // Asset Drag & Drop
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>, // (track_id, time, asset_id)
+    // Selection
+    on_deselect_all: EventHandler<MouseEvent>,
 ) -> Element {
     let _ = thumbnail_refresh_tick;
     let icon = if collapsed { "▲" } else { "▼" };
@@ -425,6 +427,7 @@ pub fn TimelinePanel(
                                         on_clip_select: move |id| on_clip_select.call(id),
                                         dragged_asset: dragged_asset,
                                         on_asset_drop: move |(tid, t, aid)| on_asset_drop.call((tid, t, aid)),
+                                        on_deselect_all: move |e| on_deselect_all.call(e),
                                     }
                                 }
                                 
@@ -639,6 +642,7 @@ pub fn TrackRow(
     on_clip_select: EventHandler<uuid::Uuid>,
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>,
+    on_deselect_all: EventHandler<MouseEvent>,
 ) -> Element {
     // Filter clips for this track
     let track_clips: Vec<_> = clips.iter()
@@ -675,6 +679,14 @@ pub fn TrackRow(
                 transition: background-color 0.2s;
             ",
             oncontextmenu: move |e| e.prevent_default(),
+            onmousedown: move |e| {
+                // Click on empty track area deselects all clips
+                if let Some(btn) = e.trigger_button() {
+                    if format!("{:?}", btn) == "Primary" {
+                        on_deselect_all.call(e);
+                    }
+                }
+            },
             onmouseup: move |e| {
                 if let Some(asset_id) = dragged_asset {
                     if can_drop {
