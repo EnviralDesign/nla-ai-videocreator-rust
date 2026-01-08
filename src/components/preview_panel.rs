@@ -110,7 +110,7 @@ pub fn PreviewPanel(
                     }
                     if show_placeholder {
                         div {
-                            style: "display: flex; flex-direction: column; align-items: center; gap: 12px; color: {TEXT_DIM};",
+                            style: "position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: {TEXT_DIM}; z-index: 2;",
                             div {
                                 style: "width: 48px; height: 48px; border: 1px solid {BORDER_DEFAULT}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px;",
                                 "?"
