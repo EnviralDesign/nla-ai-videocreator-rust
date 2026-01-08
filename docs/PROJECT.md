@@ -138,7 +138,7 @@ Provider entries are the pluggable backends that execute generation tasks. Key p
 - **Single-purpose** — Each entry does ONE thing (image gen, I2V, etc.). If a service supports multiple capabilities, the user adds separate entries for each.
 - Configured via simple JSON/config
 - Can be a commercial API, local ComfyUI instance, or custom HTTP endpoint
-- ComfyUI entries reference an API workflow JSON via `workflow_path` (MVP default: `workflows/sdxl_simple_example_API.json`)
+- ComfyUI entries reference an API workflow JSON via `workflow_path` (relative to repo/app or absolute path; MVP default: `workflows/sdxl_simple_example_API.json`)
 - Details of the adapter interface will be discovered during implementation—we're keeping this intentionally vague until we experiment with real ComfyUI workflows.
 
 ---
@@ -403,6 +403,7 @@ workflows/
   - [x] Clip Creation:
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
+  - [x] Clip labels (per-instance display name) editable in Attributes panel
   - [ ] Clip thumbnail/waveform preview
     - [x] **Thumbnailer Service**: Background FFmpeg task to generate cache images
     - [x] **Timeline Rendering**: UI logic to display cached thumbnails on clips
@@ -452,7 +453,7 @@ workflows/
   - [x] For generative clips: provider picker
   - [x] For generative clips: generate button
   - [x] For generative clips: dynamic input fields (schema-driven)
-  - [ ] For generative clips: version selector (active version)
+  - [x] For generative clips: version selector (active version)
   - [x] For generative clips: status/progress line (queued/running/done)
 
 - [ ] **Smart Input Suggestions** (Timeline as Implicit Wiring)
@@ -510,7 +511,7 @@ workflows/
 - [ ] Multiple audio tracks with mute/solo
 - [ ] Multiple video tracks with visibility toggle
 - [ ] Audio generation providers
-- [ ] Rename/relabel clips and assets
+- [x] Rename/relabel clips and assets
 - [ ] Export Parts (individual clips with descriptive filenames)
 - [ ] Keyboard shortcuts
 
@@ -785,6 +786,10 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Attributes panel now remounts on clip selection to refresh fields when switching clips
+- **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
+- **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version
+- **2026-01-08:** Generative assets now default to sequential names (Gen Image 1, Gen Video 2) and asset list titles include active version
 - **2026-01-07:** Implemented centralized hotkey system (`src/hotkeys/`) with action-based architecture and context awareness
 - **2026-01-07:** Added global hotkeys for Timeline Zoom (+/- on Numpad and standard keys)
 - **2026-01-07:** Attributes panel now shows provider picker for generative clips and saves provider selection to config.json
@@ -797,6 +802,7 @@ src/
 - **2026-01-07:** Generative attributes now render dynamic input fields, generate button, and status line
 - **2026-01-07:** Generative output now writes versioned files, updates config + active version, and refreshes thumbnails
 - **2026-01-07:** Thumbnailer now supports generative image/video assets by resolving active versions
+- **2026-01-07:** Still image thumbnails now render via the image crate (covers regular + generative images)
 - **2026-01-07:** Project load now syncs generative asset config.json and active version state
 - **2026-01-07:** Generative asset creation now writes a default config.json in the asset folder
 - **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + global providers)
@@ -897,5 +903,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-07*
+*Last updated: 2026-01-08*
 

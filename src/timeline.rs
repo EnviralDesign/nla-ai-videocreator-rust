@@ -809,6 +809,17 @@ fn ClipElement(
     let asset_name = asset
         .map(|a| a.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
+    let base_name = clip
+        .label
+        .as_ref()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty())
+        .map(|label| label.to_string())
+        .unwrap_or_else(|| asset_name.clone());
+    let display_name = match asset.and_then(|asset| asset.active_version()) {
+        Some(version) => format!("{} ({})", base_name, version),
+        None => base_name,
+    };
     let is_generative = asset.map(|a| a.is_generative()).unwrap_or(false);
     let is_visual = asset.map(|a| a.is_visual()).unwrap_or(false);
     let trim_in_seconds = clip.trim_in_seconds.max(0.0);
@@ -1023,7 +1034,11 @@ fn ClipElement(
                 
                 // Foreground Content Container (Text + Indicator)
                 div {
-                    style: "display: flex; align-items: center; width: 100%; z-index: 1; position: relative;",
+                    style: "
+                        display: flex; align-items: center; width: 100%;
+                        min-width: 0; overflow: hidden;
+                        z-index: 1; position: relative;
+                    ",
                     // Color indicator bar
                     div {
                         style: "width: 3px; height: 20px; border-radius: 2px; background-color: {clip_color}; flex-shrink: 0; margin-right: 6px;",
@@ -1032,11 +1047,12 @@ fn ClipElement(
                     span {
                         style: "
                             font-size: 10px; color: {TEXT_PRIMARY}; 
-                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                            flex: 1; min-width: 0;
                             text-shadow: 0 1px 2px rgba(0,0,0,0.8);
                         ",
                         if is_generative { "✨ " } else { "" }
-                        "{asset_name}"
+                        "{display_name}"
                     }
                 }
             }

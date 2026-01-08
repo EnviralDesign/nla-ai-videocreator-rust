@@ -3,6 +3,8 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use crate::state::Asset;
+use image::imageops::FilterType;
+use image::{DynamicImage, ImageFormat, GenericImageView};
 
 const THUMBNAIL_INTERVAL_SECONDS: f64 = 1.0;
 const THUMBNAIL_HEIGHT: u32 = 120;
@@ -47,9 +49,13 @@ impl Thumbnailer {
             return None;
         }
 
-        let source_path = match &asset.kind {
-            crate::state::AssetKind::Video { path } => path,
-            crate::state::AssetKind::Image { path } => path,
+        let (absolute_source_path, source_kind) = match &asset.kind {
+            crate::state::AssetKind::Video { path } => {
+                (self.project_root.join(path), SourceKind::Video)
+            }
+            crate::state::AssetKind::Image { path } => {
+                (self.project_root.join(path), SourceKind::Still)
+            }
             crate::state::AssetKind::GenerativeImage {
                 folder,
                 active_version,
@@ -60,7 +66,7 @@ impl Thumbnailer {
                     active_version.as_deref(),
                     &["png", "jpg", "jpeg", "webp"],
                 )?;
-                return self.generate_from_source(asset, &path, force).await;
+                (path, SourceKind::Still)
             }
             crate::state::AssetKind::GenerativeVideo {
                 folder,
@@ -72,17 +78,12 @@ impl Thumbnailer {
                     active_version.as_deref(),
                     &["mp4", "mov", "mkv", "webm"],
                 )?;
-                return self.generate_from_source(asset, &path, force).await;
+                (path, SourceKind::Video)
             }
             _ => return None,
         };
-        
-        // Resolve absolute path
-        // If source_path is relative, it's relative to project_root
-        // If it's absolute, join returns it as is
-        let absolute_source_path = self.project_root.join(source_path);
-        
-        self.generate_from_source(asset, &absolute_source_path, force)
+
+        self.generate_from_source(asset, &absolute_source_path, force, source_kind)
             .await
     }
     
@@ -120,6 +121,7 @@ impl Thumbnailer {
         asset: &Asset,
         absolute_source_path: &PathBuf,
         force: bool,
+        source_kind: SourceKind,
     ) -> Option<PathBuf> {
         let asset_id = asset.id.to_string();
         let output_dir = self.cache_root.join(&asset_id);
@@ -146,38 +148,74 @@ impl Thumbnailer {
         let source = absolute_source_path.clone();
         let out = output_dir.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            let output_pattern = out.join("thumb_%04d.jpg");
-
             if !source.exists() {
                 println!("Thumbnailer Warning: Source file not found: {:?}", source);
                 return;
             }
 
-            let status = Command::new("ffmpeg")
-                .arg("-i")
-                .arg(&source)
-                .arg("-vf")
-                .arg(format!(
-                    "fps=1/{},scale=-1:{}",
-                    THUMBNAIL_INTERVAL_SECONDS, THUMBNAIL_HEIGHT
-                ))
-                .arg("-q:v")
-                .arg("5")
-                .arg(output_pattern)
-                .status();
+            match source_kind {
+                SourceKind::Video => {
+                    let output_pattern = out.join("thumb_%04d.jpg");
+                    let status = Command::new("ffmpeg")
+                        .arg("-i")
+                        .arg(&source)
+                        .arg("-vf")
+                        .arg(format!(
+                            "fps=1/{},scale=-1:{}",
+                            THUMBNAIL_INTERVAL_SECONDS, THUMBNAIL_HEIGHT
+                        ))
+                        .arg("-q:v")
+                        .arg("5")
+                        .arg(output_pattern)
+                        .status();
 
-            match status {
-                Ok(s) if s.success() => println!("Generated thumbnails for {}", asset_id),
-                _ => println!(
-                    "Failed to generate thumbnails for {}. Valid path? {:?} Status: {:?}",
-                    asset_id, source, status
-                ),
+                    match status {
+                        Ok(s) if s.success() => println!("Generated thumbnails for {}", asset_id),
+                        _ => println!(
+                            "Failed to generate thumbnails for {}. Valid path? {:?} Status: {:?}",
+                            asset_id, source, status
+                        ),
+                    }
+                }
+                SourceKind::Still => {
+                    if let Err(err) = generate_still_thumbnail(&source, &out) {
+                        println!(
+                            "Failed to generate image thumbnail for {}: {}",
+                            asset_id, err
+                        );
+                    }
+                }
             }
         })
         .await;
 
         Some(output_dir)
     }
+}
+
+#[derive(Clone, Copy)]
+enum SourceKind {
+    Video,
+    Still,
+}
+
+fn generate_still_thumbnail(source: &PathBuf, out_dir: &PathBuf) -> Result<(), String> {
+    let image = image::open(source).map_err(|err| err.to_string())?;
+    let resized = resize_to_height(image, THUMBNAIL_HEIGHT);
+    let output_path = out_dir.join("thumb_0001.jpg");
+    resized
+        .save_with_format(output_path, ImageFormat::Jpeg)
+        .map_err(|err| err.to_string())
+}
+
+fn resize_to_height(image: DynamicImage, height: u32) -> DynamicImage {
+    let (width, current_height) = image.dimensions();
+    if current_height <= height {
+        return image;
+    }
+    let scale = height as f32 / current_height as f32;
+    let target_w = ((width as f32) * scale).round().max(1.0) as u32;
+    image.resize_exact(target_w, height, FilterType::Triangle)
 }
 
 fn resolve_generative_source(

@@ -192,6 +192,16 @@ impl Asset {
         self.kind.is_audio()
     }
 
+    /// Return the active version label for generative assets, if any.
+    pub fn active_version(&self) -> Option<&str> {
+        match &self.kind {
+            AssetKind::GenerativeVideo { active_version, .. }
+            | AssetKind::GenerativeImage { active_version, .. }
+            | AssetKind::GenerativeAudio { active_version, .. } => active_version.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Update the cached duration in seconds for this asset
     pub fn set_duration_seconds(&mut self, duration_seconds: Option<f64>) {
         self.duration_seconds = duration_seconds;

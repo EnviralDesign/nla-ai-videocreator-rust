@@ -51,6 +51,8 @@ Standard assets are simple file references. They have no generation history or i
 
 Generative assets are **explicit, intentional creations**. They start "hollow" (no media) and become populated through generation.
 
+UI note: generative assets use human-friendly sequential names (e.g., "Gen Image 1") while their folders remain UUID-based.
+
 #### Generative Asset Structure
 
 Each generative asset has its own folder:
@@ -134,7 +136,7 @@ A **Provider Entry** is a configured backend that can execute generation tasks. 
 Each entry declares:
 - **Output Type**: What it produces (Video | Image | Audio)
 - **Input Schema**: What inputs it requires (dynamic per provider)
-- **Connection Info**: How to reach it (ComfyUI URL, API key, workflow path, etc.)
+- **Connection Info**: How to reach it (ComfyUI URL, API key, workflow path, etc.; relative or absolute supported)
 
 ### Output Type is Primary
 
@@ -443,4 +445,4 @@ struct GenerationRecord {
 
 ---
 
-*Last updated: 2026-01-04*
+*Last updated: 2026-01-08*

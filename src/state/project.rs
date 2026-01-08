@@ -149,6 +149,9 @@ pub struct Clip {
     /// Trim-in time in seconds (offset into source media)
     #[serde(default)]
     pub trim_in_seconds: f64,
+    /// Optional user-facing label for this clip instance.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Transform applied when compositing this clip.
     #[serde(default)]
     pub transform: ClipTransform,
@@ -165,6 +168,7 @@ impl Clip {
             start_time,
             duration,
             trim_in_seconds: 0.0,
+            label: None,
             transform: ClipTransform::default(),
         }
     }
@@ -453,6 +457,16 @@ impl Project {
         self.assets.len() < len
     }
 
+    /// Rename an asset by ID.
+    pub fn rename_asset(&mut self, id: Uuid, name: impl Into<String>) -> bool {
+        let name = name.into();
+        if let Some(asset) = self.assets.iter_mut().find(|asset| asset.id == id) {
+            asset.name = name;
+            return true;
+        }
+        false
+    }
+
     /// Add a clip to the project
     pub fn add_clip(&mut self, clip: Clip) -> Uuid {
         let id = clip.id;
@@ -481,6 +495,15 @@ impl Project {
         // Create the clip
         let clip = Clip::new(asset_id, track_id, start_time, duration);
         Some(self.add_clip(clip))
+    }
+
+    /// Update a clip label by ID (per-instance display name).
+    pub fn set_clip_label(&mut self, id: Uuid, label: Option<String>) -> bool {
+        if let Some(clip) = self.clips.iter_mut().find(|clip| clip.id == id) {
+            clip.label = label;
+            return true;
+        }
+        false
     }
 
     /// Add a marker to the project

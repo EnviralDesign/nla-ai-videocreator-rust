@@ -326,6 +326,11 @@ pub fn App() -> Element {
     let mut dragged_asset = use_signal(|| None::<uuid::Uuid>);
     let mut mouse_pos = use_signal(|| (0.0, 0.0));
     let mut selection = use_signal(|| crate::state::SelectionState::default());
+    let attributes_key = selection
+        .read()
+        .primary_clip()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "none".to_string());
     
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
@@ -1237,6 +1242,13 @@ pub fn App() -> Element {
                                 Err(e) => println!("Failed to import file {:?}: {}", path, e),
                             }
                         },
+                        on_rename: move |(asset_id, name): (uuid::Uuid, String)| {
+                            let trimmed = name.trim();
+                            if trimmed.is_empty() {
+                                return;
+                            }
+                            project.write().rename_asset(asset_id, trimmed.to_string());
+                        },
                         on_regenerate_thumbnails: move |asset_id: uuid::Uuid| {
                             if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                                 let thumbs = thumbnailer.read().clone();
@@ -1434,6 +1446,7 @@ pub fn App() -> Element {
                     
                     // Attributes panel placeholder content
                     AttributesPanelContent {
+                        key: "{attributes_key}",
                         project: project,
                         selection: selection,
                         preview_dirty: preview_dirty,
@@ -3120,9 +3133,9 @@ fn AttributesPanelContent(
     };
 
     let asset = project_read.find_asset(clip.asset_id).cloned();
-    let asset_name = asset
+    let asset_display = asset
         .as_ref()
-        .map(|asset| asset.name.clone())
+        .map(asset_display_name)
         .unwrap_or_else(|| "Unknown".to_string());
     let project_root = project_read.project_path.clone();
     let generative_info = asset.as_ref().and_then(|asset| match &asset.kind {
@@ -3167,6 +3180,20 @@ fn AttributesPanelContent(
     let providers_path_label = crate::core::provider_store::global_providers_root()
         .display()
         .to_string();
+    let mut version_options: Vec<String> = config_snapshot
+        .versions
+        .iter()
+        .map(|record| record.version.clone())
+        .collect();
+    if let Some(active_version) = config_snapshot.active_version.clone() {
+        if !version_options.contains(&active_version) {
+            version_options.push(active_version);
+        }
+    }
+    let selected_version_value = config_snapshot
+        .active_version
+        .clone()
+        .unwrap_or_default();
     let on_provider_change = {
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
@@ -3184,6 +3211,44 @@ fn AttributesPanelContent(
                 }
             }
             gen_config.set(Some(config));
+        }
+    };
+    let on_version_change = {
+        let mut gen_config = gen_config.clone();
+        let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
+        let mut preview_dirty = preview_dirty.clone();
+        let thumbnailer = thumbnailer.clone();
+        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        move |e: FormEvent| {
+            let value = e.value();
+            let trimmed = value.trim();
+            let next_version = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+            let mut config = gen_config().unwrap_or_default();
+            config.active_version = next_version.clone();
+            if let Some(folder_path) = gen_folder_path.as_ref() {
+                if let Err(err) = config.save(folder_path) {
+                    println!("Failed to save generative config: {}", err);
+                }
+            }
+            gen_config.set(Some(config));
+            project
+                .write()
+                .set_generative_active_version(asset_id, next_version);
+            preview_dirty.set(true);
+            if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                let thumbs = thumbnailer.clone();
+                let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+                spawn(async move {
+                    thumbs.generate(&asset, true).await;
+                    thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                });
+            }
         }
     };
 
@@ -3340,6 +3405,7 @@ fn AttributesPanelContent(
 
     let transform = clip.transform;
     let clip_id = clip.id;
+    let clip_label = clip.label.clone().unwrap_or_default();
     let generate_label = if gen_busy() { "Generating..." } else { "Generate" };
     let generate_opacity = if gen_busy() { "0.6" } else { "1.0" };
 
@@ -3347,9 +3413,26 @@ fn AttributesPanelContent(
         div {
             style: "padding: 12px; display: flex; flex-direction: column; gap: 12px;",
             div {
-                style: "display: flex; flex-direction: column; gap: 6px;",
+                style: "display: flex; flex-direction: column; gap: 8px;",
                 span { style: "font-size: 11px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Clip" }
-                span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "{asset_name}" }
+                div {
+                    style: "display: flex; flex-direction: column; gap: 4px;",
+                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Asset" }
+                    span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "{asset_display}" }
+                }
+                ProviderTextField {
+                    label: "Clip Name".to_string(),
+                    value: clip_label.clone(),
+                    on_commit: move |next: String| {
+                        let trimmed = next.trim();
+                        let label = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        };
+                        project.write().set_clip_label(clip_id, label);
+                    }
+                }
             }
 
             div {
@@ -3458,14 +3541,36 @@ fn AttributesPanelContent(
                         padding: 10px; background-color: {BG_SURFACE};
                         border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
                     ",
-                    div {
-                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
-                        "Generative"
+                div {
+                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                    "Generative"
+                }
+                div {
+                    style: "display: flex; flex-direction: column; gap: 6px;",
+                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
+                    select {
+                        value: "{selected_version_value}",
+                        disabled: version_options.is_empty(),
+                        style: "
+                            width: 100%; padding: 6px 8px; font-size: 12px;
+                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                            border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                            outline: none;
+                        ",
+                        onchange: on_version_change,
+                        if version_options.is_empty() {
+                            option { value: "", "No versions yet" }
+                        } else {
+                            for version in version_options.iter() {
+                                option { value: "{version}", "{version}" }
+                            }
+                        }
                     }
-                    div {
-                        style: "display: flex; flex-direction: column; gap: 6px;",
-                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
-                        select {
+                }
+                div {
+                    style: "display: flex; flex-direction: column; gap: 6px;",
+                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
+                    select {
                             value: "{selected_provider_value}",
                             style: "
                                 width: 100%; padding: 6px 8px; font-size: 12px;
@@ -4077,6 +4182,35 @@ fn parse_i64_input(value: &str, fallback: i64) -> i64 {
     trimmed.parse::<i64>().unwrap_or(fallback)
 }
 
+fn asset_display_name(asset: &crate::state::Asset) -> String {
+    if asset.is_generative() {
+        if let Some(version) = asset.active_version() {
+            return format!("{} ({})", asset.name, version);
+        }
+    }
+    asset.name.clone()
+}
+
+fn next_generative_index(
+    assets: &[crate::state::Asset],
+    prefix: &str,
+    kind_filter: fn(&crate::state::AssetKind) -> bool,
+) -> u32 {
+    let mut max_index = 0u32;
+    for asset in assets.iter() {
+        if !kind_filter(&asset.kind) {
+            continue;
+        }
+        if let Some(suffix) = asset.name.strip_prefix(prefix) {
+            let trimmed = suffix.trim();
+            if let Ok(index) = trimmed.parse::<u32>() {
+                max_index = max_index.max(index);
+            }
+        }
+    }
+    max_index + 1
+}
+
 fn update_clip_transform(
     mut project: Signal<crate::state::Project>,
     clip_id: uuid::Uuid,
@@ -4096,12 +4230,28 @@ fn AssetsPanelContent(
     thumbnail_refresh_tick: u64,
     on_import: EventHandler<crate::state::Asset>,
     on_import_file: EventHandler<std::path::PathBuf>,
+    on_rename: EventHandler<(uuid::Uuid, String)>,
     on_delete: EventHandler<uuid::Uuid>,
     on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
     on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
     let _ = thumbnail_refresh_tick;
+    let next_video_index = next_generative_index(
+        &assets,
+        "Gen Video",
+        |kind| matches!(kind, crate::state::AssetKind::GenerativeVideo { .. }),
+    );
+    let next_image_index = next_generative_index(
+        &assets,
+        "Gen Image",
+        |kind| matches!(kind, crate::state::AssetKind::GenerativeImage { .. }),
+    );
+    let next_audio_index = next_generative_index(
+        &assets,
+        "Gen Audio",
+        |kind| matches!(kind, crate::state::AssetKind::GenerativeAudio { .. }),
+    );
     rsx! {
         div {
             style: "display: flex; flex-direction: column; height: 100%; padding: 8px;",
@@ -4157,11 +4307,10 @@ fn AssetsPanelContent(
                         onclick: {
                             let on_import = on_import.clone();
                             move |_| {
-                                // Generate unique ID for this generative asset
                                 let id = uuid::Uuid::new_v4();
                                 let folder = std::path::PathBuf::from(format!("generated/video/{}", id));
                                 let asset = crate::state::Asset::new_generative_video(
-                                    format!("Gen Video {}", &id.to_string()[..8]),
+                                    format!("Gen Video {}", next_video_index),
                                     folder
                                 );
                                 on_import.call(asset);
@@ -4184,7 +4333,7 @@ fn AssetsPanelContent(
                                 let id = uuid::Uuid::new_v4();
                                 let folder = std::path::PathBuf::from(format!("generated/image/{}", id));
                                 let asset = crate::state::Asset::new_generative_image(
-                                    format!("Gen Image {}", &id.to_string()[..8]),
+                                    format!("Gen Image {}", next_image_index),
                                     folder
                                 );
                                 on_import.call(asset);
@@ -4207,7 +4356,7 @@ fn AssetsPanelContent(
                                 let id = uuid::Uuid::new_v4();
                                 let folder = std::path::PathBuf::from(format!("generated/audio/{}", id));
                                 let asset = crate::state::Asset::new_generative_audio(
-                                    format!("Gen Audio {}", &id.to_string()[..8]),
+                                    format!("Gen Audio {}", next_audio_index),
                                     folder
                                 );
                                 on_import.call(asset);
@@ -4238,6 +4387,7 @@ fn AssetsPanelContent(
                             asset: asset.clone(),
                             thumbnailer: thumbnailer.clone(),
                             thumbnail_cache_buster: thumbnail_cache_buster,
+                            on_rename: move |payload| on_rename.call(payload),
                             on_delete: move |id| on_delete.call(id),
                             on_regenerate_thumbnails: move |id| on_regenerate_thumbnails.call(id),
                             on_add_to_timeline: move |id| on_add_to_timeline.call(id),
@@ -4256,6 +4406,7 @@ fn AssetItem(
     asset: crate::state::Asset,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
+    on_rename: EventHandler<(uuid::Uuid, String)>,
     on_delete: EventHandler<uuid::Uuid>,
     on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
     on_add_to_timeline: EventHandler<uuid::Uuid>,
@@ -4263,6 +4414,18 @@ fn AssetItem(
 ) -> Element {
     let mut show_menu = use_signal(|| false);
     let mut menu_pos = use_signal(|| (0.0, 0.0));
+    let is_editing = use_signal(|| false);
+    let asset_name = asset.name.clone();
+    let asset_name_for_effect = asset_name.clone();
+    let mut draft_name = use_signal(|| asset_name.clone());
+    let mut draft_name_for_effect = draft_name.clone();
+    let is_editing_for_effect = is_editing.clone();
+
+    use_effect(move || {
+        if !is_editing_for_effect() {
+            draft_name_for_effect.set(asset_name_for_effect.clone());
+        }
+    });
 
     // Icon based on asset type
     let icon = match &asset.kind {
@@ -4298,7 +4461,7 @@ fn AssetItem(
     };
 
     let asset_id = asset.id;
-    let asset_name = asset.name.clone();
+    let display_name = asset_display_name(&asset);
     
     rsx! {
         div {
@@ -4355,9 +4518,76 @@ fn AssetItem(
                     }
                 }
                 // Name
-                span { 
-                    style: "flex: 1; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                    "{asset_name}" 
+                if is_editing() {
+                    input {
+                        r#type: "text",
+                        value: "{draft_name()}",
+                        autofocus: "true",
+                        style: "
+                            flex: 1; min-width: 0;
+                            font-size: 12px; color: {TEXT_PRIMARY};
+                            background-color: {BG_BASE};
+                            border: 1px solid {BORDER_DEFAULT};
+                            border-radius: 4px;
+                            padding: 4px 6px;
+                        ",
+                        oninput: move |e| draft_name.set(e.value()),
+                        onblur: {
+                            let asset_name = asset_name.clone();
+                            let on_rename = on_rename.clone();
+                            let asset_id = asset_id;
+                            let mut is_editing = is_editing.clone();
+                            let mut draft_name = draft_name.clone();
+                            move |_| {
+                                let next = draft_name().trim().to_string();
+                                is_editing.set(false);
+                                if !next.is_empty() && next != asset_name {
+                                    on_rename.call((asset_id, next));
+                                } else {
+                                    draft_name.set(asset_name.clone());
+                                }
+                            }
+                        },
+                        onkeydown: {
+                            let asset_name = asset_name.clone();
+                            let on_rename = on_rename.clone();
+                            let asset_id = asset_id;
+                            let mut is_editing = is_editing.clone();
+                            let mut draft_name = draft_name.clone();
+                            move |e: KeyboardEvent| {
+                                if e.key() == Key::Enter {
+                                    let next = draft_name().trim().to_string();
+                                    is_editing.set(false);
+                                    if !next.is_empty() && next != asset_name {
+                                        on_rename.call((asset_id, next));
+                                    } else {
+                                        draft_name.set(asset_name.clone());
+                                    }
+                                } else if e.key() == Key::Escape {
+                                    is_editing.set(false);
+                                    draft_name.set(asset_name.clone());
+                                }
+                            }
+                        },
+                        onmousedown: move |e| e.stop_propagation(),
+                        oncontextmenu: move |e| e.stop_propagation(),
+                    }
+                } else {
+                    span { 
+                        style: "flex: 1; min-width: 0; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                        onmousedown: move |e| e.stop_propagation(),
+                        ondoubleclick: {
+                            let asset_name = asset_name.clone();
+                            let mut draft_name = draft_name.clone();
+                            let mut is_editing = is_editing.clone();
+                            move |e| {
+                                e.stop_propagation();
+                                is_editing.set(true);
+                                draft_name.set(asset_name.clone());
+                            }
+                        },
+                        "{display_name}"
+                    }
                 }
             }
             

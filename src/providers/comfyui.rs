@@ -96,13 +96,25 @@ const WORKFLOW_INPUTS: &[WorkflowInputBinding] = &[
 ];
 
 pub fn resolve_workflow_path(path: Option<&str>) -> PathBuf {
-    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let resolved = path
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_WORKFLOW_PATH));
     if resolved.is_absolute() {
         resolved
     } else {
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let candidate = base.join(&resolved);
+        if candidate.exists() {
+            return candidate;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let exe_candidate = parent.join(&resolved);
+                if exe_candidate.exists() {
+                    return exe_candidate;
+                }
+            }
+        }
         base.join(resolved)
     }
 }
