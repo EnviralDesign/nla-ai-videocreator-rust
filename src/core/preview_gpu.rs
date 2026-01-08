@@ -940,6 +940,14 @@ impl PreviewGpuSurface {
             });
 
             if !self.layers.is_empty() {
+                // Set scissor rect to clip layers to canvas bounds
+                // This prevents scaled-up layers from rendering outside the project canvas
+                let scissor_x = offset_x.round() as u32;
+                let scissor_y = offset_y.round() as u32;
+                let scissor_w = preview_w.round().max(1.0) as u32;
+                let scissor_h = preview_h.round().max(1.0) as u32;
+                pass.set_scissor_rect(scissor_x, scissor_y, scissor_w, scissor_h);
+
                 pass.set_pipeline(&self.pipeline);
                 pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
@@ -959,6 +967,9 @@ impl PreviewGpuSurface {
                     pass.set_bind_group(1, &layer.uniform_bind_group, &[]);
                     pass.draw(0..QUAD_VERTICES.len() as u32, 0..1);
                 }
+
+                // Reset scissor to full surface for border drawing
+                pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
             }
 
             // Draw screen-space border (1 pixel wide) around the canvas

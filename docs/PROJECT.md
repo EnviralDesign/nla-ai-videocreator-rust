@@ -409,8 +409,12 @@ my-project/
   - [x] "+ New Generative Video/Image/Audio" buttons in Assets panel
   - [x] Generative asset folder structure (generated/{type}/{id}/)
   - [x] Placeholder display for un-generated assets (dashed border, ⚙️ icon)
+  - [ ] Generative config file (config.json)
+    - [ ] Create config.json on generative asset creation
+    - [ ] Persist provider id + input bindings + version history
   - [ ] Version management (v1, v2, ... in asset folder)
-  - [ ] Active version selection (stored in config.json or active.txt)
+  - [ ] Active version selection (stored in config.json)
+  - [ ] Active version load/save on project open
   - [ ] Thumbnail updates after generation completes
 
 - [ ] **Markers**
@@ -432,8 +436,10 @@ my-project/
   - [ ] Track selection state
   - [ ] Asset selection state
   - [ ] Multi-select support for same-type items
-  - [ ] For generative clips: show provider picker, dynamic input fields, generate button
-  - [ ] For generative clips: version selector (if multiple versions exist)
+  - [ ] For generative clips: provider picker + generate button
+  - [ ] For generative clips: dynamic input fields (schema-driven)
+  - [ ] For generative clips: version selector (active version)
+  - [ ] For generative clips: status/progress line (queued/running/done)
 
 - [ ] **Smart Input Suggestions** (Timeline as Implicit Wiring)
   - [ ] When configuring generative clip inputs, auto-surface overlapping assets
@@ -443,16 +449,21 @@ my-project/
 
 - [ ] **Provider System**
   - [ ] Provider entry data model (output type, input schema, connection info)
+  - [ ] Provider config storage under `.providers/`
   - [ ] Provider configuration UI (add/edit/remove)
   - [ ] Dynamic input schema rendering (text, image picker, number, etc.)
   - [ ] Health check / connection test
   - [ ] ComfyUI adapter (first provider)
+    - [ ] Minimal T2I workflow (prompt + seed)
+    - [ ] Image output download/save into generated/{type}/{id}/
 
 - [ ] **Generation Pipeline**
   - [ ] Queue generation jobs (async, non-blocking)
+  - [ ] Job state tracking (queued/running/succeeded/failed)
   - [ ] Progress/status feedback in UI
-  - [ ] Save generated files to asset folder (v1.mp4, etc.)
-  - [ ] Update asset's active version on completion
+  - [ ] Save generated files to asset folder (v1.png / v1.mp4 / v1.wav)
+  - [ ] Update config.json + asset active version on completion
+  - [ ] Trigger thumbnail refresh after generation
   - [ ] Cascading: regenerating dependent uses active version of inputs
 
 - [ ] **FFmpeg Integration**
@@ -759,6 +770,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Expanded the Generative/Provider/Generation TODOs into an atomic ComfyUI MVP plan
+- **2026-01-07:** Defaulted timeline zoom to Fit on project open/create once the viewport width is known
 - **2026-01-07:** Added timeline zoom bounds based on visible width, plus Fit/Frames buttons and adaptive minimum clip width
 - **2026-01-07:** Distinguished preview plate vs background by clearing the GPU surface to the UI background, adding a black plate fill, and drawing a 1px plate border
 - **2026-01-07:** Fixed native-size preview scaling by tracking source dimensions alongside cached frames

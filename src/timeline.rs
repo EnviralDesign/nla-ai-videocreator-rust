@@ -579,19 +579,32 @@ fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
                                         pointer-events: none;
                                     ",
                                 }
-                                // Label
-                                div {
-                                    style: "
-                                        position: absolute;
-                                        left: {x + 4.0}px;
-                                        top: 3px;
-                                        font-size: 9px;
-                                        color: {TEXT_DIM};
-                                        font-family: 'SF Mono', Consolas, monospace;
-                                        user-select: none;
-                                        pointer-events: none;
-                                    ",
-                                    "{label}"
+                                // Label - right-align last tick to prevent overflow
+                                {
+                                    // Check if this is the last visible tick
+                                    let is_last_tick = i == num_ticks - 1;
+                                    let next_tick_x = (i as f64 + 1.0) * seconds_per_major_tick * zoom;
+                                    let is_near_end = next_tick_x > content_width;
+                                    let should_right_align = is_last_tick || is_near_end;
+                                    
+                                    // For last label, use transform to shift text left of anchor point
+                                    let label_style = if should_right_align {
+                                        format!(
+                                            "position: absolute; left: {}px; top: 3px; font-size: 9px; color: {}; font-family: 'SF Mono', Consolas, monospace; user-select: none; pointer-events: none; transform: translateX(-100%);",
+                                            x - 4.0, TEXT_DIM
+                                        )
+                                    } else {
+                                        format!(
+                                            "position: absolute; left: {}px; top: 3px; font-size: 9px; color: {}; font-family: 'SF Mono', Consolas, monospace; user-select: none; pointer-events: none;",
+                                            x + 4.0, TEXT_DIM
+                                        )
+                                    };
+                                    rsx! {
+                                        div {
+                                            style: "{label_style}",
+                                            "{label}"
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -238,6 +238,8 @@ pub fn App() -> Element {
     let mut use_hw_decode = use_signal(|| true);
     let timeline_viewport_width = use_signal(|| None::<f64>);
     let mut timeline_viewport_eval = use_signal(|| None::<document::Eval>);
+    let mut timeline_zoom_initialized = use_signal(|| false);
+    let mut last_project_path = use_signal(|| None::<std::path::PathBuf>);
     let mut clip_cache_buckets =
         use_signal(|| std::sync::Arc::new(HashMap::<uuid::Uuid, Vec<bool>>::new()));
     let preview_cache_tick = use_signal(|| 0_u64);
@@ -279,6 +281,33 @@ pub fn App() -> Element {
         if (clamped - current_zoom).abs() > 0.01 {
             zoom.set(clamped);
         }
+    });
+
+    use_effect(move || {
+        let current_path = project.read().project_path.clone();
+        if current_path != last_project_path() {
+            last_project_path.set(current_path);
+            timeline_zoom_initialized.set(false);
+        }
+    });
+
+    use_effect(move || {
+        if timeline_zoom_initialized() {
+            return;
+        }
+        let Some(_width) = timeline_viewport_width() else {
+            return;
+        };
+        if project.read().project_path.is_none() {
+            return;
+        }
+        let (min_zoom, _max_zoom) = timeline_zoom_bounds(
+            project.read().duration(),
+            timeline_viewport_width(),
+            project.read().settings.fps,
+        );
+        zoom.set(min_zoom);
+        timeline_zoom_initialized.set(true);
     });
     
     // Drag state
