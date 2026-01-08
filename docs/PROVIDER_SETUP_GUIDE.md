@@ -1,16 +1,34 @@
-# Provider Setup Guide (MVP)
+# Provider Setup Guide (MVP + Planned)
 
-This guide is written for first-time users who want to plug in their own
-providers (ComfyUI workflows today, API providers later) and start generating
-content inside NLA AI Video Creator.
+This guide covers the current MVP setup and the planned Provider Builder flow.
+ComfyUI is the primary open-source path today; other adapter styles are planned.
 
-## Quick Start (ComfyUI)
+## Provider Types (Roadmap)
 
-1. Start ComfyUI locally and confirm it responds at `http://127.0.0.1:8188`.
+- **ComfyUI (current MVP)**: Local workflows (API JSON).
+- **Custom HTTP (planned)**: Generic REST APIs with input mapping.
+- **Hosted Adapters (planned)**: fal.ai, Replicate, Veo, etc.
+
+## Quick Start (Current MVP - ComfyUI JSON)
+
+1. Start ComfyUI and confirm it responds at `http://127.0.0.1:8188`.
 2. Export an API workflow JSON from ComfyUI.
-3. Place the JSON somewhere stable (recommended: `workflows/` in this repo).
-4. In the app, open `Settings > AI Providers...` and create a new provider.
-5. Select that provider on a generative image clip and click Generate.
+3. Put the JSON somewhere stable (recommended: `workflows/` in this repo).
+4. In the app, open `Settings > AI Providers...` and click `New`.
+5. Edit the JSON to point at your `base_url` and `workflow_path`, then `Save`.
+6. Select that provider on a generative image clip and click **Generate**.
+
+## Quick Start (Planned Builder - ComfyUI)
+
+This is the intended flow once the Provider Builder UI lands:
+
+1. `Settings > AI Providers...` -> **Build from Workflow**.
+2. Pick a ComfyUI API workflow JSON file.
+3. Use search + dropdowns to select node inputs to expose.
+4. Choose a single output node (image/video/audio).
+5. Save: the builder writes a manifest and creates the provider entry.
+
+No node ID editing required. The builder uses selectors/tags under the hood.
 
 ## Where Provider Files Live
 
@@ -22,15 +40,23 @@ Provider entries are stored globally (not per project) as JSON files:
 
 Each provider file is named after its UUID: `<provider-id>.json`.
 
+Planned: workflow manifests will live alongside the workflow JSON:
+
+```
+workflows/
+├── my_workflow_API.json
+└── my_workflow_manifest.json
+```
+
 ## Creating a Provider Entry
 
 Open the Providers dialog:
 
 - `Settings > AI Providers...`
-- Click `New` to create a draft provider JSON.
-- Edit and save the JSON in the right-side editor.
+- Click `New` to create a draft provider JSON (MVP).
+- Planned: click **Build from Workflow** to use the builder UI.
 
-### Provider JSON Example (ComfyUI Image Gen)
+### Provider JSON Example (ComfyUI Image Gen - MVP)
 
 ```json
 {
@@ -63,7 +89,7 @@ Open the Providers dialog:
 - `id`: Stable UUID for this provider. Keep it the same once assets depend on it.
 - `output_type`: `image`, `video`, or `audio`. ComfyUI image workflows use `image`.
 - `inputs`: Drives the Attributes panel UI. Required fields must be filled before Generate.
-- `connection.type`: Use `comfy_ui` for the current MVP. `custom_http` exists but is not wired yet.
+- `connection.type`: Use `comfy_ui` for the current MVP. Other adapters are planned.
 - `workflow_path`: Optional. If omitted, the app uses the default
   `workflows/sdxl_simple_example_API.json`.
 
@@ -80,7 +106,7 @@ Recommended flow:
 
 This preserves node IDs that the current adapter expects.
 
-### Input Mapping (Important)
+### Input Mapping (Important - MVP)
 
 The current ComfyUI adapter is hardwired to specific node IDs and input keys.
 Your workflow must contain these nodes (or the adapter will error).
@@ -108,6 +134,11 @@ template or be prepared to change the adapter code.
 - If node `53` is missing, it falls back to the first image output it can find.
 - Only the first image output is used.
 
+### Planned Binding (Post-MVP)
+
+The builder will let you bind inputs by **selector** (class type + input key + optional tag),
+so node IDs are no longer required. See `docs/PROVIDER_MANIFEST_SCHEMA.md`.
+
 ## Using Your Provider in the App
 
 1. Create a **Generative Image** asset.
@@ -119,10 +150,11 @@ template or be prepared to change the adapter code.
 ## Pitfalls and Current Constraints
 
 - **Asset inputs are not wired yet.** Image/video/audio inputs show a placeholder.
-- **ComfyUI only.** `custom_http` providers will return "not supported yet."
+- **ComfyUI only (for now).** Other adapter types are planned.
 - **Relative workflow paths** are resolved from the app working directory first,
   then from the executable directory. Use absolute paths if in doubt.
 - **Provider ID changes** will break existing generative assets that reference it.
+- **MVP uses node IDs.** This will be replaced by selector/tag bindings via the builder.
 
 ## Troubleshooting
 

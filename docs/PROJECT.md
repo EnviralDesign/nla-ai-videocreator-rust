@@ -317,7 +317,8 @@ Global providers (MVP, Windows):
 Workflow templates (repo):
 ```
 workflows/
-└── sdxl_simple_example_API.json
+├── sdxl_simple_example_API.json
+└── sdxl_simple_example_manifest.json
 ```
 
 ### `project.json` Schema (Simplified)
@@ -630,8 +631,10 @@ nla-ai-videocreator-rust/
 ├── assets/                  # Static assets (icons, fonts)
 ├── workflows/               # Example ComfyUI workflows
 └── docs/                    # Additional documentation
-    ├── CONTENT_ARCHITECTURE.md  # Content & generation architecture
-    └── PROVIDER_SETUP_GUIDE.md  # End-user provider setup guide
+    ├── CONTENT_ARCHITECTURE.md    # Content & generation architecture
+    ├── PROVIDER_SETUP_GUIDE.md    # End-user provider setup guide
+    ├── PROVIDER_MANIFEST_SCHEMA.md # Provider manifest schema (draft)
+    └── PROVIDER_BUILDER_SPEC.md   # Provider builder UX spec (draft)
 ```
 
 ### State Architecture
@@ -683,6 +686,7 @@ This allows:
 | Providers Grouped by Output Type | Video/Image/Audio; input requirements vary per provider via dynamic schema | ✅ Decided |
 | Provider Bindings via Selectors | Bind workflow inputs by selector/tag instead of node IDs | ✅ Decided |
 | Provider Builder UI | Workflow picker + node browser for exposed inputs | ✅ Decided |
+| Adapter-Agnostic Manifests | Use a versioned manifest per adapter type for provider bindings | ✅ Decided |
 | No Separate Keyframe Track | Images are clips on Video tracks; "keyframes" are just overlapping reference images | ✅ Decided |
 | In-Project Assets Only (MVP) | All assets must be in project folder; external refs are future enhancement | ✅ Decided |
 | Canvas Compositor Strategy | Skip DOM overlay; build robust pixel-buffer compositing for transforms/blending immediately | ✅ Decided |
@@ -798,6 +802,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Added provider manifest schema + provider builder spec docs; refreshed setup guide for multi-adapter roadmap.
+- **2026-01-08:** Added example ComfyUI manifest `workflows/sdxl_simple_example_manifest.json`.
 - **2026-01-08:** Expanded provider architecture doc with ComfyUI workflow picker + node binding UI details.
 - **2026-01-08:** Revised provider architecture doc to use selector/tag bindings and a provider builder UI (no node ID reliance).
 - **2026-01-08:** Added end-user provider setup guide `docs/PROVIDER_SETUP_GUIDE.md` covering ComfyUI workflow setup and provider JSON.

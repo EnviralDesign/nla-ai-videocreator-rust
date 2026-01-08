@@ -144,6 +144,11 @@ A **Provider Entry** is the user-facing configuration stored in the app. It hold
 
 Provider entries stay global and are referenced by `provider_id` in each generative asset's `config.json`.
 
+Adapter types are explicit and kept flexible:
+- `comfyui` (local/OSS workflows)
+- `custom_http` (generic API bindings)
+- Future: `fal`, `replicate`, `veo`, etc.
+
 ### Workflow Package (ComfyUI)
 
 For ComfyUI, a provider points at two files:
@@ -155,6 +160,8 @@ workflows/
 ```
 
 The manifest is the bridge between "anything in ComfyUI" and "a clean UI in NLA."
+
+See `docs/PROVIDER_MANIFEST_SCHEMA.md` for the draft schema and examples.
 
 ### Provider Manifest (Proposed)
 
@@ -272,6 +279,8 @@ Core UX elements:
 Provider editor integration:
 - The existing Providers modal gains a **Build from Workflow** button.
 - Clicking it opens the builder and pre-fills provider name/output type.
+
+See `docs/PROVIDER_BUILDER_SPEC.md` for the draft UX spec.
 
 Suggested flow:
 
@@ -437,11 +446,11 @@ Global providers (MVP, Windows):
 Workflow templates (repo):
 ```
 workflows/
-└── sdxl_simple_example_API.json
+├── sdxl_simple_example_API.json
+└── sdxl_simple_example_manifest.json
 ```
-
-Manifests will live alongside workflows once the Provider Builder is in place
-(for example: `sdxl_simple_example_manifest.json`).
+The manifest file is an example of the planned format. The builder will
+generate these alongside user workflows.
 
 ### In-Project Only (Strict MVP)
 
