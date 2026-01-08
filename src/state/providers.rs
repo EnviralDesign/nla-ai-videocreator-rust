@@ -45,7 +45,11 @@ pub struct ProviderInputField {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProviderConnection {
-    ComfyUi { base_url: String },
+    ComfyUi {
+        base_url: String,
+        #[serde(default)]
+        workflow_path: Option<String>,
+    },
     CustomHttp { base_url: String, api_key: Option<String> },
 }
 

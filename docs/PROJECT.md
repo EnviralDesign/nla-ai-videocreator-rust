@@ -138,6 +138,7 @@ Provider entries are the pluggable backends that execute generation tasks. Key p
 - **Single-purpose** — Each entry does ONE thing (image gen, I2V, etc.). If a service supports multiple capabilities, the user adds separate entries for each.
 - Configured via simple JSON/config
 - Can be a commercial API, local ComfyUI instance, or custom HTTP endpoint
+- ComfyUI entries reference an API workflow JSON via `workflow_path` (MVP default: `workflows/sdxl_simple_example_API.json`)
 - Details of the adapter interface will be discovered during implementation—we're keeping this intentionally vague until we experiment with real ComfyUI workflows.
 
 ---
@@ -313,6 +314,12 @@ Global providers (MVP, Windows):
 └── ...
 ```
 
+Workflow templates (repo):
+```
+workflows/
+└── sdxl_simple_example_API.json
+```
+
 ### `project.json` Schema (Simplified)
 
 ```json
@@ -417,11 +424,11 @@ Global providers (MVP, Windows):
   - [x] Generative config file (config.json)
     - [x] Create config.json on generative asset creation
     - [x] Persist provider id selection
-    - [ ] Persist input bindings + version history
-  - [ ] Version management (v1, v2, ... in asset folder)
-  - [ ] Active version selection (stored in config.json)
-  - [ ] Active version load/save on project open
-  - [ ] Thumbnail updates after generation completes
+    - [x] Persist input bindings + version history
+  - [x] Version management (v1, v2, ... in asset folder)
+  - [x] Active version selection (stored in config.json)
+  - [x] Active version load/save on project open
+  - [x] Thumbnail updates after generation completes
 
 - [ ] **Markers**
   - [ ] Click to add marker at playhead position
@@ -443,10 +450,10 @@ Global providers (MVP, Windows):
   - [ ] Asset selection state
   - [ ] Multi-select support for same-type items
   - [x] For generative clips: provider picker
-  - [ ] For generative clips: generate button
-  - [ ] For generative clips: dynamic input fields (schema-driven)
+  - [x] For generative clips: generate button
+  - [x] For generative clips: dynamic input fields (schema-driven)
   - [ ] For generative clips: version selector (active version)
-  - [ ] For generative clips: status/progress line (queued/running/done)
+  - [x] For generative clips: status/progress line (queued/running/done)
 
 - [ ] **Smart Input Suggestions** (Timeline as Implicit Wiring)
   - [ ] When configuring generative clip inputs, auto-surface overlapping assets
@@ -458,19 +465,19 @@ Global providers (MVP, Windows):
   - [x] Provider entry data model (output type, input schema, connection info)
   - [x] Global provider config storage under `%LOCALAPPDATA%\NLA-AI-VideoCreator\providers\`
   - [x] Provider configuration UI (JSON editor modal)
-  - [ ] Dynamic input schema rendering (text, image picker, number, etc.)
+  - [x] Dynamic input schema rendering (text, number, boolean, enum)
   - [ ] Health check / connection test
-  - [ ] ComfyUI adapter (first provider)
-    - [ ] Minimal T2I workflow (prompt + seed)
-    - [ ] Image output download/save into generated/{type}/{id}/
+  - [x] ComfyUI adapter (first provider)
+    - [x] Minimal T2I workflow (prompt + seed)
+    - [x] Image output download/save into generated/{type}/{id}/
 
 - [ ] **Generation Pipeline**
   - [ ] Queue generation jobs (async, non-blocking)
   - [ ] Job state tracking (queued/running/succeeded/failed)
-  - [ ] Progress/status feedback in UI
-  - [ ] Save generated files to asset folder (v1.png / v1.mp4 / v1.wav)
-  - [ ] Update config.json + asset active version on completion
-  - [ ] Trigger thumbnail refresh after generation
+  - [x] Progress/status feedback in UI
+  - [x] Save generated files to asset folder (v1.png / v1.mp4 / v1.wav)
+  - [x] Update config.json + asset active version on completion
+  - [x] Trigger thumbnail refresh after generation
   - [ ] Cascading: regenerating dependent uses active version of inputs
 
 - [ ] **FFmpeg Integration**
@@ -785,6 +792,11 @@ src/
 - **2026-01-07:** Added a global Providers JSON editor modal (top bar) for quick provider edits
 - **2026-01-07:** Providers modal now renders at the app root and messaging reflects global-only config
 - **2026-01-07:** Native preview overlay now hides while modal dialogs are open (prevents WGPU surface covering UI)
+- **2026-01-07:** Added ComfyUI workflow template `workflows/sdxl_simple_example_API.json` and optional `workflow_path` on ComfyUI providers
+- **2026-01-07:** ComfyUI adapter now submits API workflows, polls history, and downloads image outputs
+- **2026-01-07:** Generative attributes now render dynamic input fields, generate button, and status line
+- **2026-01-07:** Generative output now writes versioned files, updates config + active version, and refreshes thumbnails
+- **2026-01-07:** Thumbnailer now supports generative image/video assets by resolving active versions
 - **2026-01-07:** Project load now syncs generative asset config.json and active version state
 - **2026-01-07:** Generative asset creation now writes a default config.json in the asset folder
 - **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + global providers)

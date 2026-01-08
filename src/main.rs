@@ -7,6 +7,7 @@ mod hotkeys;
 mod state;
 mod timeline;
 mod core;
+mod providers;
 
 use dioxus::desktop::{Config, WindowBuilder, LogicalSize};
 use crate::core::preview_store;

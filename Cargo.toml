@@ -24,6 +24,7 @@ ffmpeg-next = { version = "8.0.0", default-features = false, features = ["codec"
 wgpu = "0.20"
 pollster = "0.3"
 bytemuck = { version = "1.15", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 # Future dependencies:
 # tokio = { version = "1", features = ["full"] }

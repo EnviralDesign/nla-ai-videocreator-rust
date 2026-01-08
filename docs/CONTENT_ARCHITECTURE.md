@@ -46,7 +46,7 @@ Standard assets are simple file references. They have no generation history or i
 | Type | How Created | File Location |
 |------|-------------|---------------|
 | **Generative Video** | Explicit UI action ("+ New Generative Video") | `generated/video/{id}/` |
-| **Generative Image** | Explicit UI action ("+ New Generative Image") | `generated/images/{id}/` |
+| **Generative Image** | Explicit UI action ("+ New Generative Image") | `generated/image/{id}/` |
 | **Generative Audio** | Explicit UI action ("+ New Generative Audio") | `generated/audio/{id}/` |
 
 Generative assets are **explicit, intentional creations**. They start "hollow" (no media) and become populated through generation.
@@ -61,7 +61,7 @@ generated/video/gen_001/
 ├── v1.mp4           # First generation
 ├── v2.mp4           # Second generation (different seed, etc.)
 ├── v3.mp4           # ...
-└── active.txt       # Points to active version (e.g., "v2")
+└── config.json      # Active version + input history
 ```
 
 The `config.json` stores:
@@ -134,7 +134,7 @@ A **Provider Entry** is a configured backend that can execute generation tasks. 
 Each entry declares:
 - **Output Type**: What it produces (Video | Image | Audio)
 - **Input Schema**: What inputs it requires (dynamic per provider)
-- **Connection Info**: How to reach it (ComfyUI URL, API key, etc.)
+- **Connection Info**: How to reach it (ComfyUI URL, API key, workflow path, etc.)
 
 ### Output Type is Primary
 
@@ -240,14 +240,13 @@ my-project/
 │   │   │   ├── config.json
 │   │   │   ├── v1.mp4
 │   │   │   ├── v2.mp4
-│   │   │   └── active.txt
+│   │   │   └── ...
 │   │   └── gen_002/
 │   │       └── ...
-│   ├── images/
+│   ├── image/
 │   │   └── gen_img_001/
 │   │       ├── config.json
-│   │       ├── v1.png
-│   │       └── active.txt
+│   │       └── v1.png
 │   └── audio/
 │       └── ...
 ├── exports/                  # Final rendered outputs
@@ -259,6 +258,12 @@ Global providers (MVP, Windows):
 %LOCALAPPDATA%\NLA-AI-VideoCreator\providers\
 ├── <provider-id>.json
 └── ...
+```
+
+Workflow templates (repo):
+```
+workflows/
+└── sdxl_simple_example_API.json
 ```
 
 ### In-Project Only (Strict MVP)

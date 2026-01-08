@@ -647,7 +647,7 @@ impl Project {
         fs::create_dir_all(folder.join("video"))?;
         fs::create_dir_all(folder.join("generated"))?;
         fs::create_dir_all(folder.join("generated/video"))?;
-        fs::create_dir_all(folder.join("generated/images"))?;
+        fs::create_dir_all(folder.join("generated/image"))?;
         fs::create_dir_all(folder.join("generated/audio"))?;
         fs::create_dir_all(folder.join("exports"))?;
 
@@ -696,6 +696,23 @@ impl Project {
         self.project_path = Some(folder.to_path_buf());
         self.save_to(folder)?;
         Ok(())
+    }
+
+    pub fn set_generative_active_version(
+        &mut self,
+        asset_id: Uuid,
+        version: Option<String>,
+    ) {
+        if let Some(asset) = self.assets.iter_mut().find(|asset| asset.id == asset_id) {
+            match &mut asset.kind {
+                AssetKind::GenerativeVideo { active_version, .. }
+                | AssetKind::GenerativeImage { active_version, .. }
+                | AssetKind::GenerativeAudio { active_version, .. } => {
+                    *active_version = version;
+                }
+                _ => {}
+            }
+        }
     }
 
     fn sync_generative_configs(&mut self) {

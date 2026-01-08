@@ -47,31 +47,33 @@ impl Thumbnailer {
             return None;
         }
 
-        let asset_id = asset.id.to_string();
-        let output_dir = self.cache_root.join(&asset_id);
-        
-        // If directory exists and has files, assume populated (MVP check)
-        // unless forced
-        if !force && output_dir.exists() && output_dir.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
-            return Some(output_dir);
-        }
-
-        // If forced or empty, ensure clean directory
-        if output_dir.exists() {
-            let _ = std::fs::remove_dir_all(&output_dir);
-        }
-        let _ = std::fs::create_dir_all(&output_dir);
-
-        // Limit concurrency
-        let Ok(_permit) = self.semaphore.acquire().await else {
-            return None;
-        };
-
         let source_path = match &asset.kind {
             crate::state::AssetKind::Video { path } => path,
             crate::state::AssetKind::Image { path } => path,
-            // Generative handling - might need to find the "active" version
-            // For now, let's assume we skip or implement later
+            crate::state::AssetKind::GenerativeImage {
+                folder,
+                active_version,
+            } => {
+                let path = resolve_generative_source(
+                    &self.project_root,
+                    folder,
+                    active_version.as_deref(),
+                    &["png", "jpg", "jpeg", "webp"],
+                )?;
+                return self.generate_from_source(asset, &path, force).await;
+            }
+            crate::state::AssetKind::GenerativeVideo {
+                folder,
+                active_version,
+            } => {
+                let path = resolve_generative_source(
+                    &self.project_root,
+                    folder,
+                    active_version.as_deref(),
+                    &["mp4", "mov", "mkv", "webm"],
+                )?;
+                return self.generate_from_source(asset, &path, force).await;
+            }
             _ => return None,
         };
         
@@ -80,38 +82,8 @@ impl Thumbnailer {
         // If it's absolute, join returns it as is
         let absolute_source_path = self.project_root.join(source_path);
         
-        // Clone for move into thread
-        let source = absolute_source_path.clone();
-        let out = output_dir.clone();
-
-        // Spawn blocking FFmpeg task
-        let _ = tokio::task::spawn_blocking(move || {
-            // Extract 1 frame per interval, keep aspect ratio
-            let output_pattern = out.join("thumb_%04d.jpg");
-            
-            // Debug check: ensure file exists
-            if !source.exists() {
-                println!("Thumbnailer Warning: Source file not found: {:?}", source);
-                return;
-            }
-            
-            let status = Command::new("ffmpeg")
-                .arg("-i")
-                .arg(&source)
-                .arg("-vf")
-                .arg(format!("fps=1/{},scale=-1:{}", THUMBNAIL_INTERVAL_SECONDS, THUMBNAIL_HEIGHT))
-                .arg("-q:v")
-                .arg("5") // reasonable jpeg quality
-                .arg(output_pattern)
-                .status();
-                
-            match status {
-                Ok(s) if s.success() => println!("Generated thumbnails for {}", asset_id),
-                _ => println!("Failed to generate thumbnails for {}. Valid path? {:?} Status: {:?}", asset_id, source, status),
-            }
-        }).await;
-
-        Some(output_dir)
+        self.generate_from_source(asset, &absolute_source_path, force)
+            .await
     }
     
     /// Get the path to the thumbnail for a specific time
@@ -140,4 +112,102 @@ impl Thumbnailer {
             }
         }
     }
+}
+
+impl Thumbnailer {
+    async fn generate_from_source(
+        &self,
+        asset: &Asset,
+        absolute_source_path: &PathBuf,
+        force: bool,
+    ) -> Option<PathBuf> {
+        let asset_id = asset.id.to_string();
+        let output_dir = self.cache_root.join(&asset_id);
+
+        if !force
+            && output_dir.exists()
+            && output_dir
+                .read_dir()
+                .map(|mut i| i.next().is_some())
+                .unwrap_or(false)
+        {
+            return Some(output_dir);
+        }
+
+        let Ok(_permit) = self.semaphore.acquire().await else {
+            return None;
+        };
+
+        if output_dir.exists() {
+            let _ = std::fs::remove_dir_all(&output_dir);
+        }
+        let _ = std::fs::create_dir_all(&output_dir);
+
+        let source = absolute_source_path.clone();
+        let out = output_dir.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let output_pattern = out.join("thumb_%04d.jpg");
+
+            if !source.exists() {
+                println!("Thumbnailer Warning: Source file not found: {:?}", source);
+                return;
+            }
+
+            let status = Command::new("ffmpeg")
+                .arg("-i")
+                .arg(&source)
+                .arg("-vf")
+                .arg(format!(
+                    "fps=1/{},scale=-1:{}",
+                    THUMBNAIL_INTERVAL_SECONDS, THUMBNAIL_HEIGHT
+                ))
+                .arg("-q:v")
+                .arg("5")
+                .arg(output_pattern)
+                .status();
+
+            match status {
+                Ok(s) if s.success() => println!("Generated thumbnails for {}", asset_id),
+                _ => println!(
+                    "Failed to generate thumbnails for {}. Valid path? {:?} Status: {:?}",
+                    asset_id, source, status
+                ),
+            }
+        })
+        .await;
+
+        Some(output_dir)
+    }
+}
+
+fn resolve_generative_source(
+    project_root: &PathBuf,
+    folder: &PathBuf,
+    active_version: Option<&str>,
+    extensions: &[&str],
+) -> Option<PathBuf> {
+    let folder_path = project_root.join(folder);
+
+    if let Some(version) = active_version {
+        for ext in extensions {
+            let candidate = folder_path.join(format!("{}.{}", version, ext));
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let entries = std::fs::read_dir(&folder_path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                if extensions.iter().any(|allowed| allowed.eq_ignore_ascii_case(ext)) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
 }
