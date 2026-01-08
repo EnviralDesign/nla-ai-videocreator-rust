@@ -86,8 +86,17 @@ struct FrameKey {
     frame_index: i64,
 }
 
+#[derive(Clone)]
+struct CachedFrame {
+    image: Arc<RgbaImage>,
+    source_width: u32,
+    source_height: u32,
+}
+
 struct CacheEntry {
     image: Arc<RgbaImage>,
+    source_width: u32,
+    source_height: u32,
     size_bytes: usize,
     last_used: u64,
 }
@@ -113,15 +122,25 @@ impl FrameCache {
         }
     }
 
-    fn get(&mut self, key: &FrameKey) -> Option<Arc<RgbaImage>> {
+    fn get(&mut self, key: &FrameKey) -> Option<CachedFrame> {
         let entry = self.entries.get_mut(key)?;
         self.access_counter = self.access_counter.wrapping_add(1);
         entry.last_used = self.access_counter;
         self.lru_order.push_back((key.clone(), entry.last_used));
-        Some(Arc::clone(&entry.image))
+        Some(CachedFrame {
+            image: Arc::clone(&entry.image),
+            source_width: entry.source_width,
+            source_height: entry.source_height,
+        })
     }
 
-    fn insert(&mut self, key: FrameKey, image: Arc<RgbaImage>) {
+    fn insert(
+        &mut self,
+        key: FrameKey,
+        image: Arc<RgbaImage>,
+        source_width: u32,
+        source_height: u32,
+    ) {
         let size_bytes = image_size_bytes(&image);
         if size_bytes == 0 || self.max_bytes == 0 || size_bytes > self.max_bytes {
             return;
@@ -141,6 +160,8 @@ impl FrameCache {
             key.clone(),
             CacheEntry {
                 image,
+                source_width,
+                source_height,
                 size_bytes,
                 last_used,
             },
@@ -256,6 +277,8 @@ impl PreviewRenderer {
             composite_layer(
                 &mut canvas,
                 &layer.image,
+                layer.source_width,
+                layer.source_height,
                 layer.transform,
                 preview_scale,
             );
@@ -338,6 +361,8 @@ impl PreviewRenderer {
         for layer in layers {
             if let Some(placement) = compute_layer_placement(
                 &layer.image,
+                layer.source_width,
+                layer.source_height,
                 layer.transform,
                 preview_scale,
                 canvas_w_f,
@@ -428,13 +453,15 @@ impl PreviewRenderer {
             };
 
             if let Ok(mut cache) = self.frame_cache.lock() {
-                if let Some(image) = cache.get(&cache_key) {
+                if let Some(cached) = cache.get(&cache_key) {
                     stats.cache_hits += 1;
                     layers.push(PreviewLayer {
                         track_index,
                         start_time: clip.start_time,
-                        image,
+                        image: cached.image,
                         transform: clip.transform,
+                        source_width: cached.source_width,
+                        source_height: cached.source_height,
                     });
                     continue;
                 }
@@ -444,19 +471,26 @@ impl PreviewRenderer {
 
             if !is_video {
                 let decode_start = Instant::now();
-                let image = self.load_still(&path);
+                let decoded = self.load_still(&path);
                 let decode_ms = elapsed_ms(decode_start);
                 stats.still_load_ms += decode_ms;
-                if let Some(image) = image {
-                    let image = Arc::new(image);
+                if let Some(decoded) = decoded {
+                    let image = Arc::new(decoded.image);
                     if let Ok(mut cache) = self.frame_cache.lock() {
-                        cache.insert(cache_key, Arc::clone(&image));
+                        cache.insert(
+                            cache_key,
+                            Arc::clone(&image),
+                            decoded.source_width,
+                            decoded.source_height,
+                        );
                     }
                     layers.push(PreviewLayer {
                         track_index,
                         start_time: clip.start_time,
                         image,
                         transform: clip.transform,
+                        source_width: decoded.source_width,
+                        source_height: decoded.source_height,
                     });
                 }
                 continue;
@@ -499,7 +533,12 @@ impl PreviewRenderer {
                     if let Some(image) = response.image {
                         let image = Arc::new(image);
                         if let Ok(mut cache) = self.frame_cache.lock() {
-                            cache.insert(item.cache_key, Arc::clone(&image));
+                            cache.insert(
+                                item.cache_key,
+                                Arc::clone(&image),
+                                response.source_width,
+                                response.source_height,
+                            );
                         }
                         if response.used_hw {
                             stats.hw_decode_frames += 1;
@@ -511,6 +550,8 @@ impl PreviewRenderer {
                             start_time: item.start_time,
                             image,
                             transform: item.transform,
+                            source_width: response.source_width,
+                            source_height: response.source_height,
                         });
                     }
                 }
@@ -686,11 +727,11 @@ impl PreviewRenderer {
         };
 
         if let Ok(mut cache) = self.frame_cache.lock() {
-            if let Some(image) = cache.get(&cache_key) {
+            if let Some(cached) = cache.get(&cache_key) {
                 if let Some(stats) = stats.as_deref_mut() {
                     stats.cache_hits += 1;
                 }
-                return Some(image);
+                return Some(cached.image);
             }
         }
 
@@ -698,7 +739,7 @@ impl PreviewRenderer {
             stats.cache_misses += 1;
         }
 
-        let image = if is_video {
+        let decoded = if is_video {
             let mode = match decode_mode {
                 PreviewDecodeMode::Seek => DecodeMode::Seek,
                 PreviewDecodeMode::Sequential => DecodeMode::Sequential,
@@ -730,7 +771,11 @@ impl PreviewRenderer {
                         stats.sw_decode_frames += 1;
                     }
                 }
-                image
+                DecodedFrame {
+                    image,
+                    source_width: response.source_width,
+                    source_height: response.source_height,
+                }
             } else {
                 return None;
             }
@@ -744,17 +789,29 @@ impl PreviewRenderer {
             image
         };
 
-        let image = Arc::new(image);
+        let image = Arc::new(decoded.image);
         if let Ok(mut cache) = self.frame_cache.lock() {
-            cache.insert(cache_key, Arc::clone(&image));
+            cache.insert(
+                cache_key,
+                Arc::clone(&image),
+                decoded.source_width,
+                decoded.source_height,
+            );
         }
 
         Some(image)
     }
 
-    fn load_still(&self, path: &Path) -> Option<RgbaImage> {
+    fn load_still(&self, path: &Path) -> Option<DecodedFrame> {
         let image = image::open(path).ok()?.into_rgba8();
-        Some(scale_image_to_fit(image, self.max_width, self.max_height))
+        let source_width = image.width().max(1);
+        let source_height = image.height().max(1);
+        let image = scale_image_to_fit(image, self.max_width, self.max_height);
+        Some(DecodedFrame {
+            image,
+            source_width,
+            source_height,
+        })
     }
 
     // Video decoding handled by the in-process decoder worker.
@@ -770,11 +827,19 @@ struct PendingDecode {
     lane_id: u64,
 }
 
+struct DecodedFrame {
+    image: RgbaImage,
+    source_width: u32,
+    source_height: u32,
+}
+
 struct PreviewLayer {
     track_index: usize,
     start_time: f64,
     image: Arc<RgbaImage>,
     transform: ClipTransform,
+    source_width: u32,
+    source_height: u32,
 }
 
 fn preview_canvas_size(
@@ -800,11 +865,15 @@ fn preview_canvas_size(
 fn composite_layer(
     canvas: &mut RgbaImage,
     image: &RgbaImage,
+    source_width: u32,
+    source_height: u32,
     transform: ClipTransform,
     preview_scale: f32,
 ) {
     let placement = match compute_layer_placement(
         image,
+        source_width,
+        source_height,
         transform,
         preview_scale,
         canvas.width() as f32,
@@ -871,19 +940,33 @@ fn rotate_rgba(image: &RgbaImage, rotation_deg: f32) -> RgbaImage {
 
 fn compute_layer_placement(
     image: &RgbaImage,
+    source_width: u32,
+    source_height: u32,
     transform: ClipTransform,
     preview_scale: f32,
     canvas_w: f32,
     canvas_h: f32,
 ) -> Option<PreviewLayerPlacement> {
-    let (src_w, src_h) = (image.width() as f32, image.height() as f32);
-    if src_w <= 0.0 || src_h <= 0.0 {
+    let (decoded_w, decoded_h) = (image.width().max(1) as f32, image.height().max(1) as f32);
+    if decoded_w <= 0.0 || decoded_h <= 0.0 {
         return None;
     }
 
-    let base_scale = preview_scale;
-    let scaled_w = src_w * base_scale * transform.scale_x.max(0.01);
-    let scaled_h = src_h * base_scale * transform.scale_y.max(0.01);
+    let source_w = if source_width > 0 {
+        source_width as f32
+    } else {
+        decoded_w
+    };
+    let source_h = if source_height > 0 {
+        source_height as f32
+    } else {
+        decoded_h
+    };
+
+    let base_scale_x = (source_w * preview_scale) / decoded_w;
+    let base_scale_y = (source_h * preview_scale) / decoded_h;
+    let scaled_w = decoded_w * base_scale_x * transform.scale_x.max(0.01);
+    let scaled_h = decoded_h * base_scale_y * transform.scale_y.max(0.01);
     if scaled_w <= 0.0 || scaled_h <= 0.0 {
         return None;
     }

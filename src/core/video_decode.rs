@@ -56,6 +56,8 @@ pub struct DecodeResponse {
     pub image: Option<RgbaImage>,
     pub timings: DecodeTimings,
     pub used_hw: bool,
+    pub source_width: u32,
+    pub source_height: u32,
 }
 
 /// A dedicated worker pool for in-process video decoding with FFmpeg.
@@ -129,6 +131,8 @@ impl VideoDecodeWorker {
                         image: outcome.image,
                         timings: outcome.timings,
                         used_hw: outcome.used_hw,
+                        source_width: outcome.source_width,
+                        source_height: outcome.source_height,
                     });
                 }
             });
@@ -237,6 +241,8 @@ struct DecodeOutcome {
     image: Option<RgbaImage>,
     used_hw: bool,
     timings: DecodeTimings,
+    source_width: u32,
+    source_height: u32,
 }
 
 impl DecodeOutcome {
@@ -245,6 +251,8 @@ impl DecodeOutcome {
             image: None,
             used_hw: false,
             timings: DecodeTimings::default(),
+            source_width: 0,
+            source_height: 0,
         }
     }
 }
@@ -361,6 +369,8 @@ struct VideoDecoder {
     scaler_src: Option<(ffmpeg::util::format::Pixel, u32, u32)>,
     target_width: u32,
     target_height: u32,
+    source_width: u32,
+    source_height: u32,
     time_base: ffmpeg::Rational,
     last_pts: Option<i64>,
     last_time_seconds: Option<f64>,
@@ -411,6 +421,8 @@ impl VideoDecoder {
             scaler_src: None,
             target_width,
             target_height,
+            source_width: src_width,
+            source_height: src_height,
             time_base,
             last_pts: None,
             last_time_seconds: None,
@@ -440,6 +452,8 @@ impl VideoDecoder {
                 image: Some(image),
                 used_hw,
                 timings,
+                source_width: self.source_width,
+                source_height: self.source_height,
             };
         }
 
@@ -456,6 +470,8 @@ impl VideoDecoder {
                 image: None,
                 used_hw: false,
                 timings,
+                source_width: self.source_width,
+                source_height: self.source_height,
             };
         }
         self.decoder.flush();
@@ -469,6 +485,8 @@ impl VideoDecoder {
                 image: Some(image),
                 used_hw,
                 timings,
+                source_width: self.source_width,
+                source_height: self.source_height,
             };
         }
 
@@ -476,6 +494,8 @@ impl VideoDecoder {
             image: None,
             used_hw: false,
             timings,
+            source_width: self.source_width,
+            source_height: self.source_height,
         }
     }
 

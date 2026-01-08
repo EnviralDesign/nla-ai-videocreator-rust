@@ -759,6 +759,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Fixed native-size preview scaling by tracking source dimensions alongside cached frames
 - **2026-01-07:** Preview now renders clips at native size (no auto-fit scaling to canvas)
 - **2026-01-07:** Fixed GPU rotation skew by accounting for preview aspect ratio in the shader
 - **2026-01-07:** Added CPU fallback rotation support using imageproc (GPU + CPU paths now respect clip rotation)
