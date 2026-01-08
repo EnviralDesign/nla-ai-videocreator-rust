@@ -111,7 +111,9 @@ pub fn TimelinePanel(
     let content_width = (duration * zoom) as i32;
     
     // Calculate playhead position in scroll space (snapped to frame for visual alignment)
-    let playhead_pos = ((current_time * FPS).round() / FPS) * zoom;
+    // Clamp to content_width - 1 so playhead line/triangle don't extend past content and cause scroll expansion
+    let content_width_f = content_width as f64;
+    let playhead_pos = (((current_time * FPS).round() / FPS) * zoom).min(content_width_f - 1.0).max(0.0);
     
     // Constants
     let ruler_height = 24;
@@ -374,6 +376,7 @@ pub fn TimelinePanel(
                                     background-color: {BG_SURFACE};
                                     border-bottom: 1px solid {BORDER_DEFAULT};
                                     cursor: pointer;
+                                    overflow: hidden;
                                 ",
                                 // Click anywhere on ruler to seek AND start dragging
                                 onmousedown: move |e| {
