@@ -21,10 +21,14 @@ const PREVIEW_NATIVE_OFFSET_X: i32 = -8;
 #[cfg(target_os = "windows")]
 const PREVIEW_NATIVE_OFFSET_Y: i32 = -1;
 #[cfg(target_os = "windows")]
+// BG_DEEPEST is #09090b in sRGB. Convert to linear space for wgpu clear color.
+// sRGB to linear: if c <= 0.04045 then c/12.92, else ((c+0.055)/1.055)^2.4
+// #09 = 9/255 = 0.0353 -> 0.0353/12.92 = 0.00273
+// #0b = 11/255 = 0.0431 -> 0.0431/12.92 = 0.00334
 const PREVIEW_CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.035,
-    g: 0.035,
-    b: 0.043,
+    r: 0.00273,
+    g: 0.00273,
+    b: 0.00334,
     a: 1.0,
 };
 
