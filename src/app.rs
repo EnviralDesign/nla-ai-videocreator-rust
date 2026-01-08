@@ -796,7 +796,9 @@ pub fn App() -> Element {
     
     // Is currently dragging? (for cursor and user-select styling)
     let is_dragging = dragging().is_some();
-    let user_select_style = if is_dragging { "none" } else { "auto" };
+    // Always disable text selection for UI elements to feel like a native app
+    // Specific text areas that need selection (e.g. inputs, logs) must override this
+    let user_select_style = "none";
     let drag_cursor = match dragging() {
         Some("left") | Some("right") => "ew-resize",
         Some("timeline") => "ns-resize",
@@ -1595,6 +1597,7 @@ fn StartupModal(
                                         border-radius: 6px; color: {TEXT_PRIMARY}; 
                                         font-size: 13px; outline: none;
                                         transition: border-color 0.15s ease;
+                                        user-select: text;
                                     ",
                                     value: "{name}",
                                     placeholder: "Enter project name...",
@@ -1687,6 +1690,7 @@ fn StartupModal(
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
                                             text-align: center;
+                                            user-select: text;
                                         ",
                                         r#type: "number",
                                         min: "1",
@@ -1704,6 +1708,7 @@ fn StartupModal(
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
                                             text-align: center;
+                                            user-select: text;
                                         ",
                                         r#type: "number",
                                         min: "1",
@@ -1734,6 +1739,7 @@ fn StartupModal(
                                                 flex: 1; padding: 8px 12px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                                user-select: text;
                                             ",
                                             r#type: "number",
                                             min: "1",
@@ -1764,6 +1770,7 @@ fn StartupModal(
                                                 flex: 1; padding: 8px 12px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                                user-select: text;
                                             ",
                                             r#type: "number",
                                             min: "1",
@@ -2373,6 +2380,7 @@ fn NumericField(
                     background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
                     border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
                     outline: none;
+                    user-select: text;
                 ",
                 oninput: move |e| text.set(e.value()),
                 onblur: on_blur,
