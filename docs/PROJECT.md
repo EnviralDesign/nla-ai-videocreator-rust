@@ -770,6 +770,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + .providers)
 - **2026-01-07:** Expanded the Generative/Provider/Generation TODOs into an atomic ComfyUI MVP plan
 - **2026-01-07:** Defaulted timeline zoom to Fit on project open/create once the viewport width is known
 - **2026-01-07:** Added timeline zoom bounds based on visible width, plus Fit/Frames buttons and adaptive minimum clip width

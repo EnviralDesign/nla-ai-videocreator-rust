@@ -10,7 +10,13 @@
 mod project;
 mod asset;
 mod selection;
+mod providers;
+mod generative;
 
 pub use project::*;
 pub use asset::*;
 pub use selection::*;
+#[allow(unused_imports)]
+pub use providers::*;
+#[allow(unused_imports)]
+pub use generative::*;
