@@ -20,6 +20,9 @@ use crate::state::{Track, TrackType};
 
 const THUMB_TILE_WIDTH_PX: f64 = 60.0;
 const MAX_THUMB_TILES: usize = 120;
+const MIN_CLIP_WIDTH_PX: f64 = 20.0;
+const MIN_CLIP_WIDTH_FLOOR_PX: f64 = 2.0;
+const MIN_CLIP_WIDTH_SCALE: f64 = 0.2;
 
 /// Main timeline panel component
 #[component]
@@ -40,6 +43,8 @@ pub fn TimelinePanel(
     current_time: f64,
     duration: f64,
     zoom: f64,
+    min_zoom: f64,
+    max_zoom: f64,
     is_playing: bool,
     scroll_offset: f64,
     // Callbacks
@@ -94,6 +99,13 @@ pub fn TimelinePanel(
     };
     
     let timecode = format_time(current_time);
+    let zoom_label = if (zoom - min_zoom).abs() <= 0.5 {
+        "Fit".to_string()
+    } else if (zoom - max_zoom).abs() <= 0.5 {
+        "Frames".to_string()
+    } else {
+        format!("{:.0}px/s", zoom)
+    };
     
     // Calculate timeline content width based on duration and zoom
     let content_width = (duration * zoom) as i32;
@@ -151,13 +163,25 @@ pub fn TimelinePanel(
                         }
                         span { 
                             style: "font-size: 10px; color: {TEXT_DIM}; min-width: 40px; text-align: center;", 
-                            "{zoom as i32}px/s" 
+                            "{zoom_label}" 
                         }
                         button {
                             class: "collapse-btn",
                             style: "width: 20px; height: 20px; border: none; border-radius: 3px; background: transparent; color: {TEXT_MUTED}; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
                             onclick: move |_| on_zoom_change.call(zoom * 1.25),
                             "+"
+                        }
+                        button {
+                            class: "collapse-btn",
+                            style: "padding: 0 6px; height: 20px; border: none; border-radius: 3px; background: transparent; color: {TEXT_MUTED}; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
+                            onclick: move |_| on_zoom_change.call(min_zoom),
+                            "Fit"
+                        }
+                        button {
+                            class: "collapse-btn",
+                            style: "padding: 0 6px; height: 20px; border: none; border-radius: 3px; background: transparent; color: {TEXT_MUTED}; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
+                            onclick: move |_| on_zoom_change.call(max_zoom),
+                            "Frames"
                         }
                     }
                 }
@@ -322,6 +346,7 @@ pub fn TimelinePanel(
                     // The ruler is sticky at top, everything scrolls horizontally together
                     // ═══════════════════════════════════════════════════════════════
                     div {
+                        id: "timeline-scroll-host",
                         style: "
                             flex: 1;
                             overflow-x: auto;
@@ -749,7 +774,9 @@ fn ClipElement(
     let mut drag_start_end_time = use_signal(|| 0.0);
 
     let left = (clip.start_time * zoom) as i32;
-    let clip_width = (clip.duration * zoom).max(20.0) as i32;
+    let min_clip_width = (zoom * MIN_CLIP_WIDTH_SCALE)
+        .clamp(MIN_CLIP_WIDTH_FLOOR_PX, MIN_CLIP_WIDTH_PX);
+    let clip_width = (clip.duration * zoom).max(min_clip_width) as i32;
     let clip_width_f = clip_width as f64;
     let clip_id = clip.id;
     let cache_buckets = clip_cache_buckets

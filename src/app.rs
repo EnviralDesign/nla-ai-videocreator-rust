@@ -56,6 +56,8 @@ const PREVIEW_IDLE_PREFETCH_DELAY_MS: u64 = 800;
 const PREVIEW_IDLE_PREFETCH_AHEAD_SECONDS: f64 = 5.0;
 const PREVIEW_IDLE_PREFETCH_BEHIND_SECONDS: f64 = 1.0;
 const SHOW_CACHE_TICKS: bool = false;
+const TIMELINE_MIN_ZOOM_FLOOR: f64 = 0.1;
+const TIMELINE_MAX_PX_PER_FRAME: f64 = 8.0;
 const PREVIEW_CANVAS_SCRIPT: &str = r#"
 let canvas = null;
 let ctx = null;
@@ -162,6 +164,39 @@ attach();
 await new Promise(() => {});
 "#;
 
+const TIMELINE_VIEWPORT_SCRIPT: &str = r#"
+const hostId = "timeline-scroll-host";
+let lastWidth = null;
+
+function sendWidth() {
+    const host = document.getElementById(hostId);
+    if (!host) {
+        return;
+    }
+    const width = host.clientWidth || 0;
+    if (lastWidth !== null && Math.abs(lastWidth - width) < 0.5) {
+        return;
+    }
+    lastWidth = width;
+    dioxus.send(width);
+}
+
+function attach() {
+    const host = document.getElementById(hostId);
+    if (!host) {
+        setTimeout(attach, 100);
+        return;
+    }
+    const observer = new ResizeObserver(() => sendWidth());
+    observer.observe(host);
+    window.addEventListener("resize", sendWidth, { passive: true });
+    sendWidth();
+}
+
+attach();
+await new Promise(() => {});
+"#;
+
 #[derive(Clone, Copy, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PreviewCanvasMessage {
@@ -201,6 +236,8 @@ pub fn App() -> Element {
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
     let mut show_preview_stats = use_signal(|| false);
     let mut use_hw_decode = use_signal(|| true);
+    let timeline_viewport_width = use_signal(|| None::<f64>);
+    let mut timeline_viewport_eval = use_signal(|| None::<document::Eval>);
     let mut clip_cache_buckets =
         use_signal(|| std::sync::Arc::new(HashMap::<uuid::Uuid, Vec<bool>>::new()));
     let preview_cache_tick = use_signal(|| 0_u64);
@@ -230,6 +267,19 @@ pub fn App() -> Element {
     
     // Derive duration from project
     let duration = project.read().duration();
+
+    use_effect(move || {
+        let (min_zoom, max_zoom) = timeline_zoom_bounds(
+            project.read().duration(),
+            timeline_viewport_width(),
+            project.read().settings.fps,
+        );
+        let current_zoom = zoom();
+        let clamped = current_zoom.clamp(min_zoom, max_zoom);
+        if (clamped - current_zoom).abs() > 0.01 {
+            zoom.set(clamped);
+        }
+    });
     
     // Drag state
     let mut dragging = use_signal(|| None::<&'static str>);
@@ -508,6 +558,14 @@ pub fn App() -> Element {
         preview_host_eval.set(Some(eval));
     });
 
+    use_effect(move || {
+        if timeline_viewport_eval().is_some() {
+            return;
+        }
+        let eval = document::eval(TIMELINE_VIEWPORT_SCRIPT);
+        timeline_viewport_eval.set(Some(eval));
+    });
+
     use_future(move || {
         let mut preview_native_bounds = preview_native_bounds.clone();
         let preview_host_eval = preview_host_eval.clone();
@@ -525,6 +583,32 @@ pub fn App() -> Element {
                             if preview_native_bounds() != Some(bounds) {
                                 preview_native_bounds.set(Some(bounds));
                                 desktop.window.request_redraw();
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    });
+
+    use_future(move || {
+        let mut timeline_viewport_width = timeline_viewport_width.clone();
+        let timeline_viewport_eval = timeline_viewport_eval.clone();
+        async move {
+            loop {
+                let Some(eval) = timeline_viewport_eval() else {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                };
+                let mut eval = eval;
+                loop {
+                    match eval.recv::<f64>().await {
+                        Ok(width) => {
+                            let width = width.max(0.0);
+                            if timeline_viewport_width() != Some(width) {
+                                timeline_viewport_width.set(Some(width));
                             }
                         }
                         Err(_) => break,
@@ -966,75 +1050,94 @@ pub fn App() -> Element {
                             clip_cache_buckets: clip_cache_buckets(),
                             // Timeline state
                             current_time: current_time(),
-                        duration: duration,
-                        zoom: zoom(),
-                        is_playing: is_playing(),
-                        scroll_offset: scroll_offset(),
-                        // Callbacks
-                        on_seek: move |t: f64| {
-                            // Snap to frame boundary (60fps) and clamp to duration
-                            let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
-                            current_time.set(snapped);
-                        },
-                        on_zoom_change: move |z: f64| zoom.set(z.clamp(20.0, 500.0)),
-                        on_play_pause: move |_| is_playing.set(!is_playing()),
-                        on_scroll: move |offset: f64| scroll_offset.set(offset),
-                        on_seek_start: move |e: MouseEvent| {
-                            dragging.set(Some("playhead"));
-                            drag_start_pos.set(e.client_coordinates().x);
-                            drag_start_size.set(current_time());
-                        },
-                        on_seek_end: move |_| dragging.set(None),
-                        is_seeking: dragging() == Some("playhead"),
-                        // Track management
-                        on_add_video_track: move |_| {
-                            project.write().add_video_track();
-                            preview_dirty.set(true);
-                        },
-                        on_add_audio_track: move |_| {
-                            project.write().add_audio_track();
-                            preview_dirty.set(true);
-                        },
-                        on_track_context_menu: move |(x, y, track_id)| {
-                            context_menu.set(Some((x, y, track_id)));
-                        },
-                        // Clip operations
-                        on_clip_delete: move |clip_id| {
-                            project.write().remove_clip(clip_id);
-                            selection.write().remove_clip(clip_id);
-                            preview_dirty.set(true);
-                        },
-                        on_clip_move: move |(clip_id, new_start)| {
-                            project.write().move_clip(clip_id, new_start);
-                            preview_dirty.set(true);
-                        },
-                        on_clip_resize: move |(clip_id, new_start, new_duration)| {
-                            project.write().resize_clip(clip_id, new_start, new_duration);
-                            preview_dirty.set(true);
-                        },
-                        on_clip_move_track: move |(clip_id, direction)| {
-                            if project.write().move_clip_to_adjacent_track(clip_id, direction) {
+                            duration: duration,
+                            zoom: zoom(),
+                            min_zoom: timeline_zoom_bounds(
+                                duration,
+                                timeline_viewport_width(),
+                                project.read().settings.fps,
+                            )
+                            .0,
+                            max_zoom: timeline_zoom_bounds(
+                                duration,
+                                timeline_viewport_width(),
+                                project.read().settings.fps,
+                            )
+                            .1,
+                            is_playing: is_playing(),
+                            scroll_offset: scroll_offset(),
+                            // Callbacks
+                            on_seek: move |t: f64| {
+                                // Snap to frame boundary (60fps) and clamp to duration
+                                let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
+                                current_time.set(snapped);
+                            },
+                            on_zoom_change: move |z: f64| {
+                                let (min_zoom, max_zoom) = timeline_zoom_bounds(
+                                    duration,
+                                    timeline_viewport_width(),
+                                    project.read().settings.fps,
+                                );
+                                zoom.set(z.clamp(min_zoom, max_zoom));
+                            },
+                            on_play_pause: move |_| is_playing.set(!is_playing()),
+                            on_scroll: move |offset: f64| scroll_offset.set(offset),
+                            on_seek_start: move |e: MouseEvent| {
+                                dragging.set(Some("playhead"));
+                                drag_start_pos.set(e.client_coordinates().x);
+                                drag_start_size.set(current_time());
+                            },
+                            on_seek_end: move |_| dragging.set(None),
+                            is_seeking: dragging() == Some("playhead"),
+                            // Track management
+                            on_add_video_track: move |_| {
+                                project.write().add_video_track();
                                 preview_dirty.set(true);
-                            }
-                        },
-                        selected_clips: selection.read().clip_ids.clone(),
-                        on_clip_select: move |clip_id| {
-                            selection.write().select_clip(clip_id);
-                        },
-                        // Asset Drag & Drop
-                        dragged_asset: dragged_asset(),
-                        on_asset_drop: move |(track_id, time, asset_id)| {
-                            let duration = resolve_asset_duration_seconds(project, asset_id)
-                                .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
-                            let clip = crate::state::Clip::new(asset_id, track_id, time, duration);
-                            project.write().add_clip(clip);
-                            preview_dirty.set(true);
-                        },
-                        // Selection
-                        on_deselect_all: move |_| {
-                            selection.write().clear();
-                        },
-                    }
+                            },
+                            on_add_audio_track: move |_| {
+                                project.write().add_audio_track();
+                                preview_dirty.set(true);
+                            },
+                            on_track_context_menu: move |(x, y, track_id)| {
+                                context_menu.set(Some((x, y, track_id)));
+                            },
+                            // Clip operations
+                            on_clip_delete: move |clip_id| {
+                                project.write().remove_clip(clip_id);
+                                selection.write().remove_clip(clip_id);
+                                preview_dirty.set(true);
+                            },
+                            on_clip_move: move |(clip_id, new_start)| {
+                                project.write().move_clip(clip_id, new_start);
+                                preview_dirty.set(true);
+                            },
+                            on_clip_resize: move |(clip_id, new_start, new_duration)| {
+                                project.write().resize_clip(clip_id, new_start, new_duration);
+                                preview_dirty.set(true);
+                            },
+                            on_clip_move_track: move |(clip_id, direction)| {
+                                if project.write().move_clip_to_adjacent_track(clip_id, direction) {
+                                    preview_dirty.set(true);
+                                }
+                            },
+                            selected_clips: selection.read().clip_ids.clone(),
+                            on_clip_select: move |clip_id| {
+                                selection.write().select_clip(clip_id);
+                            },
+                            // Asset Drag & Drop
+                            dragged_asset: dragged_asset(),
+                            on_asset_drop: move |(track_id, time, asset_id)| {
+                                let duration = resolve_asset_duration_seconds(project, asset_id)
+                                    .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
+                                let clip = crate::state::Clip::new(asset_id, track_id, time, duration);
+                                project.write().add_clip(clip);
+                                preview_dirty.set(true);
+                            },
+                            // Selection
+                            on_deselect_all: move |_| {
+                                selection.write().clear();
+                            },
+                        }
                 }
 
                 // Right panel
@@ -2643,6 +2746,14 @@ fn resolve_asset_duration_seconds(
     }
 
     None
+}
+
+fn timeline_zoom_bounds(duration: f64, viewport_width: Option<f64>, fps: f64) -> (f64, f64) {
+    let duration = duration.max(0.01);
+    let viewport_width = viewport_width.unwrap_or(600.0).max(1.0);
+    let min_zoom = (viewport_width / duration).max(TIMELINE_MIN_ZOOM_FLOOR);
+    let max_zoom = (fps.max(1.0) * TIMELINE_MAX_PX_PER_FRAME).max(min_zoom);
+    (min_zoom, max_zoom)
 }
 
 fn parse_f32_input(value: &str, fallback: f32) -> f32 {

@@ -759,6 +759,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-07:** Added timeline zoom bounds based on visible width, plus Fit/Frames buttons and adaptive minimum clip width
 - **2026-01-07:** Distinguished preview plate vs background by clearing the GPU surface to the UI background, adding a black plate fill, and drawing a 1px plate border
 - **2026-01-07:** Fixed native-size preview scaling by tracking source dimensions alongside cached frames
 - **2026-01-07:** Preview now renders clips at native size (no auto-fit scaling to canvas)

@@ -368,8 +368,8 @@ impl PreviewRenderer {
         }
 
         let mut gpu_layers = Vec::new();
-        let mut plate_border = None;
-        if let Some((plate_fill, border)) = self.plate_images(canvas_w, canvas_h) {
+        // Add the black fill plate as the first layer (canvas background)
+        if let Some((plate_fill, _border)) = self.plate_images(canvas_w, canvas_h) {
             let placement = PreviewLayerPlacement {
                 offset_x: 0.0,
                 offset_y: 0.0,
@@ -382,7 +382,8 @@ impl PreviewRenderer {
                 image: plate_fill,
                 placement,
             });
-            plate_border = Some((border, placement));
+            // NOTE: Border is now drawn in screen-space by preview_gpu.rs, not as a texture layer.
+            // This ensures the border is always exactly 1 pixel wide regardless of canvas scale.
         }
         let canvas_w_f = canvas_w as f32;
         let canvas_h_f = canvas_h as f32;
@@ -401,12 +402,6 @@ impl PreviewRenderer {
                     placement,
                 });
             }
-        }
-        if let Some((border, placement)) = plate_border {
-            gpu_layers.push(PreviewLayerGpu {
-                image: border,
-                placement,
-            });
         }
 
         stats.total_ms = elapsed_ms(render_start);

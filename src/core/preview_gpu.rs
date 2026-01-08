@@ -169,6 +169,57 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+// Shader for drawing a solid-colored border quad in screen space.
+// Uses a simple uniform for position/scale and outputs a fixed color.
+#[cfg(target_os = "windows")]
+const BORDER_SHADER: &str = r#"
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+};
+
+struct BorderUniform {
+    // xy = position (NDC), zw = size (NDC)
+    rect: vec4<f32>,
+    // rgba color
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> border_uniform: BorderUniform;
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let pos = border_uniform.rect.xy + input.position * border_uniform.rect.zw;
+    out.position = vec4<f32>(pos, 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return border_uniform.color;
+}
+"#;
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BorderUniform {
+    rect: [f32; 4],  // x, y (NDC top-left corner), w, h (NDC size)
+    color: [f32; 4], // rgba
+}
+
+// Border color matching PLATE_BORDER_COLOR (#27272a) in sRGB, converted to linear
+// #27 = 39/255 = 0.153 sRGB -> ~0.0201 linear
+// #2a = 42/255 = 0.165 sRGB -> ~0.0231 linear
+#[cfg(target_os = "windows")]
+const BORDER_COLOR_LINEAR: [f32; 4] = [0.0201, 0.0201, 0.0231, 1.0];
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PreviewBounds {
     pub x: f64,
@@ -223,6 +274,12 @@ pub struct PreviewGpuSurface {
     canvas_size: (u32, u32),
     upload_scratch: Vec<u8>,
     visible: bool,
+    // Border rendering (4 edges: top, bottom, left, right)
+    border_pipeline: wgpu::RenderPipeline,
+    #[allow(dead_code)]
+    border_bind_group_layout: wgpu::BindGroupLayout,
+    border_uniform_buffers: [wgpu::Buffer; 4],
+    border_bind_groups: [wgpu::BindGroup; 4],
 }
 
 #[cfg(target_os = "windows")]
@@ -383,6 +440,91 @@ impl PreviewGpuSurface {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        // Create border pipeline
+        let border_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("border_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(
+                            std::mem::size_of::<BorderUniform>() as u64,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+
+        // Create 4 uniform buffers and bind groups (one for each border edge)
+        let border_uniform = BorderUniform {
+            rect: [0.0, 0.0, 0.0, 0.0],
+            color: BORDER_COLOR_LINEAR,
+        };
+        let border_uniform_buffers: [wgpu::Buffer; 4] = std::array::from_fn(|i| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("border_uniform_buffer_{}", i)),
+                contents: bytemuck::bytes_of(&border_uniform),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            })
+        });
+
+        let border_bind_groups: [wgpu::BindGroup; 4] = std::array::from_fn(|i| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("border_bind_group_{}", i)),
+                layout: &border_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: border_uniform_buffers[i].as_entire_binding(),
+                }],
+            })
+        });
+
+        let border_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("border_shader"),
+            source: wgpu::ShaderSource::Wgsl(BORDER_SHADER.into()),
+        });
+        let border_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("border_pipeline_layout"),
+                bind_group_layouts: &[&border_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let border_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("border_pipeline"),
+            layout: Some(&border_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &border_shader,
+                entry_point: "vs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[Vertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &border_shader,
+                entry_point: "fs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
         surface.configure(&device, &config);
         window.set_visible(false);
 
@@ -415,6 +557,10 @@ impl PreviewGpuSurface {
             canvas_size: (1, 1),
             upload_scratch: Vec::new(),
             visible: false,
+            border_pipeline,
+            border_bind_group_layout,
+            border_uniform_buffers,
+            border_bind_groups,
         })
     }
 
@@ -726,6 +872,57 @@ impl PreviewGpuSurface {
                 label: Some("preview_gpu_clear"),
             });
 
+        // Compute canvas bounds in screen space for border drawing
+        let surface_w = self.size.width.max(1) as f32;
+        let surface_h = self.size.height.max(1) as f32;
+        let canvas_w = self.canvas_size.0.max(1) as f32;
+        let canvas_h = self.canvas_size.1.max(1) as f32;
+        let preview_scale = (surface_w / canvas_w).min(surface_h / canvas_h).max(0.0);
+        let preview_w = canvas_w * preview_scale;
+        let preview_h = canvas_h * preview_scale;
+        let offset_x = (surface_w - preview_w) * 0.5;
+        let offset_y = (surface_h - preview_h) * 0.5;
+
+        // Pre-compute border uniforms and write to buffers BEFORE the render pass
+        // (buffer writes during a render pass aren't visible until the next submission)
+        let should_draw_border = preview_scale > 0.0 && !self.layers.is_empty();
+        if should_draw_border {
+            // 1 pixel in NDC space
+            let pixel_w = 2.0 / surface_w;
+            let pixel_h = 2.0 / surface_h;
+
+            // Canvas bounds in NDC (normalized device coordinates)
+            // NDC: x in [-1, 1], y in [-1, 1], with y pointing up
+            let left_ndc = (offset_x / surface_w) * 2.0 - 1.0;
+            let right_ndc = ((offset_x + preview_w) / surface_w) * 2.0 - 1.0;
+            let top_ndc = 1.0 - (offset_y / surface_h) * 2.0;
+            let bottom_ndc = 1.0 - ((offset_y + preview_h) / surface_h) * 2.0;
+
+            // 4 border edge rects: top, bottom, left, right
+            let border_rects = [
+                // Top edge: from (left, top-1px) with width=canvas_width, height=1px
+                [left_ndc, top_ndc - pixel_h, right_ndc - left_ndc, pixel_h],
+                // Bottom edge: from (left, bottom) with width=canvas_width, height=1px
+                [left_ndc, bottom_ndc, right_ndc - left_ndc, pixel_h],
+                // Left edge: from (left, bottom) with width=1px, height=canvas_height
+                [left_ndc, bottom_ndc, pixel_w, top_ndc - bottom_ndc],
+                // Right edge: from (right-1px, bottom) with width=1px, height=canvas_height
+                [right_ndc - pixel_w, bottom_ndc, pixel_w, top_ndc - bottom_ndc],
+            ];
+
+            for (i, rect) in border_rects.iter().enumerate() {
+                let uniform = BorderUniform {
+                    rect: *rect,
+                    color: BORDER_COLOR_LINEAR,
+                };
+                self.queue.write_buffer(
+                    &self.border_uniform_buffers[i],
+                    0,
+                    bytemuck::bytes_of(&uniform),
+                );
+            }
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("preview_gpu_pass"),
@@ -760,6 +957,18 @@ impl PreviewGpuSurface {
                     );
                     pass.set_bind_group(0, &layer.bind_group, &[]);
                     pass.set_bind_group(1, &layer.uniform_bind_group, &[]);
+                    pass.draw(0..QUAD_VERTICES.len() as u32, 0..1);
+                }
+            }
+
+            // Draw screen-space border (1 pixel wide) around the canvas
+            if should_draw_border {
+                pass.set_pipeline(&self.border_pipeline);
+                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+
+                // Draw each of the 4 edges using their pre-written buffers
+                for i in 0..4 {
+                    pass.set_bind_group(0, &self.border_bind_groups[i], &[]);
                     pass.draw(0..QUAD_VERTICES.len() as u32, 0..1);
                 }
             }
