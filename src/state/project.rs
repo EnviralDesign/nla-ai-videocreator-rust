@@ -650,7 +650,6 @@ impl Project {
         fs::create_dir_all(folder.join("generated/images"))?;
         fs::create_dir_all(folder.join("generated/audio"))?;
         fs::create_dir_all(folder.join("exports"))?;
-        fs::create_dir_all(folder.join(".providers"))?;
 
         // Write project.json
         let json = serde_json::to_string_pretty(self)?;

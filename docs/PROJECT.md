@@ -88,7 +88,7 @@ A **Project** is the top-level container. It has:
 - A name and save location (folder = project, KISS)
 - Global settings (resolution, frame rate, export preferences)
 - One or more **Tracks**
-- Provider configuration for this project
+- Provider configuration (global for MVP)
 
 ### 2. App Settings
 
@@ -304,8 +304,13 @@ my-project/
 │   └── seg_002_003.mp4
 ├── exports/              # Final rendered outputs
 │   └── final_v1.mp4
-└── .providers/           # Provider configs for this project
-    └── my_comfy_workflow.json
+```
+
+Global providers (MVP, Windows):
+```
+%LOCALAPPDATA%\NLA-AI-VideoCreator\providers\
+├── <provider-id>.json
+└── ...
 ```
 
 ### `project.json` Schema (Simplified)
@@ -409,9 +414,10 @@ my-project/
   - [x] "+ New Generative Video/Image/Audio" buttons in Assets panel
   - [x] Generative asset folder structure (generated/{type}/{id}/)
   - [x] Placeholder display for un-generated assets (dashed border, ⚙️ icon)
-  - [ ] Generative config file (config.json)
-    - [ ] Create config.json on generative asset creation
-    - [ ] Persist provider id + input bindings + version history
+  - [x] Generative config file (config.json)
+    - [x] Create config.json on generative asset creation
+    - [x] Persist provider id selection
+    - [ ] Persist input bindings + version history
   - [ ] Version management (v1, v2, ... in asset folder)
   - [ ] Active version selection (stored in config.json)
   - [ ] Active version load/save on project open
@@ -436,7 +442,8 @@ my-project/
   - [ ] Track selection state
   - [ ] Asset selection state
   - [ ] Multi-select support for same-type items
-  - [ ] For generative clips: provider picker + generate button
+  - [x] For generative clips: provider picker
+  - [ ] For generative clips: generate button
   - [ ] For generative clips: dynamic input fields (schema-driven)
   - [ ] For generative clips: version selector (active version)
   - [ ] For generative clips: status/progress line (queued/running/done)
@@ -448,9 +455,9 @@ my-project/
   - [ ] Duration defaults to clip duration on timeline
 
 - [ ] **Provider System**
-  - [ ] Provider entry data model (output type, input schema, connection info)
-  - [ ] Provider config storage under `.providers/`
-  - [ ] Provider configuration UI (add/edit/remove)
+  - [x] Provider entry data model (output type, input schema, connection info)
+  - [x] Global provider config storage under `%LOCALAPPDATA%\NLA-AI-VideoCreator\providers\`
+  - [x] Provider configuration UI (JSON editor modal)
   - [ ] Dynamic input schema rendering (text, image picker, number, etc.)
   - [ ] Health check / connection test
   - [ ] ComfyUI adapter (first provider)
@@ -773,9 +780,14 @@ src/
 ### Recent Changes (Session Log)
 - **2026-01-07:** Implemented centralized hotkey system (`src/hotkeys/`) with action-based architecture and context awareness
 - **2026-01-07:** Added global hotkeys for Timeline Zoom (+/- on Numpad and standard keys)
+- **2026-01-07:** Attributes panel now shows provider picker for generative clips and saves provider selection to config.json
+- **2026-01-07:** Provider entries now load from the global providers folder and display their input schema
+- **2026-01-07:** Added a global Providers JSON editor modal (top bar) for quick provider edits
+- **2026-01-07:** Providers modal now renders at the app root and messaging reflects global-only config
+- **2026-01-07:** Native preview overlay now hides while modal dialogs are open (prevents WGPU surface covering UI)
 - **2026-01-07:** Project load now syncs generative asset config.json and active version state
 - **2026-01-07:** Generative asset creation now writes a default config.json in the asset folder
-- **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + .providers)
+- **2026-01-07:** Added provider + generative config data models and storage helpers (config.json + global providers)
 - **2026-01-07:** Expanded the Generative/Provider/Generation TODOs into an atomic ComfyUI MVP plan
 - **2026-01-07:** Defaulted timeline zoom to Fit on project open/create once the viewport width is known
 - **2026-01-07:** Added timeline zoom bounds based on visible width, plus Fit/Frames buttons and adaptive minimum clip width

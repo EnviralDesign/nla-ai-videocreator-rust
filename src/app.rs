@@ -12,6 +12,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
+use crate::state::{ProviderConnection, ProviderEntry, ProviderInputType, ProviderOutputType};
 use crate::timeline::TimelinePanel;
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 
@@ -211,6 +212,7 @@ enum PreviewCanvasMessage {
 pub fn App() -> Element {
     // Project state - the core data model
     let mut project = use_signal(|| crate::state::Project::default());
+    let mut provider_entries = use_signal(|| Vec::<ProviderEntry>::new());
     
     // Core services
     let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
@@ -235,6 +237,7 @@ pub fn App() -> Element {
     let mut preview_layers =
         use_signal(|| None::<(u64, crate::core::preview::PreviewLayerStack)>);
     let mut preview_native_ready = use_signal(|| false);
+    let mut preview_native_suspended = use_signal(|| false);
     let preview_gpu = use_hook(|| Rc::new(RefCell::new(None::<PreviewGpuSurface>)));
     let mut show_preview_stats = use_signal(|| false);
     let mut use_hw_decode = use_signal(|| true);
@@ -683,6 +686,7 @@ pub fn App() -> Element {
         let preview_layers = preview_layers.clone();
         let mut preview_native_ready = preview_native_ready.clone();
         let mut preview_dirty = preview_dirty.clone();
+        let preview_native_suspended = preview_native_suspended.clone();
         let desktop = desktop_for_events.clone();
         move |event, target| {
             if !preview_native_enabled() {
@@ -698,6 +702,19 @@ pub fn App() -> Element {
                 _ => false,
             };
             if !is_main_window {
+                return;
+            }
+
+            if preview_native_suspended() {
+                if let Some(gpu) = preview_gpu.borrow_mut().as_mut() {
+                    gpu.clear_layers();
+                }
+                if preview_native_active() {
+                    preview_native_active.set(false);
+                }
+                if preview_native_uploaded().is_some() {
+                    preview_native_uploaded.set(None);
+                }
                 return;
             }
 
@@ -782,12 +799,184 @@ pub fn App() -> Element {
 
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
+    let mut show_providers_dialog = use_signal(|| false);
+    let mut provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
+    let mut provider_editor_text = use_signal(String::new);
+    let mut provider_editor_error = use_signal(|| None::<String>);
+    let mut provider_editor_dirty = use_signal(|| false);
+    let provider_files = use_signal(|| Vec::<std::path::PathBuf>::new());
+
+    let mut open_providers_dialog = {
+        let mut show_providers_dialog = show_providers_dialog.clone();
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        move || {
+            provider_entries.set(load_global_provider_entries());
+            let files = list_global_provider_files();
+            provider_files.set(files.clone());
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            if let Some(first) = files.first() {
+                provider_editor_path.set(Some(first.clone()));
+                provider_editor_text.set(read_provider_file(first).unwrap_or_default());
+            } else {
+                provider_editor_path.set(None);
+                provider_editor_text.set(String::new());
+            }
+            show_providers_dialog.set(true);
+        }
+    };
+
+    let on_provider_reload = {
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        move |_: MouseEvent| {
+            let files = list_global_provider_files();
+            provider_files.set(files.clone());
+            provider_entries.set(load_global_provider_entries());
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            let selected = provider_editor_path().filter(|path| path.exists());
+            let next = selected.or_else(|| files.first().cloned());
+            if let Some(path) = next {
+                provider_editor_path.set(Some(path.clone()));
+                provider_editor_text.set(read_provider_file(&path).unwrap_or_default());
+            } else {
+                provider_editor_path.set(None);
+                provider_editor_text.set(String::new());
+            }
+        }
+    };
+
+    let on_provider_new = {
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        move |_: MouseEvent| {
+            let entry = default_provider_entry();
+            let json = serde_json::to_string_pretty(&entry).unwrap_or_else(|_| "{}".to_string());
+            let path = provider_path_for_entry(&entry);
+            if let Err(err) = write_provider_file(&path, &json) {
+                provider_editor_error.set(Some(format!("Failed to create provider: {}", err)));
+                return;
+            }
+            provider_editor_path.set(Some(path));
+            provider_editor_text.set(json);
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            provider_entries.set(load_global_provider_entries());
+            provider_files.set(list_global_provider_files());
+        }
+    };
+
+    let on_provider_save = {
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        let provider_editor_text = provider_editor_text.clone();
+        move |_: MouseEvent| {
+            let text = provider_editor_text();
+            let entry: ProviderEntry = match serde_json::from_str(&text) {
+                Ok(entry) => entry,
+                Err(err) => {
+                    provider_editor_error.set(Some(format!("Invalid JSON: {}", err)));
+                    return;
+                }
+            };
+            let path = provider_editor_path().unwrap_or_else(|| provider_path_for_entry(&entry));
+            if let Err(err) = write_provider_file(&path, &text) {
+                provider_editor_error.set(Some(format!("Failed to save provider: {}", err)));
+                return;
+            }
+            provider_editor_path.set(Some(path));
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            provider_entries.set(load_global_provider_entries());
+            provider_files.set(list_global_provider_files());
+        }
+    };
+
+    let on_provider_delete = {
+        let mut provider_entries = provider_entries.clone();
+        let mut provider_files = provider_files.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        move |_: MouseEvent| {
+            let Some(path) = provider_editor_path() else {
+                provider_editor_error.set(Some("No provider selected.".to_string()));
+                return;
+            };
+            if let Err(err) = std::fs::remove_file(&path) {
+                provider_editor_error.set(Some(format!("Failed to delete provider: {}", err)));
+                return;
+            }
+            provider_entries.set(load_global_provider_entries());
+            let files = list_global_provider_files();
+            provider_files.set(files.clone());
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            if let Some(first) = files.first() {
+                provider_editor_path.set(Some(first.clone()));
+                provider_editor_text.set(read_provider_file(first).unwrap_or_default());
+            } else {
+                provider_editor_path.set(None);
+                provider_editor_text.set(String::new());
+            }
+        }
+    };
+
+    let desktop_for_modal_redraw = desktop.clone();
+    let preview_gpu_for_modal = preview_gpu.clone();
+    use_effect(move || {
+        let suspended = show_providers_dialog() || show_new_project_dialog();
+        if preview_native_suspended() == suspended {
+            return;
+        }
+        preview_native_suspended.set(suspended);
+        if suspended {
+            if let Some(gpu) = preview_gpu_for_modal.borrow_mut().as_mut() {
+                gpu.clear_layers();
+            }
+            if preview_native_active() {
+                preview_native_active.set(false);
+            }
+            if preview_native_uploaded().is_some() {
+                preview_native_uploaded.set(None);
+            }
+        } else {
+            desktop_for_modal_redraw.window.request_redraw();
+        }
+    });
     
     // On first load, if project has no path effectively, treat as "No Project Loaded"
     // But since we initialize with default(), we need a flag to block interaction until New/Open
     // We'll use specific "show_startup_modal" derived state
     
     let show_startup = project.read().project_path.is_none() && !startup_done();
+    let providers_root_label = crate::core::provider_store::global_providers_root()
+        .display()
+        .to_string();
+    let provider_save_label = if provider_editor_dirty() { "Save *" } else { "Save" };
+    let provider_selected_label = provider_editor_path()
+        .as_ref()
+        .and_then(|path| path.file_name().and_then(|name| name.to_str()))
+        .unwrap_or("No provider")
+        .to_string();
 
     // Read current values
     let left_w = if left_collapsed() { PANEL_COLLAPSED_WIDTH } else { left_width() };
@@ -969,6 +1158,9 @@ pub fn App() -> Element {
                      // If it's effectively unsaved (default path), we might want a "Save As" flow eventually
                      // For now, MVP assumes we have a path from startup or just saves to current effective path
                      let _ = project.read().save(); 
+                },
+                on_open_providers: move |_| {
+                    open_providers_dialog();
                 },
                 show_preview_stats: show_preview_stats(),
                 on_toggle_preview_stats: move |_| {
@@ -1243,6 +1435,7 @@ pub fn App() -> Element {
                         project: project,
                         selection: selection,
                         preview_dirty: preview_dirty,
+                        providers: provider_entries,
                     }
                 }
             }
@@ -1361,6 +1554,7 @@ pub fn App() -> Element {
                                         PREVIEW_CACHE_BUDGET_BYTES,
                                     ),
                                 ));
+                                provider_entries.set(load_global_provider_entries());
                                 project.set(new_proj);
                                 preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);
@@ -1380,6 +1574,7 @@ pub fn App() -> Element {
                                         PREVIEW_CACHE_BUDGET_BYTES,
                                     ),
                                 ));
+                                provider_entries.set(load_global_provider_entries());
                                 project.set(loaded_proj);
                                 preview_dirty.set(true);
                                 spawn_missing_duration_probes(project);
@@ -1429,6 +1624,216 @@ pub fn App() -> Element {
                                 "Go to Project Wizard"
                              }
                          }
+                    }
+                }
+            }
+
+            // Providers Modal (Global JSON Editor)
+            if show_providers_dialog() {
+                // Backdrop
+                div {
+                    style: "
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        background-color: rgba(0, 0, 0, 0.6);
+                        z-index: 3000;
+                    ",
+                    onclick: move |_| show_providers_dialog.set(false),
+                }
+                // Modal
+                div {
+                    style: "
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        display: flex; align-items: center; justify-content: center;
+                        z-index: 3001;
+                    ",
+                    onclick: move |e| e.stop_propagation(),
+                    div {
+                        style: "
+                            width: 920px; height: 620px;
+                            background-color: {BG_ELEVATED};
+                            border: 1px solid {BORDER_DEFAULT};
+                            border-radius: 10px;
+                            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+                            display: flex; flex-direction: column;
+                            overflow: hidden;
+                        ",
+                        div {
+                            style: "
+                                display: flex; align-items: center; justify-content: space-between;
+                                padding: 14px 18px;
+                                background-color: {BG_SURFACE};
+                                border-bottom: 1px solid {BORDER_DEFAULT};
+                            ",
+                            div {
+                                style: "display: flex; flex-direction: column; gap: 4px;",
+                                span { style: "font-size: 13px; font-weight: 600; color: {TEXT_PRIMARY};", "Providers (Global)" }
+                                span { style: "font-size: 10px; color: {TEXT_DIM};", "{providers_root_label}" }
+                            }
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    background: transparent; border: none; color: {TEXT_SECONDARY};
+                                    font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+                                ",
+                                onclick: move |_| show_providers_dialog.set(false),
+                                "Close"
+                            }
+                        }
+
+                        div {
+                            style: "flex: 1; display: flex; min-height: 0;",
+                            // Left list
+                            div {
+                                style: "
+                                    width: 240px; padding: 12px;
+                                    border-right: 1px solid {BORDER_SUBTLE};
+                                    background-color: {BG_BASE};
+                                    display: flex; flex-direction: column; gap: 8px;
+                                ",
+                                div {
+                                    style: "display: flex; gap: 6px;",
+                                    button {
+                                        class: "collapse-btn",
+                                        style: "
+                                            flex: 1; padding: 6px 8px;
+                                            background-color: {BG_SURFACE};
+                                            border: 1px solid {BORDER_DEFAULT};
+                                            border-radius: 6px;
+                                            color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
+                                        ",
+                                        onclick: on_provider_new,
+                                        "New"
+                                    }
+                                    button {
+                                        class: "collapse-btn",
+                                        style: "
+                                            flex: 1; padding: 6px 8px;
+                                            background-color: {BG_SURFACE};
+                                            border: 1px solid {BORDER_DEFAULT};
+                                            border-radius: 6px;
+                                            color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
+                                        ",
+                                        onclick: on_provider_reload,
+                                        "Reload"
+                                    }
+                                }
+                                div {
+                                    style: "
+                                        flex: 1; overflow-y: auto;
+                                        border: 1px solid {BORDER_SUBTLE};
+                                        border-radius: 6px;
+                                        background-color: {BG_ELEVATED};
+                                        padding: 6px;
+                                    ",
+                                    if provider_files().is_empty() {
+                                        div {
+                                            style: "
+                                                padding: 10px; font-size: 11px; color: {TEXT_DIM};
+                                                text-align: center;
+                                            ",
+                                            "No providers yet"
+                                        }
+                                    } else {
+                                        for path in provider_files().iter() {
+                                            {
+                                                let file_name = path
+                                                    .file_name()
+                                                    .and_then(|name| name.to_str())
+                                                    .unwrap_or("provider.json");
+                                                let path_clone = path.clone();
+                                                let selected = provider_editor_path()
+                                                    .as_ref()
+                                                    .map(|selected| selected == path)
+                                                    .unwrap_or(false);
+                                                let item_bg = if selected { BG_HOVER } else { "transparent" };
+                                                let item_border = if selected { BORDER_ACCENT } else { BORDER_SUBTLE };
+                                                rsx! {
+                                                    div {
+                                                        key: "{path.display()}",
+                                                        class: "collapse-btn",
+                                                        style: "
+                                                            padding: 6px 8px; margin-bottom: 6px;
+                                                            border: 1px solid {item_border};
+                                                            background-color: {item_bg};
+                                                            border-radius: 6px;
+                                                            font-size: 11px; color: {TEXT_PRIMARY};
+                                                            cursor: pointer;
+                                                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                                                        ",
+                                                        onclick: move |_: MouseEvent| {
+                                                            provider_editor_path.set(Some(path_clone.clone()));
+                                                            provider_editor_text.set(read_provider_file(&path_clone).unwrap_or_default());
+                                                            provider_editor_error.set(None);
+                                                            provider_editor_dirty.set(false);
+                                                        },
+                                                        "{file_name}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        width: 100%; padding: 6px 8px;
+                                        background-color: transparent;
+                                        border: 1px solid {BORDER_DEFAULT};
+                                        border-radius: 6px;
+                                        color: #ef4444; font-size: 11px; cursor: pointer;
+                                    ",
+                                    onclick: on_provider_delete,
+                                    "Delete"
+                                }
+                            }
+
+                            // Right editor
+                            div {
+                                style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;",
+                                textarea {
+                                    style: "
+                                        flex: 1; width: 100%;
+                                        background-color: {BG_SURFACE};
+                                        border: 1px solid {BORDER_DEFAULT};
+                                        border-radius: 6px;
+                                        color: {TEXT_PRIMARY};
+                                        font-family: 'SF Mono', Consolas, monospace;
+                                        font-size: 11px; line-height: 1.5;
+                                        padding: 10px; resize: none;
+                                        white-space: pre;
+                                        user-select: text;
+                                    ",
+                                    value: "{provider_editor_text()}",
+                                    oninput: move |e| {
+                                        provider_editor_text.set(e.value());
+                                        provider_editor_dirty.set(true);
+                                        provider_editor_error.set(None);
+                                    }
+                                }
+                                if let Some(error) = provider_editor_error() {
+                                    div {
+                                        style: "font-size: 11px; color: #f97316;",
+                                        "{error}"
+                                    }
+                                }
+                                div {
+                                    style: "display: flex; align-items: center; justify-content: space-between;",
+                                    span { style: "font-size: 10px; color: {TEXT_DIM};", "File: {provider_selected_label}" }
+                                    button {
+                                        class: "collapse-btn",
+                                        style: "
+                                            padding: 6px 12px;
+                                            background-color: {BG_SURFACE};
+                                            border: 1px solid {BORDER_DEFAULT};
+                                            border-radius: 6px;
+                                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
+                                        ",
+                                        onclick: on_provider_save,
+                                        "{provider_save_label}"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2064,6 +2469,7 @@ fn TitleBar(
     project_name: String, 
     on_new_project: EventHandler<MouseEvent>,
     on_save: EventHandler<MouseEvent>,
+    on_open_providers: EventHandler<MouseEvent>,
     show_preview_stats: bool,
     on_toggle_preview_stats: EventHandler<MouseEvent>,
     use_hw_decode: bool,
@@ -2103,6 +2509,16 @@ fn TitleBar(
                     ",
                     onclick: move |e| on_save.call(e),
                     "Save"
+                }
+
+                button {
+                    class: "collapse-btn",
+                    style: "
+                        background: transparent; border: none; color: {TEXT_PRIMARY}; 
+                        font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+                    ",
+                    onclick: move |e| on_open_providers.call(e),
+                    "Providers"
                 }
             }
             
@@ -2396,7 +2812,43 @@ fn AttributesPanelContent(
     project: Signal<crate::state::Project>,
     selection: Signal<crate::state::SelectionState>,
     preview_dirty: Signal<bool>,
+    providers: Signal<Vec<ProviderEntry>>,
 ) -> Element {
+    let gen_config = use_signal(|| None::<crate::state::GenerativeConfig>);
+
+    use_effect(move || {
+        let mut gen_config = gen_config.clone();
+        let selection_state = selection.read();
+        let selected_count = selection_state.clip_ids.len();
+        let selected_clip_id = selection_state.primary_clip();
+        drop(selection_state);
+
+        if selected_count != 1 {
+            gen_config.set(None);
+            return;
+        }
+
+        let Some(clip_id) = selected_clip_id else {
+            gen_config.set(None);
+            return;
+        };
+
+        let project_read = project.read();
+        let Some((folder, _output)) = generative_info_for_clip(&project_read, clip_id) else {
+            gen_config.set(None);
+            return;
+        };
+        let Some(project_root) = project_read.project_path.clone() else {
+            gen_config.set(None);
+            return;
+        };
+        let folder_path = project_root.join(folder);
+        drop(project_read);
+
+        let config = crate::state::GenerativeConfig::load(&folder_path).unwrap_or_default();
+        gen_config.set(Some(config));
+    });
+
     let selection_state = selection.read();
     let selected_count = selection_state.clip_ids.len();
     let selected_clip_id = selection_state.primary_clip();
@@ -2471,11 +2923,73 @@ fn AttributesPanelContent(
         }
     };
 
-    let asset_name = project_read
-        .find_asset(clip.asset_id)
+    let asset = project_read.find_asset(clip.asset_id).cloned();
+    let asset_name = asset
+        .as_ref()
         .map(|asset| asset.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
+    let project_root = project_read.project_path.clone();
+    let generative_info = asset.as_ref().and_then(|asset| match &asset.kind {
+        crate::state::AssetKind::GenerativeVideo { folder, .. } => {
+            Some((folder.clone(), ProviderOutputType::Video))
+        }
+        crate::state::AssetKind::GenerativeImage { folder, .. } => {
+            Some((folder.clone(), ProviderOutputType::Image))
+        }
+        crate::state::AssetKind::GenerativeAudio { folder, .. } => {
+            Some((folder.clone(), ProviderOutputType::Audio))
+        }
+        _ => None,
+    });
     drop(project_read);
+
+    let gen_output = generative_info.as_ref().map(|(_, output)| *output);
+    let gen_folder_path = generative_info.as_ref().and_then(|(folder, _)| {
+        project_root.as_ref().map(|root| root.join(folder))
+    });
+    let providers_list = providers.read().clone();
+    let compatible_providers: Vec<ProviderEntry> = match gen_output {
+        Some(output) => providers_list
+            .iter()
+            .filter(|entry| entry.output_type == output)
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+    let config_snapshot = gen_config().unwrap_or_default();
+    let selected_provider_id = config_snapshot.provider_id;
+    let selected_provider = selected_provider_id.and_then(|id| {
+        compatible_providers
+            .iter()
+            .find(|entry| entry.id == id)
+            .cloned()
+    });
+    let selected_provider_value = selected_provider_id
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let show_missing_provider = selected_provider_id.is_some() && selected_provider.is_none();
+    let providers_path_label = crate::core::provider_store::global_providers_root()
+        .display()
+        .to_string();
+    let on_provider_change = {
+        let mut gen_config = gen_config.clone();
+        let gen_folder_path = gen_folder_path.clone();
+        move |e: FormEvent| {
+            let value = e.value();
+            let provider_id = value
+                .trim()
+                .parse::<uuid::Uuid>()
+                .ok();
+            let mut config = gen_config().unwrap_or_default();
+            config.provider_id = provider_id;
+            if let Some(folder_path) = gen_folder_path.as_ref() {
+                if let Err(err) = config.save(folder_path) {
+                    println!("Failed to save generative config: {}", err);
+                }
+            }
+            gen_config.set(Some(config));
+        }
+    };
 
     let transform = clip.transform;
     let clip_id = clip.id;
@@ -2587,6 +3101,74 @@ fn AttributesPanelContent(
                     }
                 }
             }
+
+            if let Some(_output) = gen_output {
+                div {
+                    style: "
+                        display: flex; flex-direction: column; gap: 10px;
+                        padding: 10px; background-color: {BG_SURFACE};
+                        border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                    ",
+                    div {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                        "Generative"
+                    }
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px;",
+                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
+                        select {
+                            value: "{selected_provider_value}",
+                            style: "
+                                width: 100%; padding: 6px 8px; font-size: 12px;
+                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                outline: none;
+                            ",
+                            onchange: on_provider_change,
+                            option { value: "", "None selected" }
+                            for provider in compatible_providers.iter() {
+                                option { value: "{provider.id}", "{provider.name}" }
+                            }
+                        }
+                    }
+                    if show_missing_provider {
+                        div {
+                            style: "font-size: 11px; color: #f97316;",
+                            "Selected provider missing from global providers."
+                        }
+                    }
+                    if compatible_providers.is_empty() {
+                        div {
+                            style: "font-size: 11px; color: {TEXT_DIM};",
+                            "No providers configured. Add JSON files under {providers_path_label}."
+                        }
+                    }
+                    if let Some(provider) = selected_provider {
+                        div {
+                            style: "display: flex; flex-direction: column; gap: 6px;",
+                            div {
+                                style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                                "Inputs"
+                            }
+                            if provider.inputs.is_empty() {
+                                span { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs defined." }
+                            } else {
+                                for input in provider.inputs.iter() {
+                                    div {
+                                        style: "display: flex; align-items: baseline; justify-content: space-between; gap: 8px;",
+                                        span { style: "font-size: 11px; color: {TEXT_PRIMARY};", "{input.label}" }
+                                        span { style: "font-size: 10px; color: {TEXT_DIM};", "{provider_input_type_label(&input.input_type)}" }
+                                        if input.required {
+                                            span { style: "font-size: 10px; color: #f97316;", "*" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
 }
@@ -2858,6 +3440,100 @@ fn ensure_generative_config(project_root: &Path, asset: &crate::state::Asset) {
             config_path, err
         );
     }
+}
+
+fn load_global_provider_entries() -> Vec<ProviderEntry> {
+    match crate::core::provider_store::load_global_provider_entries() {
+        Ok(entries) => entries,
+        Err(err) => {
+            println!("Failed to load provider entries: {}", err);
+            Vec::new()
+        }
+    }
+}
+
+fn generative_info_for_clip(
+    project: &crate::state::Project,
+    clip_id: uuid::Uuid,
+) -> Option<(std::path::PathBuf, ProviderOutputType)> {
+    let clip = project.clips.iter().find(|clip| clip.id == clip_id)?;
+    let asset = project.find_asset(clip.asset_id)?;
+    let (folder, output) = match &asset.kind {
+        crate::state::AssetKind::GenerativeVideo { folder, .. } => {
+            (folder.clone(), ProviderOutputType::Video)
+        }
+        crate::state::AssetKind::GenerativeImage { folder, .. } => {
+            (folder.clone(), ProviderOutputType::Image)
+        }
+        crate::state::AssetKind::GenerativeAudio { folder, .. } => {
+            (folder.clone(), ProviderOutputType::Audio)
+        }
+        _ => return None,
+    };
+    Some((folder, output))
+}
+
+fn provider_input_type_label(input_type: &ProviderInputType) -> &'static str {
+    match input_type {
+        ProviderInputType::Image => "image",
+        ProviderInputType::Video => "video",
+        ProviderInputType::Audio => "audio",
+        ProviderInputType::Text => "text",
+        ProviderInputType::Number => "number",
+        ProviderInputType::Integer => "integer",
+        ProviderInputType::Boolean => "boolean",
+        ProviderInputType::Enum { .. } => "enum",
+    }
+}
+
+fn list_global_provider_files() -> Vec<std::path::PathBuf> {
+    let root = crate::core::provider_store::global_providers_root();
+    let mut files = Vec::new();
+    let read_dir = match std::fs::read_dir(&root) {
+        Ok(read_dir) => read_dir,
+        Err(_) => return files,
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("json"))
+            .unwrap_or(false)
+        {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+fn read_provider_file(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
+}
+
+fn write_provider_file(path: &Path, contents: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, contents)?;
+    Ok(())
+}
+
+fn provider_path_for_entry(entry: &ProviderEntry) -> std::path::PathBuf {
+    crate::core::provider_store::global_providers_root().join(format!("{}.json", entry.id))
+}
+
+fn default_provider_entry() -> ProviderEntry {
+    let mut entry = ProviderEntry::new(
+        "New Provider",
+        ProviderOutputType::Image,
+        ProviderConnection::ComfyUi {
+            base_url: "http://127.0.0.1:8188".to_string(),
+        },
+    );
+    entry.inputs = Vec::new();
+    entry
 }
 
 fn timeline_zoom_bounds(duration: f64, viewport_width: Option<f64>, fps: f64) -> (f64, f64) {

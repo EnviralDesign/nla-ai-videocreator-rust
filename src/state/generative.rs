@@ -60,13 +60,15 @@ impl GenerativeConfig {
             }
             Err(err) => return Err(err),
         };
-        let config = serde_json::from_str(&json)?;
+        let config = serde_json::from_str(&json)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         Ok(config)
     }
 
     pub fn save(&self, folder: &Path) -> io::Result<()> {
         fs::create_dir_all(folder)?;
-        let json = serde_json::to_string_pretty(self)?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
         fs::write(config_path(folder), json)?;
         Ok(())
     }

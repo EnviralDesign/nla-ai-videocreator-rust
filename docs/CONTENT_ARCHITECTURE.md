@@ -140,6 +140,8 @@ Each entry declares:
 
 Providers are grouped by **output type**. When creating a "Generative Video," the user picks from providers that output video. The input requirements vary per provider—that's determined by the schema.
 
+**MVP note:** Provider configs are stored globally (see path above) and referenced by `provider_id` inside each generative asset's `config.json`.
+
 Common patterns:
 | Output | Common Input Patterns |
 |--------|----------------------|
@@ -250,8 +252,13 @@ my-project/
 │       └── ...
 ├── exports/                  # Final rendered outputs
 │   └── final_v1.mp4
-└── .providers/               # Provider configurations for this project
-    └── my_comfy_t2v.json
+```
+
+Global providers (MVP, Windows):
+```
+%LOCALAPPDATA%\NLA-AI-VideoCreator\providers\
+├── <provider-id>.json
+└── ...
 ```
 
 ### In-Project Only (Strict MVP)

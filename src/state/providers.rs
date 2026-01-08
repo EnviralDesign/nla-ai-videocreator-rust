@@ -49,7 +49,7 @@ pub enum ProviderConnection {
     CustomHttp { base_url: String, api_key: Option<String> },
 }
 
-/// A configured provider entry stored under `.providers/`.
+/// A configured provider entry stored on disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderEntry {
     pub id: Uuid,
