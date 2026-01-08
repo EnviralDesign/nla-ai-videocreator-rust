@@ -1,0 +1,84 @@
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Transform controls for a visual clip.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClipTransform {
+    /// Horizontal translation in project pixels.
+    pub position_x: f32,
+    /// Vertical translation in project pixels.
+    pub position_y: f32,
+    /// Horizontal scale factor.
+    pub scale_x: f32,
+    /// Vertical scale factor.
+    pub scale_y: f32,
+    /// Rotation in degrees.
+    pub rotation_deg: f32,
+    /// Opacity from 0.0 (transparent) to 1.0 (opaque).
+    pub opacity: f32,
+}
+
+impl Default for ClipTransform {
+    fn default() -> Self {
+        Self {
+            position_x: 0.0,
+            position_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotation_deg: 0.0,
+            opacity: 1.0,
+        }
+    }
+}
+
+/// A clip placed on a track
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Clip {
+    /// Unique identifier
+    pub id: Uuid,
+    /// Reference to the asset this clip uses
+    pub asset_id: Uuid,
+    /// The track this clip is on
+    pub track_id: Uuid,
+    /// Start time in seconds
+    pub start_time: f64,
+    /// Duration in seconds
+    pub duration: f64,
+    /// Trim-in time in seconds (offset into source media)
+    #[serde(default)]
+    pub trim_in_seconds: f64,
+    /// Optional user-facing label for this clip instance.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Transform applied when compositing this clip.
+    #[serde(default)]
+    pub transform: ClipTransform,
+}
+
+impl Clip {
+    /// Create a new clip
+    #[allow(dead_code)]
+    pub fn new(asset_id: Uuid, track_id: Uuid, start_time: f64, duration: f64) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            asset_id,
+            track_id,
+            start_time,
+            duration,
+            trim_in_seconds: 0.0,
+            label: None,
+            transform: ClipTransform::default(),
+        }
+    }
+
+    /// Get the end time of this clip
+    pub fn end_time(&self) -> f64 {
+        self.start_time + self.duration
+    }
+
+    /// Check if this clip overlaps with a time range
+    #[allow(dead_code)]
+    pub fn overlaps(&self, start: f64, end: f64) -> bool {
+        self.start_time < end && self.end_time() > start
+    }
+}

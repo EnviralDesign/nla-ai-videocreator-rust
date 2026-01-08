@@ -1,9 +1,15 @@
-use serde::{Deserialize, Serialize};
-
 #[cfg(target_os = "windows")]
-use crate::core::preview::{PreviewLayerPlacement, PreviewLayerStack};
+use crate::core::preview::PreviewLayerStack;
 #[cfg(not(target_os = "windows"))]
 use crate::core::preview::PreviewLayerStack;
+#[cfg(target_os = "windows")]
+use super::layers::{align_to, compute_layer_uniform, create_layer};
+#[cfg(target_os = "windows")]
+use super::shaders::{BORDER_COLOR_LINEAR, BORDER_SHADER, PREVIEW_CLEAR_COLOR, PREVIEW_SHADER};
+#[cfg(target_os = "windows")]
+use super::types::{BorderUniform, GpuLayer, LayerUniform, PreviewBounds, QUAD_VERTICES, Vertex};
+#[cfg(not(target_os = "windows"))]
+use super::types::PreviewBounds;
 #[cfg(target_os = "windows")]
 use dioxus::desktop::tao::platform::windows::WindowExtWindows;
 #[cfg(target_os = "windows")]
@@ -20,242 +26,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const PREVIEW_NATIVE_OFFSET_X: i32 = -8;
 #[cfg(target_os = "windows")]
 const PREVIEW_NATIVE_OFFSET_Y: i32 = -1;
-#[cfg(target_os = "windows")]
-// BG_DEEPEST is #09090b in sRGB. Convert to linear space for wgpu clear color.
-// sRGB to linear: if c <= 0.04045 then c/12.92, else ((c+0.055)/1.055)^2.4
-// #09 = 9/255 = 0.0353 -> 0.0353/12.92 = 0.00273
-// #0b = 11/255 = 0.0431 -> 0.0431/12.92 = 0.00334
-const PREVIEW_CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.00273,
-    g: 0.00273,
-    b: 0.00334,
-    a: 1.0,
-};
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 2],
-    uv: [f32; 2],
-}
-
-#[cfg(target_os = "windows")]
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: 8,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-const QUAD_VERTICES: [Vertex; 6] = [
-    Vertex {
-        position: [0.0, 0.0],
-        uv: [0.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 0.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.0, 0.0],
-        uv: [0.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.0, 1.0],
-        uv: [0.0, 1.0],
-    },
-];
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct LayerUniform {
-    scale_center: [f32; 4],
-    rotation_opacity: [f32; 4],
-}
-
-#[cfg(target_os = "windows")]
-impl LayerUniform {
-    fn new(
-        scale: [f32; 2],
-        center: [f32; 2],
-        rotation_deg: f32,
-        opacity: f32,
-        aspect: f32,
-    ) -> Self {
-        let radians = -rotation_deg.to_radians();
-        let (sin, cos) = radians.sin_cos();
-        Self {
-            scale_center: [scale[0], scale[1], center[0], center[1]],
-            rotation_opacity: [cos, sin, opacity, aspect],
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-const PREVIEW_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-struct LayerUniform {
-    scale_center: vec4<f32>,
-    rotation_opacity: vec4<f32>,
-};
-
-@group(0) @binding(0)
-var layer_tex: texture_2d<f32>;
-@group(0) @binding(1)
-var layer_sampler: sampler;
-@group(1) @binding(0)
-var<uniform> layer_uniform: LayerUniform;
-
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    let scale = layer_uniform.scale_center.xy;
-    let center = layer_uniform.scale_center.zw;
-    let rot = layer_uniform.rotation_opacity.xy;
-    let aspect = layer_uniform.rotation_opacity.w;
-    let inv_aspect = 1.0 / max(aspect, 0.0001);
-    let local = vec2<f32>(
-        (input.position.x - 0.5) * scale.x,
-        (0.5 - input.position.y) * scale.y
-    );
-    let rotated = vec2<f32>(
-        local.x * rot.x - local.y * inv_aspect * rot.y,
-        local.x * aspect * rot.y + local.y * rot.x
-    );
-    let pos = center + rotated;
-    out.position = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = input.uv;
-    return out;
-}
-
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(layer_tex, layer_sampler, input.uv);
-    return vec4<f32>(color.rgb, color.a * layer_uniform.rotation_opacity.z);
-}
-"#;
-
-// Shader for drawing a solid-colored border quad in screen space.
-// Uses a simple uniform for position/scale and outputs a fixed color.
-#[cfg(target_os = "windows")]
-const BORDER_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-};
-
-struct BorderUniform {
-    // xy = position (NDC), zw = size (NDC)
-    rect: vec4<f32>,
-    // rgba color
-    color: vec4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> border_uniform: BorderUniform;
-
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    let pos = border_uniform.rect.xy + input.position * border_uniform.rect.zw;
-    out.position = vec4<f32>(pos, 0.0, 1.0);
-    return out;
-}
-
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return border_uniform.color;
-}
-"#;
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct BorderUniform {
-    rect: [f32; 4],  // x, y (NDC top-left corner), w, h (NDC size)
-    color: [f32; 4], // rgba
-}
-
-// Border color matching PLATE_BORDER_COLOR (#27272a) in sRGB, converted to linear
-// #27 = 39/255 = 0.153 sRGB -> ~0.0201 linear
-// #2a = 42/255 = 0.165 sRGB -> ~0.0231 linear
-#[cfg(target_os = "windows")]
-const BORDER_COLOR_LINEAR: [f32; 4] = [0.0201, 0.0201, 0.0231, 1.0];
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PreviewBounds {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    pub dpr: f64,
-}
-
-impl PreviewBounds {
-    pub fn to_physical_position(self) -> dioxus::desktop::tao::dpi::PhysicalPosition<i32> {
-        let scale = self.dpr.max(0.01);
-        dioxus::desktop::tao::dpi::PhysicalPosition::new(
-            (self.x * scale).round() as i32,
-            (self.y * scale).round() as i32,
-        )
-    }
-
-    pub fn to_physical_size(self) -> dioxus::desktop::tao::dpi::PhysicalSize<u32> {
-        let scale = self.dpr.max(0.01);
-        let width = (self.width * scale).round().max(1.0) as u32;
-        let height = (self.height * scale).round().max(1.0) as u32;
-        dioxus::desktop::tao::dpi::PhysicalSize::new(width, height)
-    }
-}
-
-#[cfg(target_os = "windows")]
-struct GpuLayer {
-    texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
-    size: (u32, u32),
-    placement: PreviewLayerPlacement,
-}
-
 #[cfg(target_os = "windows")]
 pub struct PreviewGpuSurface {
     window: dioxus::desktop::tao::window::Window,
@@ -564,137 +334,6 @@ impl PreviewGpuSurface {
         })
     }
 
-    fn create_layer_texture(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        format: wgpu::TextureFormat,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("preview_gpu_layer_texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
-    }
-
-    fn create_layer(
-        device: &wgpu::Device,
-        sampler: &wgpu::Sampler,
-        texture_layout: &wgpu::BindGroupLayout,
-        uniform_layout: &wgpu::BindGroupLayout,
-        width: u32,
-        height: u32,
-        placement: PreviewLayerPlacement,
-    ) -> GpuLayer {
-        let (texture, view) =
-            Self::create_layer_texture(device, width, height, wgpu::TextureFormat::Rgba8UnormSrgb);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("preview_gpu_layer_texture_bind_group"),
-            layout: texture_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-
-        let uniform = LayerUniform::new(
-            [0.0, 0.0],
-            [0.0, 0.0],
-            placement.rotation_deg,
-            placement.opacity,
-            1.0,
-        );
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("preview_gpu_layer_uniform"),
-            contents: bytemuck::bytes_of(&uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("preview_gpu_layer_uniform_bind_group"),
-            layout: uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        GpuLayer {
-            texture,
-            bind_group,
-            uniform_buffer,
-            uniform_bind_group,
-            size: (width, height),
-            placement,
-        }
-    }
-
-    fn compute_layer_uniform(
-        &self,
-        placement: PreviewLayerPlacement,
-        canvas_size: (u32, u32),
-    ) -> Option<LayerUniform> {
-        let surface_w = self.size.width.max(1) as f32;
-        let surface_h = self.size.height.max(1) as f32;
-        let canvas_w = canvas_size.0.max(1) as f32;
-        let canvas_h = canvas_size.1.max(1) as f32;
-        if surface_w <= 0.0 || surface_h <= 0.0 {
-            return None;
-        }
-
-        let preview_scale = (surface_w / canvas_w).min(surface_h / canvas_h).max(0.0);
-        if preview_scale <= 0.0 {
-            return None;
-        }
-
-        let preview_w = canvas_w * preview_scale;
-        let preview_h = canvas_h * preview_scale;
-        let offset_x = (surface_w - preview_w) * 0.5;
-        let offset_y = (surface_h - preview_h) * 0.5;
-
-        let rect_w = placement.scaled_w * preview_scale;
-        let rect_h = placement.scaled_h * preview_scale;
-        if rect_w <= 0.0 || rect_h <= 0.0 {
-            return None;
-        }
-
-        let rect_x = offset_x + placement.offset_x * preview_scale;
-        let rect_y = offset_y + placement.offset_y * preview_scale;
-
-        let center_x = rect_x + rect_w * 0.5;
-        let center_y = rect_y + rect_h * 0.5;
-
-        let scale_x = rect_w / surface_w * 2.0;
-        let scale_y = rect_h / surface_h * 2.0;
-        let center_x = center_x / surface_w * 2.0 - 1.0;
-        let center_y = 1.0 - center_y / surface_h * 2.0;
-        let aspect = surface_w / surface_h;
-
-        Some(LayerUniform::new(
-            [scale_x, scale_y],
-            [center_x, center_y],
-            placement.rotation_deg,
-            placement.opacity,
-            aspect,
-        ))
-    }
-
     pub fn apply_bounds(&mut self, bounds: PreviewBounds) -> bool {
         // Inset the overlay bounds to prevent overlap with adjacent resize handles.
         // The resize handles are 4px wide, so we inset by that much plus a small margin.
@@ -763,7 +402,7 @@ impl PreviewGpuSurface {
             let height = layer.image.height().max(1);
 
             if index >= self.layers.len() {
-                self.layers.push(Self::create_layer(
+                self.layers.push(create_layer(
                     &self.device,
                     &self.sampler,
                     &self.texture_bind_group_layout,
@@ -773,7 +412,7 @@ impl PreviewGpuSurface {
                     layer.placement,
                 ));
             } else if self.layers[index].size != (width, height) {
-                self.layers[index] = Self::create_layer(
+                self.layers[index] = create_layer(
                     &self.device,
                     &self.sampler,
                     &self.texture_bind_group_layout,
@@ -954,7 +593,7 @@ impl PreviewGpuSurface {
                 let canvas_size = self.canvas_size;
                 for layer in &self.layers {
                     let Some(uniform) =
-                        self.compute_layer_uniform(layer.placement, canvas_size)
+                        compute_layer_uniform(self.size, layer.placement, canvas_size)
                     else {
                         continue;
                     };
@@ -1002,14 +641,6 @@ impl PreviewGpuSurface {
             );
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn align_to(value: u32, alignment: u32) -> u32 {
-    if alignment == 0 {
-        return value;
-    }
-    ((value + alignment - 1) / alignment) * alignment
 }
 
 #[cfg(not(target_os = "windows"))]

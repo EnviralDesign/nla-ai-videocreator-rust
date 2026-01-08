@@ -782,13 +782,21 @@ src/
 ├── components/      # UI components (startup modal, panels, fields)
 ├── timeline/        # TimelinePanel, ruler, tracks, playback controls
 ├── hotkeys/         # Hotkey system (Registry, Actions, Context)
+├── core/            # Core logic (preview renderer, GPU surface, media helpers)
+│   ├── preview/     # Preview renderer/cache/layer/util split
+│   └── preview_gpu/ # WGPU preview surface/shaders/layer helpers
 └── state/
     ├── mod.rs       # Module exports
     ├── asset.rs     # Asset, AssetKind (file & generative)
-    └── project.rs   # Project, Track, Clip, Marker, save/load
+    └── project/     # Project, Track, Clip, Marker, save/load split into modules
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Fixed native preview Y-flip by inverting V coordinates in the GPU preview shader.
+- **2026-01-08:** Split GPU preview into `src/core/preview_gpu/` (surface, shaders, types, layers) and cleaned up module boundaries.
+- **2026-01-08:** Split preview renderer into `src/core/preview/` (renderer, cache, layers, types, utils) with explicit re-exports.
+- **2026-01-08:** Silenced the unused `Project::save_project_as` warning via an explicit allow annotation.
+- **2026-01-08:** Split project state into `src/state/project/` (project, track, clip, marker, settings, persistence) with `mod.rs` re-exports.
 - **2026-01-08:** Split the timeline module into `src/timeline/` (panel, ruler, playback controls, track label/row, clip element) with `mod.rs` re-exports and shared constants.
 - **2026-01-08:** Completed REFACTOR.md Step 1.11 by relocating remaining helper functions into `core/` and `state/` modules (no helper functions remain in `app.rs` or component files).
 - **2026-01-08:** Extracted Attributes and Assets panels into `src/components/attributes/` and `src/components/assets/`; relocated provider/media/generative helpers into `core/` and `state/`, and moved timeline zoom bounds into the timeline module.
