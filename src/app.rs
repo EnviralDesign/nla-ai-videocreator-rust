@@ -916,6 +916,11 @@ pub fn App() -> Element {
         .display()
         .to_string();
     let provider_save_label = if provider_editor_dirty() { "Save *" } else { "Save" };
+    let provider_build_label = if provider_editor_path().is_some() {
+        "Edit Build"
+    } else {
+        "New Build"
+    };
     let provider_selected_label = provider_editor_path()
         .as_ref()
         .and_then(|path| path.file_name().and_then(|name| name.to_str()))
@@ -1478,6 +1483,7 @@ pub fn App() -> Element {
                 provider_editor_dirty: provider_editor_dirty,
                 providers_root_label: providers_root_label.clone(),
                 provider_save_label: provider_save_label.to_string(),
+                provider_build_label: provider_build_label.to_string(),
                 provider_selected_label: provider_selected_label.to_string(),
                 on_provider_new: on_provider_new,
                 on_provider_reload: on_provider_reload,

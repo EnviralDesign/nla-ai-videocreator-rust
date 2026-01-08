@@ -13,6 +13,7 @@ pub fn ProvidersModal(
     provider_editor_dirty: Signal<bool>,
     providers_root_label: String,
     provider_save_label: String,
+    provider_build_label: String,
     provider_selected_label: String,
     on_provider_new: EventHandler<MouseEvent>,
     on_provider_reload: EventHandler<MouseEvent>,
@@ -96,7 +97,7 @@ pub fn ProvidersModal(
                                     color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
                                 ",
                                 onclick: on_provider_build,
-                                "Build"
+                                "{provider_build_label}"
                             }
                             button {
                                 class: "collapse-btn",
@@ -131,6 +132,12 @@ pub fn ProvidersModal(
                                 background-color: {BG_ELEVATED};
                                 padding: 6px;
                             ",
+                            onclick: move |_| {
+                                provider_editor_path.set(None);
+                                provider_editor_text.set(String::new());
+                                provider_editor_error.set(None);
+                                provider_editor_dirty.set(false);
+                            },
                             if provider_files().is_empty() {
                                 div {
                                     style: "
@@ -166,11 +173,19 @@ pub fn ProvidersModal(
                                                     cursor: pointer;
                                                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                                                 ",
-                                                onclick: move |_: MouseEvent| {
-                                                    provider_editor_path.set(Some(path_clone.clone()));
-                                                    provider_editor_text.set(read_provider_file(&path_clone).unwrap_or_default());
-                                                    provider_editor_error.set(None);
-                                                    provider_editor_dirty.set(false);
+                                                onclick: move |evt: MouseEvent| {
+                                                    evt.stop_propagation();
+                                                    if selected {
+                                                        provider_editor_path.set(None);
+                                                        provider_editor_text.set(String::new());
+                                                        provider_editor_error.set(None);
+                                                        provider_editor_dirty.set(false);
+                                                    } else {
+                                                        provider_editor_path.set(Some(path_clone.clone()));
+                                                        provider_editor_text.set(read_provider_file(&path_clone).unwrap_or_default());
+                                                        provider_editor_error.set(None);
+                                                        provider_editor_dirty.set(false);
+                                                    }
                                                 },
                                                 "{file_name}"
                                             }

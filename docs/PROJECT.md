@@ -802,6 +802,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Clicking the provider list background now clears selection (same as clicking the selected item).
+- **2026-01-08:** Providers modal now supports deselection and updates the Build button label based on selection.
 - **2026-01-08:** Hid tag fields in the Provider Builder UI; tagging is now a documented TODO.
 - **2026-01-08:** Provider Builder now opens in edit mode for selected ComfyUI providers and preloads manifests/workflows.
 - **2026-01-08:** Wired the ComfyUI adapter to consume provider manifests (selector-based input/output binding with optional tags).
