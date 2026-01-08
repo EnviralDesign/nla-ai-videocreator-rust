@@ -780,7 +780,7 @@ src/
 ├── app.rs           # Main App component, UI shell, dialogs
 ├── constants.rs     # Shared UI constants (colors, sizing, scripts)
 ├── components/      # UI components (startup modal, panels, fields)
-├── timeline.rs      # TimelinePanel, ruler, tracks, playback controls
+├── timeline/        # TimelinePanel, ruler, tracks, playback controls
 ├── hotkeys/         # Hotkey system (Registry, Actions, Context)
 └── state/
     ├── mod.rs       # Module exports
@@ -789,6 +789,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Split the timeline module into `src/timeline/` (panel, ruler, playback controls, track label/row, clip element) with `mod.rs` re-exports and shared constants.
 - **2026-01-08:** Completed REFACTOR.md Step 1.11 by relocating remaining helper functions into `core/` and `state/` modules (no helper functions remain in `app.rs` or component files).
 - **2026-01-08:** Extracted Attributes and Assets panels into `src/components/attributes/` and `src/components/assets/`; relocated provider/media/generative helpers into `core/` and `state/`, and moved timeline zoom bounds into the timeline module.
 - **2026-01-08:** Began refactor plan by extracting shared UI constants, startup modal, and panel components into `src/constants.rs` and `src/components/`; moved shared input fields into `components/common/fields.rs`.
