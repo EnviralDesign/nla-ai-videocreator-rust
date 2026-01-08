@@ -637,6 +637,7 @@ pub fn App() -> Element {
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
     let show_providers_dialog = use_signal(|| false);
+    let mut menu_open = use_signal(|| false); // Track if any dropdown menu is open
     let provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
     let provider_editor_text = use_signal(String::new);
     let provider_editor_error = use_signal(|| None::<String>);
@@ -780,7 +781,7 @@ pub fn App() -> Element {
     let desktop_for_modal_redraw = desktop.clone();
     let preview_gpu_for_modal = preview_gpu.clone();
     use_effect(move || {
-        let suspended = show_providers_dialog() || show_new_project_dialog();
+        let suspended = show_providers_dialog() || show_new_project_dialog() || menu_open();
         if preview_native_suspended() == suspended {
             return;
         }
@@ -863,6 +864,10 @@ pub fn App() -> Element {
             .collapsed-rail {{ transition: background-color 0.15s ease; }}
             .collapsed-rail:hover {{ background-color: {BG_HOVER} !important; }}
             .resize-handle-left:hover > div, .resize-handle-right:hover > div {{ opacity: 1 !important; }}
+            .menu-button {{ transition: background-color 0.1s ease; }}
+            .menu-button:hover {{ background-color: {BG_HOVER} !important; }}
+            .menu-item {{ transition: background-color 0.1s ease; }}
+            .menu-item:hover:not(:disabled) {{ background-color: {BG_HOVER}; }}
             "#
         }
 
@@ -1007,6 +1012,9 @@ pub fn App() -> Element {
                 on_toggle_hw_decode: move |_| {
                     use_hw_decode.set(!use_hw_decode());
                     preview_dirty.set(true);
+                },
+                on_menu_open: move |is_open| {
+                    menu_open.set(is_open);
                 },
             }
 

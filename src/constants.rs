@@ -17,6 +17,7 @@ pub const TEXT_SECONDARY: &str = "#a1a1aa";
 pub const TEXT_MUTED: &str = "#71717a";
 pub const TEXT_DIM: &str = "#52525b";
 
+pub const ACCENT_PRIMARY: &str = "#3b82f6";
 pub const ACCENT_AUDIO: &str = "#3b82f6";
 pub const ACCENT_MARKER: &str = "#f97316";
 pub const ACCENT_VIDEO: &str = "#22c55e";
