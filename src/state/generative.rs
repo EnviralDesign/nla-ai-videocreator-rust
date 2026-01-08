@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use crate::state::{Asset, AssetKind, Project, ProviderOutputType};
 
 /// Input value bound to a provider field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -76,4 +77,90 @@ impl GenerativeConfig {
 
 fn config_path(folder: &Path) -> PathBuf {
     folder.join("config.json")
+}
+
+pub fn ensure_generative_config(project_root: &Path, asset: &Asset) {
+    let folder = match &asset.kind {
+        AssetKind::GenerativeVideo { folder, .. }
+        | AssetKind::GenerativeImage { folder, .. }
+        | AssetKind::GenerativeAudio { folder, .. } => folder,
+        _ => return,
+    };
+
+    let folder_path = project_root.join(folder);
+    let config_path = folder_path.join("config.json");
+    if config_path.exists() {
+        return;
+    }
+
+    if let Err(err) = GenerativeConfig::default().save(&folder_path) {
+        println!(
+            "Failed to create generative config at {:?}: {}",
+            config_path, err
+        );
+    }
+}
+
+pub fn generative_info_for_clip(
+    project: &Project,
+    clip_id: uuid::Uuid,
+) -> Option<(PathBuf, ProviderOutputType)> {
+    let clip = project.clips.iter().find(|clip| clip.id == clip_id)?;
+    let asset = project.find_asset(clip.asset_id)?;
+    let (folder, output) = match &asset.kind {
+        AssetKind::GenerativeVideo { folder, .. } => (folder.clone(), ProviderOutputType::Video),
+        AssetKind::GenerativeImage { folder, .. } => (folder.clone(), ProviderOutputType::Image),
+        AssetKind::GenerativeAudio { folder, .. } => (folder.clone(), ProviderOutputType::Audio),
+        _ => return None,
+    };
+    Some((folder, output))
+}
+
+pub fn parse_version_index(version: &str) -> Option<u32> {
+    let trimmed = version.trim();
+    let numeric = trimmed.strip_prefix('v').or_else(|| trimmed.strip_prefix('V'))?;
+    numeric.parse::<u32>().ok()
+}
+
+pub fn delete_generative_version_files(folder: &Path, version: &str) -> Result<(), String> {
+    let entries = fs::read_dir(folder).map_err(|err| err.to_string())?;
+    let mut deleted_any = false;
+    for entry in entries {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if stem == version {
+            fs::remove_file(&path).map_err(|err| err.to_string())?;
+            deleted_any = true;
+        }
+    }
+    if !deleted_any {
+        println!("No files found for version {} in {:?}", version, folder);
+    }
+    Ok(())
+}
+
+pub fn next_generative_index(
+    assets: &[Asset],
+    prefix: &str,
+    kind_filter: fn(&AssetKind) -> bool,
+) -> u32 {
+    let mut max_index = 0u32;
+    for asset in assets.iter() {
+        if !kind_filter(&asset.kind) {
+            continue;
+        }
+        if let Some(suffix) = asset.name.strip_prefix(prefix) {
+            let trimmed = suffix.trim();
+            if let Ok(index) = trimmed.parse::<u32>() {
+                max_index = max_index.max(index);
+            }
+        }
+    }
+    max_index + 1
 }

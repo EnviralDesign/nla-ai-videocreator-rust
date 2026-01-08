@@ -208,6 +208,15 @@ impl Asset {
     }
 }
 
+pub fn asset_display_name(asset: &Asset) -> String {
+    if asset.is_generative() {
+        if let Some(version) = asset.active_version() {
+            return format!("{} ({})", asset.name, version);
+        }
+    }
+    asset.name.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

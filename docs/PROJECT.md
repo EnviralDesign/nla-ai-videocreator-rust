@@ -778,6 +778,8 @@ v1.0 - Public Release
 src/
 ├── main.rs          # Entry point, window config
 ├── app.rs           # Main App component, UI shell, dialogs
+├── constants.rs     # Shared UI constants (colors, sizing, scripts)
+├── components/      # UI components (startup modal, panels, fields)
 ├── timeline.rs      # TimelinePanel, ruler, tracks, playback controls
 ├── hotkeys/         # Hotkey system (Registry, Actions, Context)
 └── state/
@@ -787,6 +789,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Completed REFACTOR.md Step 1.11 by relocating remaining helper functions into `core/` and `state/` modules (no helper functions remain in `app.rs` or component files).
+- **2026-01-08:** Extracted Attributes and Assets panels into `src/components/attributes/` and `src/components/assets/`; relocated provider/media/generative helpers into `core/` and `state/`, and moved timeline zoom bounds into the timeline module.
+- **2026-01-08:** Began refactor plan by extracting shared UI constants, startup modal, and panel components into `src/constants.rs` and `src/components/`; moved shared input fields into `components/common/fields.rs`.
 - **2026-01-08:** Generative thumbnail cache now clears when no active version exists (prevents stale thumbnails after deleting all versions)
 - **2026-01-08:** Preview cache now invalidates generative asset folders on generate/delete so regenerated versions update immediately
 - **2026-01-08:** Version dropdown now lists newest first; added inline delete confirmation that keeps selection position

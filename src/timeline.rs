@@ -10,11 +10,12 @@ use dioxus::prelude::*;
 use std::collections::HashMap;
 
 // Re-export colors from app (we'll move these to a shared module later)
-use crate::app::{
+use crate::constants::{
     BG_BASE, BG_ELEVATED, BG_HOVER, BG_SURFACE,
     BORDER_ACCENT, BORDER_DEFAULT, BORDER_STRONG, BORDER_SUBTLE,
     TEXT_DIM, TEXT_MUTED, TEXT_SECONDARY, TEXT_PRIMARY,
     ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO,
+    TIMELINE_MAX_PX_PER_FRAME, TIMELINE_MIN_ZOOM_FLOOR,
 };
 use crate::state::{Track, TrackType};
 
@@ -23,6 +24,14 @@ const MAX_THUMB_TILES: usize = 120;
 const MIN_CLIP_WIDTH_PX: f64 = 20.0;
 const MIN_CLIP_WIDTH_FLOOR_PX: f64 = 2.0;
 const MIN_CLIP_WIDTH_SCALE: f64 = 0.2;
+
+pub fn timeline_zoom_bounds(duration: f64, viewport_width: Option<f64>, fps: f64) -> (f64, f64) {
+    let duration = duration.max(0.01);
+    let viewport_width = viewport_width.unwrap_or(600.0).max(1.0);
+    let min_zoom = (viewport_width / duration).max(TIMELINE_MIN_ZOOM_FLOOR);
+    let max_zoom = (fps.max(1.0) * TIMELINE_MAX_PX_PER_FRAME).max(min_zoom);
+    (min_zoom, max_zoom)
+}
 
 /// Main timeline panel component
 #[component]

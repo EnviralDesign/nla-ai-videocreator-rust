@@ -15,6 +15,16 @@ pub fn load_global_provider_entries() -> io::Result<Vec<ProviderEntry>> {
     load_provider_entries_from(&global_providers_root())
 }
 
+pub fn load_global_provider_entries_or_empty() -> Vec<ProviderEntry> {
+    match load_global_provider_entries() {
+        Ok(entries) => entries,
+        Err(err) => {
+            println!("Failed to load provider entries: {}", err);
+            Vec::new()
+        }
+    }
+}
+
 pub fn save_provider_entry(project_root: &Path, entry: &ProviderEntry) -> io::Result<PathBuf> {
     save_provider_entry_to(&providers_root(project_root), entry)
 }
@@ -29,6 +39,52 @@ pub fn global_providers_root() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     base.join("NLA-AI-VideoCreator").join("providers")
+}
+
+pub fn list_global_provider_files() -> Vec<PathBuf> {
+    let root = global_providers_root();
+    let mut files = Vec::new();
+    let read_dir = match fs::read_dir(&root) {
+        Ok(read_dir) => read_dir,
+        Err(_) => return files,
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if is_json_file(&path) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+pub fn read_provider_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+pub fn write_provider_file(path: &Path, contents: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+pub fn provider_path_for_entry(entry: &ProviderEntry) -> PathBuf {
+    global_providers_root().join(format!("{}.json", entry.id))
+}
+
+pub fn default_provider_entry() -> ProviderEntry {
+    let mut entry = ProviderEntry::new(
+        "New Provider",
+        crate::state::ProviderOutputType::Image,
+        crate::state::ProviderConnection::ComfyUi {
+            base_url: "http://127.0.0.1:8188".to_string(),
+            workflow_path: Some("workflows/sdxl_simple_example_API.json".to_string()),
+        },
+    );
+    entry.inputs = Vec::new();
+    entry
 }
 
 fn providers_root(project_root: &Path) -> PathBuf {

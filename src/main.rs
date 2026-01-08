@@ -3,6 +3,8 @@
 //! A local-first, AI-native Non-Linear Animation editor for generative video production.
 
 mod app;
+mod constants;
+mod components;
 mod hotkeys;
 mod state;
 mod timeline;

@@ -79,3 +79,34 @@ impl ProviderEntry {
         }
     }
 }
+
+pub fn input_value_as_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        serde_json::Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+pub fn input_value_as_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().map(|v| v as i64))
+        .or_else(|| value.as_f64().map(|v| v.round() as i64))
+}
+
+pub fn input_value_as_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|v| v as f64))
+        .or_else(|| value.as_u64().map(|v| v as f64))
+}
+
+pub fn input_value_as_bool(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(flag) => Some(*flag),
+        serde_json::Value::String(text) => text.parse::<bool>().ok(),
+        _ => None,
+    }
+}
