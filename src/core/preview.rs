@@ -180,6 +180,33 @@ impl FrameCache {
         self.evict_if_needed();
     }
 
+    fn invalidate_path(&mut self, path: &Path) {
+        let Some(frames) = self.asset_index.remove(path) else {
+            return;
+        };
+        for frame_index in frames {
+            let key = FrameKey {
+                path: path.to_path_buf(),
+                frame_index,
+            };
+            if let Some(entry) = self.entries.remove(&key) {
+                self.total_bytes = self.total_bytes.saturating_sub(entry.size_bytes);
+            }
+        }
+    }
+
+    fn invalidate_folder(&mut self, folder: &Path) {
+        let paths: Vec<PathBuf> = self
+            .asset_index
+            .keys()
+            .filter(|path| path.starts_with(folder))
+            .cloned()
+            .collect();
+        for path in paths {
+            self.invalidate_path(&path);
+        }
+    }
+
     fn evict_if_needed(&mut self) {
         while self.total_bytes > self.max_bytes {
             let Some((key, stamp)) = self.lru_order.pop_front() else {
@@ -226,6 +253,12 @@ impl PreviewRenderer {
             ),
             frame_cache: Mutex::new(FrameCache::new(max_cache_bytes)),
             plate_cache: Mutex::new(None),
+        }
+    }
+
+    pub fn invalidate_folder(&self, folder: &Path) {
+        if let Ok(mut cache) = self.frame_cache.lock() {
+            cache.invalidate_folder(folder);
         }
     }
 

@@ -47,3 +47,5 @@ logs/
 ehthumbs.db
 
 .tmp/*
+
+.venv

@@ -428,6 +428,7 @@ workflows/
     - [x] Persist input bindings + version history
   - [x] Version management (v1, v2, ... in asset folder)
   - [x] Active version selection (stored in config.json)
+  - [x] Delete active version with inline confirmation
   - [x] Active version load/save on project open
   - [x] Thumbnail updates after generation completes
 
@@ -786,6 +787,11 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Generative thumbnail cache now clears when no active version exists (prevents stale thumbnails after deleting all versions)
+- **2026-01-08:** Preview cache now invalidates generative asset folders on generate/delete so regenerated versions update immediately
+- **2026-01-08:** Version dropdown now lists newest first; added inline delete confirmation that keeps selection position
+- **2026-01-08:** Split Generative controls into two cards: Generative (version/provider/generate) and Provider Inputs (dynamic fields)
+- **2026-01-08:** Asset context menus now clamp to the Assets panel width so they don't get hidden by the native preview overlay
 - **2026-01-08:** Attributes panel now remounts on clip selection to refresh fields when switching clips
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version

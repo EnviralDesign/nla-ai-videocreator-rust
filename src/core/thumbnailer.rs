@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+use uuid::Uuid;
 use crate::state::Asset;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, GenericImageView};
@@ -65,7 +66,13 @@ impl Thumbnailer {
                     folder,
                     active_version.as_deref(),
                     &["png", "jpg", "jpeg", "webp"],
-                )?;
+                );
+                let Some(path) = path else {
+                    if force {
+                        self.clear_cache_for_asset(asset.id);
+                    }
+                    return None;
+                };
                 (path, SourceKind::Still)
             }
             crate::state::AssetKind::GenerativeVideo {
@@ -77,7 +84,13 @@ impl Thumbnailer {
                     folder,
                     active_version.as_deref(),
                     &["mp4", "mov", "mkv", "webm"],
-                )?;
+                );
+                let Some(path) = path else {
+                    if force {
+                        self.clear_cache_for_asset(asset.id);
+                    }
+                    return None;
+                };
                 (path, SourceKind::Video)
             }
             _ => return None,
@@ -110,6 +123,15 @@ impl Thumbnailer {
                 Some(fallback)
             } else {
                 None
+            }
+        }
+    }
+
+    pub fn clear_cache_for_asset(&self, asset_id: Uuid) {
+        let dir = self.cache_root.join(asset_id.to_string());
+        if dir.exists() {
+            if let Err(err) = std::fs::remove_dir_all(&dir) {
+                println!("Failed to clear thumbnails for {}: {}", asset_id, err);
             }
         }
     }

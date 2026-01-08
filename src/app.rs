@@ -7,6 +7,7 @@ use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent as TaoWindowEve
 use dioxus::prelude::*;
 use serde::Serialize;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -1206,6 +1207,7 @@ pub fn App() -> Element {
                         thumbnailer: thumbnailer.read().clone(),
                         thumbnail_cache_buster: thumbnail_cache_buster(),
                         thumbnail_refresh_tick: thumbnail_refresh_tick(),
+                        panel_width: left_w,
                         on_import: move |asset: crate::state::Asset| {
                             let project_root = project.read().project_path.clone();
                             project.write().add_asset(asset.clone());
@@ -1451,6 +1453,7 @@ pub fn App() -> Element {
                         selection: selection,
                         preview_dirty: preview_dirty,
                         providers: provider_entries,
+                        previewer: previewer,
                         thumbnailer: thumbnailer.read().clone(),
                         thumbnail_cache_buster: thumbnail_cache_buster,
                     }
@@ -3009,6 +3012,7 @@ fn AttributesPanelContent(
     selection: Signal<crate::state::SelectionState>,
     preview_dirty: Signal<bool>,
     providers: Signal<Vec<ProviderEntry>>,
+    previewer: Signal<std::sync::Arc<crate::core::preview::PreviewRenderer>>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
 ) -> Element {
@@ -3190,10 +3194,19 @@ fn AttributesPanelContent(
             version_options.push(active_version);
         }
     }
+    version_options.sort_by(|a, b| match (parse_version_index(a), parse_version_index(b)) {
+        (Some(a_num), Some(b_num)) => b_num.cmp(&a_num),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => b.cmp(a),
+    });
+    version_options.dedup();
     let selected_version_value = config_snapshot
         .active_version
         .clone()
         .unwrap_or_default();
+    let mut confirm_delete_version = use_signal(|| false);
+    let can_delete_version = !selected_version_value.trim().is_empty();
     let on_provider_change = {
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
@@ -3221,6 +3234,7 @@ fn AttributesPanelContent(
         let mut preview_dirty = preview_dirty.clone();
         let thumbnailer = thumbnailer.clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        let mut confirm_delete_version = confirm_delete_version.clone();
         move |e: FormEvent| {
             let value = e.value();
             let trimmed = value.trim();
@@ -3249,7 +3263,106 @@ fn AttributesPanelContent(
                     thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
                 });
             }
+            confirm_delete_version.set(false);
         }
+    };
+    let on_delete_version = {
+        let gen_config = gen_config.clone();
+        let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let project = project.clone();
+        let preview_dirty = preview_dirty.clone();
+        let previewer = previewer.clone();
+        let thumbnailer = thumbnailer.clone();
+        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        let gen_status = gen_status.clone();
+        let confirm_delete_version = confirm_delete_version.clone();
+        let version_options = version_options.clone();
+        let selected_version_value = selected_version_value.clone();
+        Rc::new(move || {
+            let mut gen_config = gen_config.clone();
+            let gen_folder_path = gen_folder_path.clone();
+            let mut project = project.clone();
+            let mut preview_dirty = preview_dirty.clone();
+            let previewer = previewer.clone();
+            let thumbnailer = thumbnailer.clone();
+            let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+            let mut gen_status = gen_status.clone();
+            let mut confirm_delete_version = confirm_delete_version.clone();
+            let version_options = version_options.clone();
+            let selected_version_value = selected_version_value.clone();
+
+            let version = selected_version_value.trim().to_string();
+            if version.is_empty() {
+                return;
+            }
+            let Some(folder_path) = gen_folder_path.as_ref() else {
+                gen_status.set(Some("Missing generative folder.".to_string()));
+                return;
+            };
+
+            let mut remaining = version_options.clone();
+            let deleted_index = match remaining.iter().position(|item| item == &version) {
+                Some(index) => {
+                    remaining.remove(index);
+                    index
+                }
+                None => 0,
+            };
+            let next_active = if remaining.is_empty() {
+                None
+            } else {
+                let next_index = deleted_index.min(remaining.len() - 1);
+                remaining.get(next_index).cloned()
+            };
+
+            let folder_path = folder_path.clone();
+            let delete_folder = folder_path.clone();
+            let version_clone = version.clone();
+            let next_active_clone = next_active.clone();
+            spawn(async move {
+                let deletion = tokio::task::spawn_blocking(move || {
+                    delete_generative_version_files(&delete_folder, &version_clone)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("Failed to delete version files.".to_string()));
+
+                if let Err(err) = deletion {
+                    gen_status.set(Some(format!("Delete failed: {}", err)));
+                    confirm_delete_version.set(false);
+                    return;
+                }
+                previewer.read().invalidate_folder(&folder_path);
+
+                let mut config = gen_config().unwrap_or_default();
+                config.versions.retain(|record| record.version != version);
+                config.active_version = next_active_clone.clone();
+                if let Err(err) = config.save(&folder_path) {
+                    gen_status.set(Some(format!("Failed to save config: {}", err)));
+                    confirm_delete_version.set(false);
+                    return;
+                }
+                gen_config.set(Some(config));
+
+                project
+                    .write()
+                    .set_generative_active_version(asset_id, next_active_clone.clone());
+                preview_dirty.set(true);
+
+                if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                    let thumbs = thumbnailer.clone();
+                    let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+                    spawn(async move {
+                        thumbs.generate(&asset, true).await;
+                        thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                    });
+                }
+
+                confirm_delete_version.set(false);
+                gen_status.set(Some(format!("Deleted {}", version)));
+            });
+        })
     };
 
     let set_input_value = {
@@ -3277,6 +3390,7 @@ fn AttributesPanelContent(
         let gen_status = gen_status.clone();
         let gen_busy = gen_busy.clone();
         let preview_dirty = preview_dirty.clone();
+        let previewer = previewer.clone();
         let thumbnailer = thumbnailer.clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
         let selected_provider = selected_provider.clone();
@@ -3288,6 +3402,7 @@ fn AttributesPanelContent(
             let mut gen_status = gen_status.clone();
             let mut gen_busy = gen_busy.clone();
             let mut preview_dirty = preview_dirty.clone();
+            let previewer = previewer.clone();
             let thumbnailer = thumbnailer.clone();
             let thumbnail_cache_buster = thumbnail_cache_buster.clone();
             let selected_provider = selected_provider.clone();
@@ -3356,6 +3471,7 @@ fn AttributesPanelContent(
                             gen_busy.set(false);
                             return;
                         }
+                        previewer.read().invalidate_folder(&folder_path);
 
                         config.provider_id = Some(provider.id);
                         config.active_version = Some(version.clone());
@@ -3541,36 +3657,82 @@ fn AttributesPanelContent(
                         padding: 10px; background-color: {BG_SURFACE};
                         border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
                     ",
-                div {
-                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
-                    "Generative"
-                }
-                div {
-                    style: "display: flex; flex-direction: column; gap: 6px;",
-                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
-                    select {
-                        value: "{selected_version_value}",
-                        disabled: version_options.is_empty(),
-                        style: "
-                            width: 100%; padding: 6px 8px; font-size: 12px;
-                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                            border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                            outline: none;
-                        ",
-                        onchange: on_version_change,
-                        if version_options.is_empty() {
-                            option { value: "", "No versions yet" }
-                        } else {
-                            for version in version_options.iter() {
-                                option { value: "{version}", "{version}" }
+                    div {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                        "Generative"
+                    }
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px;",
+                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
+                        select {
+                            value: "{selected_version_value}",
+                            disabled: version_options.is_empty(),
+                            style: "
+                                width: 100%; padding: 6px 8px; font-size: 12px;
+                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                outline: none;
+                            ",
+                            onchange: on_version_change,
+                            if version_options.is_empty() {
+                                option { value: "", "No versions yet" }
+                            } else {
+                                for version in version_options.iter() {
+                                    option { value: "{version}", "{version}" }
+                                }
                             }
                         }
                     }
-                }
-                div {
-                    style: "display: flex; flex-direction: column; gap: 6px;",
-                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
-                    select {
+                    if !version_options.is_empty() && can_delete_version {
+                        div {
+                            style: "display: flex; gap: 8px; align-items: center;",
+                            if confirm_delete_version() {
+                                button {
+                                    style: "
+                                        flex: 1; padding: 6px 8px;
+                                        background-color: #b91c1c;
+                                        border: 1px solid #991b1b;
+                                        border-radius: 6px; color: white; font-size: 11px;
+                                        cursor: pointer;
+                                    ",
+                                        onclick: {
+                                            let on_delete_version = on_delete_version.clone();
+                                            move |_| on_delete_version()
+                                        },
+                                    "Confirm Delete"
+                                }
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        padding: 6px 10px;
+                                        background-color: {BG_SURFACE};
+                                        border: 1px solid {BORDER_DEFAULT};
+                                        border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
+                                        cursor: pointer;
+                                    ",
+                                    onclick: move |_| confirm_delete_version.set(false),
+                                    "Cancel"
+                                }
+                            } else {
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        padding: 6px 10px;
+                                        background-color: {BG_SURFACE};
+                                        border: 1px solid #7f1d1d;
+                                        border-radius: 6px; color: #fecaca; font-size: 11px;
+                                        cursor: pointer;
+                                    ",
+                                    onclick: move |_| confirm_delete_version.set(true),
+                                    "Delete Version"
+                                }
+                            }
+                        }
+                    }
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px;",
+                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Provider" }
+                        select {
                             value: "{selected_provider_value}",
                             style: "
                                 width: 100%; padding: 6px 8px; font-size: 12px;
@@ -3597,152 +3759,6 @@ fn AttributesPanelContent(
                             "No providers configured. Add JSON files under {providers_path_label}."
                         }
                     }
-                    if let Some(provider) = selected_provider {
-                        div {
-                            style: "display: flex; flex-direction: column; gap: 6px;",
-                            div {
-                                style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
-                                "Inputs"
-                            }
-                            if provider.inputs.is_empty() {
-                                span { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs defined." }
-                            } else {
-                                for input in provider.inputs.iter() {
-                                    {
-                                        let label = if input.required {
-                                            format!("{} *", input.label)
-                                        } else {
-                                            input.label.clone()
-                                        };
-                                        let stored_value = config_snapshot.inputs.get(&input.name).and_then(|input| {
-                                            if let crate::state::InputValue::Literal { value } = input {
-                                                Some(value.clone())
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                        let current_value = stored_value.or_else(|| input.default.clone());
-                                        let input_name = input.name.clone();
-                                        let input_type = input.input_type.clone();
-                                        let mut set_input_value = set_input_value.clone();
-                                        match input_type {
-                                            ProviderInputType::Text => {
-                                                let value = current_value
-                                                    .as_ref()
-                                                    .and_then(input_value_as_string)
-                                                    .unwrap_or_default();
-                                                rsx! {
-                                                    ProviderTextField {
-                                                        label: label.clone(),
-                                                        value: value.clone(),
-                                                        on_commit: move |next| {
-                                                            set_input_value(&input_name, serde_json::Value::String(next));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            ProviderInputType::Number => {
-                                                let value = current_value
-                                                    .as_ref()
-                                                    .and_then(input_value_as_f64)
-                                                    .unwrap_or(0.0);
-                                                rsx! {
-                                                    ProviderFloatField {
-                                                        label: label.clone(),
-                                                        value,
-                                                        step: "0.1",
-                                                        on_commit: move |next| {
-                                                            if let Some(number) = serde_json::Number::from_f64(next) {
-                                                                set_input_value(&input_name, serde_json::Value::Number(number));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            ProviderInputType::Integer => {
-                                                let value = current_value
-                                                    .as_ref()
-                                                    .and_then(input_value_as_i64)
-                                                    .unwrap_or(0);
-                                                    rsx! {
-                                                        ProviderIntegerField {
-                                                            label: label.clone(),
-                                                            value,
-                                                            on_commit: move |next: i64| {
-                                                                set_input_value(&input_name, serde_json::Value::Number(next.into()));
-                                                            }
-                                                        }
-                                                    }
-                                            }
-                                            ProviderInputType::Boolean => {
-                                                let enabled = current_value
-                                                    .as_ref()
-                                                    .and_then(input_value_as_bool)
-                                                    .unwrap_or(false);
-                                                rsx! {
-                                                    div {
-                                                        style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
-                                                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-                                                        button {
-                                                            class: "collapse-btn",
-                                                            style: "
-                                                                padding: 4px 10px;
-                                                                background-color: {BG_SURFACE};
-                                                                border: 1px solid {BORDER_DEFAULT};
-                                                                border-radius: 999px;
-                                                                color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
-                                                            ",
-                                                            onclick: move |_| {
-                                                                set_input_value(&input_name, serde_json::Value::Bool(!enabled));
-                                                            },
-                                                            if enabled { "On" } else { "Off" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            ProviderInputType::Enum { options } => {
-                                                let current = current_value
-                                                    .as_ref()
-                                                    .and_then(input_value_as_string)
-                                                    .unwrap_or_default();
-                                                rsx! {
-                                                    div {
-                                                        style: "display: flex; flex-direction: column; gap: 4px;",
-                                                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-                                                        select {
-                                                            value: "{current}",
-                                                            style: "
-                                                                width: 100%; padding: 6px 8px; font-size: 12px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                                                outline: none;
-                                                            ",
-                                                            onchange: move |e| {
-                                                                set_input_value(&input_name, serde_json::Value::String(e.value()));
-                                                            },
-                                                            for option in options.iter() {
-                                                                option { value: "{option}", "{option}" }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            ProviderInputType::Image
-                                            | ProviderInputType::Video
-                                            | ProviderInputType::Audio => {
-                                                rsx! {
-                                                    div {
-                                                        style: "font-size: 10px; color: {TEXT_DIM};",
-                                                        "{label} (asset inputs not wired yet)"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     div {
                         style: "display: flex; flex-direction: column; gap: 6px;",
                         button {
@@ -3760,6 +3776,161 @@ fn AttributesPanelContent(
                         if let Some(status) = gen_status() {
                             div { style: "font-size: 11px; color: {TEXT_DIM};", "{status}" }
                         }
+                    }
+                }
+
+                div {
+                    style: "
+                        display: flex; flex-direction: column; gap: 10px;
+                        padding: 10px; background-color: {BG_SURFACE};
+                        border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                    ",
+                    div {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                        "Provider Inputs"
+                    }
+                    if show_missing_provider {
+                        span { style: "font-size: 11px; color: {TEXT_DIM};", "Select a valid provider to configure inputs." }
+                    } else if let Some(provider) = selected_provider {
+                        if provider.inputs.is_empty() {
+                            span { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs defined." }
+                        } else {
+                            for input in provider.inputs.iter() {
+                                {
+                                    let label = if input.required {
+                                        format!("{} *", input.label)
+                                    } else {
+                                        input.label.clone()
+                                    };
+                                    let stored_value = config_snapshot.inputs.get(&input.name).and_then(|input| {
+                                        if let crate::state::InputValue::Literal { value } = input {
+                                            Some(value.clone())
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                    let current_value = stored_value.or_else(|| input.default.clone());
+                                    let input_name = input.name.clone();
+                                    let input_type = input.input_type.clone();
+                                    let mut set_input_value = set_input_value.clone();
+                                    match input_type {
+                                        ProviderInputType::Text => {
+                                            let value = current_value
+                                                .as_ref()
+                                                .and_then(input_value_as_string)
+                                                .unwrap_or_default();
+                                            rsx! {
+                                                ProviderTextField {
+                                                    label: label.clone(),
+                                                    value: value.clone(),
+                                                    on_commit: move |next| {
+                                                        set_input_value(&input_name, serde_json::Value::String(next));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        ProviderInputType::Number => {
+                                            let value = current_value
+                                                .as_ref()
+                                                .and_then(input_value_as_f64)
+                                                .unwrap_or(0.0);
+                                            rsx! {
+                                                ProviderFloatField {
+                                                    label: label.clone(),
+                                                    value,
+                                                    step: "0.1",
+                                                    on_commit: move |next| {
+                                                        if let Some(number) = serde_json::Number::from_f64(next) {
+                                                            set_input_value(&input_name, serde_json::Value::Number(number));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        ProviderInputType::Integer => {
+                                            let value = current_value
+                                                .as_ref()
+                                                .and_then(input_value_as_i64)
+                                                .unwrap_or(0);
+                                            rsx! {
+                                                ProviderIntegerField {
+                                                    label: label.clone(),
+                                                    value,
+                                                    on_commit: move |next: i64| {
+                                                        set_input_value(&input_name, serde_json::Value::Number(next.into()));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        ProviderInputType::Boolean => {
+                                            let enabled = current_value
+                                                .as_ref()
+                                                .and_then(input_value_as_bool)
+                                                .unwrap_or(false);
+                                            rsx! {
+                                                div {
+                                                    style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
+                                                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
+                                                    button {
+                                                        class: "collapse-btn",
+                                                        style: "
+                                                            padding: 4px 10px;
+                                                            background-color: {BG_SURFACE};
+                                                            border: 1px solid {BORDER_DEFAULT};
+                                                            border-radius: 999px;
+                                                            color: {TEXT_PRIMARY}; font-size: 11px; cursor: pointer;
+                                                        ",
+                                                        onclick: move |_| {
+                                                            set_input_value(&input_name, serde_json::Value::Bool(!enabled));
+                                                        },
+                                                        if enabled { "On" } else { "Off" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        ProviderInputType::Enum { options } => {
+                                            let current = current_value
+                                                .as_ref()
+                                                .and_then(input_value_as_string)
+                                                .unwrap_or_default();
+                                            rsx! {
+                                                div {
+                                                    style: "display: flex; flex-direction: column; gap: 4px;",
+                                                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
+                                                    select {
+                                                        value: "{current}",
+                                                        style: "
+                                                            width: 100%; padding: 6px 8px; font-size: 12px;
+                                                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                                            outline: none;
+                                                        ",
+                                                        onchange: move |e| {
+                                                            set_input_value(&input_name, serde_json::Value::String(e.value()));
+                                                        },
+                                                        for option in options.iter() {
+                                                            option { value: "{option}", "{option}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        ProviderInputType::Image
+                                        | ProviderInputType::Video
+                                        | ProviderInputType::Audio => {
+                                            rsx! {
+                                                div {
+                                                    style: "font-size: 10px; color: {TEXT_DIM};",
+                                                    "{label} (asset inputs not wired yet)"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        span { style: "font-size: 11px; color: {TEXT_DIM};", "Select a provider to configure inputs." }
                     }
                 }
             }
@@ -4182,6 +4353,35 @@ fn parse_i64_input(value: &str, fallback: i64) -> i64 {
     trimmed.parse::<i64>().unwrap_or(fallback)
 }
 
+fn parse_version_index(version: &str) -> Option<u32> {
+    let trimmed = version.trim();
+    let numeric = trimmed.strip_prefix('v').or_else(|| trimmed.strip_prefix('V'))?;
+    numeric.parse::<u32>().ok()
+}
+
+fn delete_generative_version_files(folder: &Path, version: &str) -> Result<(), String> {
+    let entries = std::fs::read_dir(folder).map_err(|err| err.to_string())?;
+    let mut deleted_any = false;
+    for entry in entries {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if stem == version {
+            std::fs::remove_file(&path).map_err(|err| err.to_string())?;
+            deleted_any = true;
+        }
+    }
+    if !deleted_any {
+        println!("No files found for version {} in {:?}", version, folder);
+    }
+    Ok(())
+}
+
 fn asset_display_name(asset: &crate::state::Asset) -> String {
     if asset.is_generative() {
         if let Some(version) = asset.active_version() {
@@ -4228,6 +4428,7 @@ fn AssetsPanelContent(
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
     thumbnail_refresh_tick: u64,
+    panel_width: f64,
     on_import: EventHandler<crate::state::Asset>,
     on_import_file: EventHandler<std::path::PathBuf>,
     on_rename: EventHandler<(uuid::Uuid, String)>,
@@ -4387,6 +4588,7 @@ fn AssetsPanelContent(
                             asset: asset.clone(),
                             thumbnailer: thumbnailer.clone(),
                             thumbnail_cache_buster: thumbnail_cache_buster,
+                            panel_width: panel_width,
                             on_rename: move |payload| on_rename.call(payload),
                             on_delete: move |id| on_delete.call(id),
                             on_regenerate_thumbnails: move |id| on_regenerate_thumbnails.call(id),
@@ -4406,6 +4608,7 @@ fn AssetItem(
     asset: crate::state::Asset,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
+    panel_width: f64,
     on_rename: EventHandler<(uuid::Uuid, String)>,
     on_delete: EventHandler<uuid::Uuid>,
     on_regenerate_thumbnails: EventHandler<uuid::Uuid>,
@@ -4462,6 +4665,7 @@ fn AssetItem(
 
     let asset_id = asset.id;
     let display_name = asset_display_name(&asset);
+    let menu_max_x = (panel_width - 140.0).max(0.0);
     
     rsx! {
         div {
@@ -4605,7 +4809,7 @@ fn AssetItem(
                         div {
                             style: "
                                 position: fixed; 
-                                left: min({x}px, calc(100vw - 140px)); 
+                                left: min({x}px, {menu_max_x}px); 
                                 top: min({y}px, calc(100vh - 50px));
                                 background-color: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
                                 border-radius: 6px; padding: 4px 0; min-width: 120px;
