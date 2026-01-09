@@ -806,6 +806,16 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Provider Build now flushes the JSON editor draft into app state before opening the builder (prevents empty/new mode when text is visible).
+- **2026-01-09:** Provider Builder uses editor JSON as a fallback to enter edit mode when selection path is missing.
+- **2026-01-09:** Provider Builder now reads the selected provider file from disk when opening (avoids stale/empty editor state).
+- **2026-01-09:** Providers modal now opens with no selection to force explicit picks (avoids stale editor state).
+- **2026-01-09:** Provider list selection now updates editor state directly to avoid empty JSON/editor desync after restart.
+- **2026-01-09:** Provider list selection now explicitly loads JSON into the editor; Reload clears selection to force a fresh pick.
+- **2026-01-09:** Provider JSON editor keeps text synced on input; Provider Builder preserves existing provider IDs when editing.
+- **2026-01-09:** Fixed textarea draft buffering ownership issues after test failures (compile clean again).
+- **2026-01-09:** Provider Builder now derives a manifest path from the workflow when missing (legacy provider fallback).
+- **2026-01-09:** Textarea inputs now track local draft text to avoid caret jumps and stop clearing on focus (provider inputs + providers JSON editor).
 - **2026-01-09:** Asset rows now start drag from the entire row (text included), not just the icon.
 - **2026-01-09:** Multiline textareas stop resetting the caret to the end while typing (provider inputs + providers editor).
 - **2026-01-09:** Generative configs now load once into project memory and UI edits write through the project state (no disk reads on selection); config files persist on save/generate.

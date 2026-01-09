@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use crate::constants::*;
 use crate::core::provider_store::read_provider_file;
@@ -22,6 +24,75 @@ pub fn ProvidersModal(
     on_provider_delete: EventHandler<MouseEvent>,
 ) -> Element {
     let mut editor_focused = use_signal(|| false);
+    let editor_draft = use_hook(|| Rc::new(RefCell::new(provider_editor_text())));
+    let editor_dirty = use_hook(|| Rc::new(Cell::new(false)));
+    let last_editor_path = use_signal(|| provider_editor_path());
+    let select_provider: Rc<RefCell<dyn FnMut(Option<std::path::PathBuf>, String)>> = {
+        let editor_draft = editor_draft.clone();
+        let editor_dirty = editor_dirty.clone();
+        let mut editor_focused = editor_focused.clone();
+        let mut last_editor_path = last_editor_path.clone();
+        let mut provider_editor_path = provider_editor_path.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        Rc::new(RefCell::new(move |next_path: Option<std::path::PathBuf>, next_text: String| {
+            editor_focused.set(false);
+            provider_editor_path.set(next_path.clone());
+            provider_editor_text.set(next_text.clone());
+            provider_editor_error.set(None);
+            provider_editor_dirty.set(false);
+            *editor_draft.borrow_mut() = next_text;
+            editor_dirty.set(false);
+            last_editor_path.set(next_path);
+        }))
+    };
+
+    {
+        let editor_draft = editor_draft.clone();
+        let editor_dirty = editor_dirty.clone();
+        let editor_focused = editor_focused.clone();
+        let mut last_editor_path = last_editor_path.clone();
+        let provider_editor_path = provider_editor_path.clone();
+        let provider_editor_text = provider_editor_text.clone();
+        use_effect(move || {
+            let current_path = provider_editor_path();
+            if current_path != last_editor_path() {
+                *editor_draft.borrow_mut() = provider_editor_text();
+                editor_dirty.set(false);
+                last_editor_path.set(current_path);
+                return;
+            }
+            if editor_focused() {
+                return;
+            }
+            let text = provider_editor_text();
+            let mut draft = editor_draft.borrow_mut();
+            if !editor_dirty.get() && *draft != text {
+                *draft = text;
+            } else if editor_dirty.get() && *draft == text {
+                editor_dirty.set(false);
+            }
+        });
+    }
+    let select_provider_for_clear = select_provider.clone();
+    let select_provider_for_items = select_provider.clone();
+    let on_provider_build_click = {
+        let editor_draft = editor_draft.clone();
+        let editor_dirty = editor_dirty.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        let mut provider_editor_error = provider_editor_error.clone();
+        let on_provider_build = on_provider_build.clone();
+        move |evt: MouseEvent| {
+            provider_editor_text.set(editor_draft.borrow().clone());
+            if editor_dirty.get() {
+                provider_editor_dirty.set(true);
+            }
+            provider_editor_error.set(None);
+            on_provider_build.call(evt);
+        }
+    };
     rsx! {
         if !show() {
             div {}
@@ -97,7 +168,7 @@ pub fn ProvidersModal(
                                     border-radius: 6px;
                                     color: {TEXT_SECONDARY}; font-size: 11px; cursor: pointer;
                                 ",
-                                onclick: on_provider_build,
+                                onclick: on_provider_build_click,
                                 "{provider_build_label}"
                             }
                             button {
@@ -133,11 +204,11 @@ pub fn ProvidersModal(
                                 background-color: {BG_ELEVATED};
                                 padding: 6px;
                             ",
-                            onclick: move |_| {
-                                provider_editor_path.set(None);
-                                provider_editor_text.set(String::new());
-                                provider_editor_error.set(None);
-                                provider_editor_dirty.set(false);
+                            onclick: {
+                                let select_provider = select_provider_for_clear.clone();
+                                move |_| {
+                                    select_provider.borrow_mut()(None, String::new());
+                                }
                             },
                             if provider_files().is_empty() {
                                 div {
@@ -150,6 +221,7 @@ pub fn ProvidersModal(
                             } else {
                                 for path in provider_files().iter() {
                                     {
+                                        let select_provider = select_provider_for_items.clone();
                                         let file_name = path
                                             .file_name()
                                             .and_then(|name| name.to_str())
@@ -176,17 +248,9 @@ pub fn ProvidersModal(
                                                 ",
                                                 onclick: move |evt: MouseEvent| {
                                                     evt.stop_propagation();
-                                                    if selected {
-                                                        provider_editor_path.set(None);
-                                                        provider_editor_text.set(String::new());
-                                                        provider_editor_error.set(None);
-                                                        provider_editor_dirty.set(false);
-                                                    } else {
-                                                        provider_editor_path.set(Some(path_clone.clone()));
-                                                        provider_editor_text.set(read_provider_file(&path_clone).unwrap_or_default());
-                                                        provider_editor_error.set(None);
-                                                        provider_editor_dirty.set(false);
-                                                    }
+                                                    let contents = read_provider_file(&path_clone).unwrap_or_default();
+                                                    select_provider
+                                                        .borrow_mut()(Some(path_clone.clone()), contents);
                                                 },
                                                 "{file_name}"
                                             }
@@ -212,50 +276,36 @@ pub fn ProvidersModal(
                     // Right editor
                     div {
                         style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;",
-                        if editor_focused() {
-                            textarea {
-                                style: "
-                                    flex: 1; width: 100%;
-                                    background-color: {BG_SURFACE};
-                                    border: 1px solid {BORDER_DEFAULT};
-                                    border-radius: 6px;
-                                    color: {TEXT_PRIMARY};
-                                    font-family: 'SF Mono', Consolas, monospace;
-                                    font-size: 11px; line-height: 1.5;
-                                    padding: 10px; resize: none;
-                                    white-space: pre;
-                                    user-select: text;
-                                ",
-                                oninput: move |e| {
-                                    provider_editor_text.set(e.value());
-                                    provider_editor_dirty.set(true);
-                                    provider_editor_error.set(None);
-                                },
-                                onfocus: move |_| editor_focused.set(true),
-                                onblur: move |_| editor_focused.set(false),
-                            }
-                        } else {
-                            textarea {
-                                style: "
-                                    flex: 1; width: 100%;
-                                    background-color: {BG_SURFACE};
-                                    border: 1px solid {BORDER_DEFAULT};
-                                    border-radius: 6px;
-                                    color: {TEXT_PRIMARY};
-                                    font-family: 'SF Mono', Consolas, monospace;
-                                    font-size: 11px; line-height: 1.5;
-                                    padding: 10px; resize: none;
-                                    white-space: pre;
-                                    user-select: text;
-                                ",
-                                value: "{provider_editor_text()}",
-                                oninput: move |e| {
-                                    provider_editor_text.set(e.value());
-                                    provider_editor_dirty.set(true);
-                                    provider_editor_error.set(None);
-                                },
-                                onfocus: move |_| editor_focused.set(true),
-                                onblur: move |_| editor_focused.set(false),
+                        {
+                            let editor_draft = editor_draft.clone();
+                            let editor_dirty = editor_dirty.clone();
+                            let editor_draft_oninput = editor_draft.clone();
+                            rsx! {
+                        textarea {
+                            style: "
+                                flex: 1; width: 100%;
+                                background-color: {BG_SURFACE};
+                                border: 1px solid {BORDER_DEFAULT};
+                                border-radius: 6px;
+                                color: {TEXT_PRIMARY};
+                                font-family: 'SF Mono', Consolas, monospace;
+                                font-size: 11px; line-height: 1.5;
+                                padding: 10px; resize: none;
+                                white-space: pre;
+                                user-select: text;
+                            ",
+                            value: "{editor_draft.borrow().clone()}",
+                            oninput: move |e| {
+                                let next = e.value();
+                                *editor_draft_oninput.borrow_mut() = next.clone();
+                                editor_dirty.set(true);
+                                provider_editor_text.set(next);
+                                provider_editor_dirty.set(true);
+                                provider_editor_error.set(None);
+                            },
+                            onfocus: move |_| editor_focused.set(true),
+                            onblur: move |_| editor_focused.set(false),
+                        }
                             }
                         }
                         if let Some(error) = provider_editor_error() {

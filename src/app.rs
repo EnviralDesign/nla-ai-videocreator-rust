@@ -51,6 +51,13 @@ enum GenerationFailure {
     Error(String),
 }
 
+fn derive_manifest_path_string(path: &str) -> Option<String> {
+    let workflow_path = std::path::Path::new(path);
+    let stem = workflow_path.file_stem()?.to_str()?;
+    let file_name = format!("{}_manifest.json", stem);
+    Some(workflow_path.with_file_name(file_name).to_string_lossy().to_string())
+}
+
 async fn execute_generation_job(
     job: GenerationJob,
     mut project: Signal<crate::state::Project>,
@@ -909,13 +916,8 @@ pub fn App() -> Element {
             provider_files.set(files.clone());
             provider_editor_error.set(None);
             provider_editor_dirty.set(false);
-            if let Some(first) = files.first() {
-                provider_editor_path.set(Some(first.clone()));
-                provider_editor_text.set(read_provider_file(first).unwrap_or_default());
-            } else {
-                provider_editor_path.set(None);
-                provider_editor_text.set(String::new());
-            }
+            provider_editor_path.set(None);
+            provider_editor_text.set(String::new());
             show_providers_dialog.set(true);
         }
     };
@@ -933,15 +935,8 @@ pub fn App() -> Element {
             provider_entries.set(load_global_provider_entries_or_empty());
             provider_editor_error.set(None);
             provider_editor_dirty.set(false);
-            let selected = provider_editor_path().filter(|path| path.exists());
-            let next = selected.or_else(|| files.first().cloned());
-            if let Some(path) = next {
-                provider_editor_path.set(Some(path.clone()));
-                provider_editor_text.set(read_provider_file(&path).unwrap_or_default());
-            } else {
-                provider_editor_path.set(None);
-                provider_editor_text.set(String::new());
-            }
+            provider_editor_path.set(None);
+            provider_editor_text.set(String::new());
         }
     };
 
@@ -973,26 +968,69 @@ pub fn App() -> Element {
         let mut show_provider_builder = show_provider_builder.clone();
         let mut builder_seed = builder_seed.clone();
         let provider_editor_path = provider_editor_path.clone();
-        let provider_editor_text = provider_editor_text.clone();
+        let mut provider_editor_text = provider_editor_text.clone();
+        let provider_editor_dirty = provider_editor_dirty.clone();
         let mut provider_editor_error = provider_editor_error.clone();
         move |_: MouseEvent| {
-            let seed = if let Some(provider_path) = provider_editor_path() {
-                let text = provider_editor_text();
-                let entry: ProviderEntry = match serde_json::from_str(&text) {
-                    Ok(entry) => entry,
-                    Err(err) => {
+            let mut text = provider_editor_text();
+            let provider_path = provider_editor_path();
+            if !provider_editor_dirty() {
+                if let Some(path) = provider_path.as_ref() {
+                    match read_provider_file(path) {
+                        Some(contents) => {
+                            text = contents;
+                            provider_editor_text.set(text.clone());
+                        }
+                        None => {
+                            provider_editor_error.set(Some(format!(
+                                "Failed to read provider file: {}",
+                                path.display()
+                            )));
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let entry: ProviderEntry = match serde_json::from_str(&text) {
+                Ok(entry) => entry,
+                Err(err) => {
+                    if provider_path.is_some() || !text.trim().is_empty() {
                         provider_editor_error.set(Some(format!("Invalid JSON: {}", err)));
                         return;
                     }
-                };
+                    ProviderEntry::new(
+                        "New Provider",
+                        ProviderOutputType::Image,
+                        ProviderConnection::ComfyUi {
+                            base_url: "http://127.0.0.1:8188".to_string(),
+                            workflow_path: None,
+                            manifest_path: None,
+                        },
+                    )
+                }
+            };
+
+            let seed = if provider_path.is_some() || !text.trim().is_empty() {
+                let provider_path = provider_path.unwrap_or_else(|| provider_path_for_entry(&entry));
 
                 let (manifest_path, manifest, error) = match &entry.connection {
-                    ProviderConnection::ComfyUi { manifest_path, .. } => {
-                        let manifest_path_buf =
-                            manifest_path.as_ref().map(|path| std::path::PathBuf::from(path));
+                    ProviderConnection::ComfyUi {
+                        manifest_path,
+                        workflow_path,
+                        ..
+                    } => {
+                        let resolved_manifest_path = manifest_path
+                            .clone()
+                            .or_else(|| workflow_path.as_ref().and_then(|path| {
+                                derive_manifest_path_string(path)
+                            }));
+                        let manifest_path_buf = resolved_manifest_path
+                            .as_ref()
+                            .map(|path| std::path::PathBuf::from(path));
                         let mut manifest_error = None;
                         let mut manifest_value = None;
-                        if let Some(path) = manifest_path.as_deref() {
+                        if let Some(path) = resolved_manifest_path.as_deref() {
                             let resolved = comfyui::resolve_manifest_path(Some(path));
                             let resolved = match resolved {
                                 Some(path) => path,

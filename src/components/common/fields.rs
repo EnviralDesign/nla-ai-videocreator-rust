@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use crate::constants::*;
 use crate::utils::{parse_f32_input, parse_f64_input, parse_i64_input};
 
@@ -144,75 +146,57 @@ pub fn ProviderTextAreaField(
     rows: u32,
     on_commit: EventHandler<String>,
 ) -> Element {
-    let mut text = use_signal(|| value.clone());
-    let mut last_prop_value = use_signal(|| value.clone());
+    let draft = use_hook(|| Rc::new(RefCell::new(value.clone())));
+    let draft_dirty = use_hook(|| Rc::new(Cell::new(false)));
     let mut is_focused = use_signal(|| false);
 
-    use_effect(move || {
-        let v = value.clone();
-        if v != last_prop_value() {
-            text.set(v.clone());
-            last_prop_value.set(v);
-        }
-    });
+    {
+        let draft = draft.clone();
+        let draft_dirty = draft_dirty.clone();
+        let is_focused = is_focused.clone();
+        let value = value.clone();
+        use_effect(move || {
+            if is_focused() {
+                return;
+            }
+            let mut draft_value = draft.borrow_mut();
+            if !draft_dirty.get() && *draft_value != value {
+                *draft_value = value.clone();
+            } else if draft_dirty.get() && *draft_value == value {
+                draft_dirty.set(false);
+            }
+        });
+    }
 
-    let make_commit = || {
-        let text = text.clone();
-        let mut last_prop_value = last_prop_value.clone();
-        let on_commit = on_commit.clone();
-        move || {
-            let next = text();
-            on_commit.call(next.clone());
-            last_prop_value.set(next);
-        }
-    };
-
-    let mut commit_on_blur = make_commit();
-    let text_value = text();
+    let draft_oninput = draft.clone();
+    let draft_onblur = draft.clone();
+    let draft_dirty_oninput = draft_dirty.clone();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            if is_focused() {
-                textarea {
-                    rows: "{rows}",
-                    style: "
-                        width: 100%; min-width: 0; box-sizing: border-box;
-                        padding: 6px 8px; font-size: 12px; line-height: 1.4;
-                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                        outline: none;
-                        resize: vertical;
-                        user-select: text;
-                    ",
-                    oninput: move |e| text.set(e.value()),
-                    onfocus: move |_| is_focused.set(true),
-                    onblur: move |_| {
-                        is_focused.set(false);
-                        commit_on_blur();
-                    },
-                }
-            } else {
-                textarea {
-                    rows: "{rows}",
-                    value: "{text_value}",
-                    style: "
-                        width: 100%; min-width: 0; box-sizing: border-box;
-                        padding: 6px 8px; font-size: 12px; line-height: 1.4;
-                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                        outline: none;
-                        resize: vertical;
-                        user-select: text;
-                    ",
-                    oninput: move |e| text.set(e.value()),
-                    onfocus: move |_| is_focused.set(true),
-                    onblur: move |_| {
-                        is_focused.set(false);
-                        commit_on_blur();
-                    },
-                }
+            textarea {
+                rows: "{rows}",
+                value: "{draft.borrow().clone()}",
+                style: "
+                    width: 100%; min-width: 0; box-sizing: border-box;
+                    padding: 6px 8px; font-size: 12px; line-height: 1.4;
+                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                    outline: none;
+                    resize: vertical;
+                    user-select: text;
+                ",
+                oninput: move |e| {
+                    *draft_oninput.borrow_mut() = e.value();
+                    draft_dirty_oninput.set(true);
+                },
+                onfocus: move |_| is_focused.set(true),
+                onblur: move |_| {
+                    is_focused.set(false);
+                    on_commit.call(draft_onblur.borrow().clone());
+                },
             }
         }
     }

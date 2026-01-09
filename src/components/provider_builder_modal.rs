@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::constants::*;
 use crate::core::comfyui_workflow::ComfyWorkflowNode;
-use crate::core::provider_store::{provider_path_for_entry, write_provider_file};
+use crate::core::provider_store::{provider_path_for_entry, read_provider_file, write_provider_file};
 use crate::state::{
     ComfyOutputSelector, ComfyWorkflowRef, InputBinding, ManifestInput, NodeSelector,
     ProviderConnection, ProviderEntry, ProviderInputField, ProviderInputType, ProviderManifest,
@@ -496,7 +496,13 @@ pub fn ProviderBuilderModal(
                 },
             };
 
-            let provider_id = editing_provider_id().unwrap_or_else(Uuid::new_v4);
+            let existing_id = editing_provider_id().or_else(|| {
+                editing_provider_path()
+                    .and_then(|path| read_provider_file(&path))
+                    .and_then(|json| serde_json::from_str::<ProviderEntry>(&json).ok())
+                    .map(|entry| entry.id)
+            });
+            let provider_id = existing_id.unwrap_or_else(Uuid::new_v4);
             let mut entry = ProviderEntry {
                 id: provider_id,
                 name,
