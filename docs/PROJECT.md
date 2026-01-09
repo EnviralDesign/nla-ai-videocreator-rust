@@ -806,8 +806,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Generative configs now load once into project memory and UI edits write through the project state (no disk reads on selection); config files persist on save/generate.
 - **2026-01-09:** Removed generation-record backcompat defaults (provider IDs now required in version records) and moved workflow/cache roots out of `projects/`.
-- **2026-01-09:** Persisted generative provider selection in project assets, synced provider IDs with config on load, and made provider/version selectors fall back to project state for older configs.
+- **2026-01-09:** Removed asset-level provider fields and centralized provider/version metadata in generative configs.
 - **2026-01-09:** Removed unused preview default constants and the unused renderer constructor to keep the build warning-free.
 - **2026-01-09:** Added `PartialEq` to ProjectSettings so the project settings modal can accept optional settings props.
 - **2026-01-09:** Added a project settings edit flow (reusing the startup modal UI) with a File → Project Settings entry.

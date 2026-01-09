@@ -23,8 +23,8 @@ use crate::core::provider_store::{
     write_provider_file,
 };
 use crate::state::{
-    ensure_generative_config, GenerationJob, GenerationJobStatus, ProviderConnection,
-    ProviderEntry, ProviderManifest, ProviderOutputType,
+    GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry, ProviderManifest,
+    ProviderOutputType,
 };
 use crate::providers::comfyui;
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
@@ -66,8 +66,12 @@ async fn execute_generation_job(
     }
 
     let folder_path = job.folder_path.clone();
-    let mut config = crate::state::GenerativeConfig::load(&folder_path).unwrap_or_default();
-    let version = next_version_label(&config);
+    let config_snapshot = project
+        .read()
+        .generative_config(job.asset_id)
+        .cloned()
+        .unwrap_or_default();
+    let version = next_version_label(&config_snapshot);
 
     let image = match job.provider.connection.clone() {
         ProviderConnection::ComfyUi {
@@ -118,23 +122,22 @@ async fn execute_generation_job(
         .map_err(|err| GenerationFailure::Error(format!("Failed to save output: {}", err)))?;
     previewer.read().invalidate_folder(&folder_path);
 
-    config.provider_id = Some(job.provider.id);
-    config.active_version = Some(version.clone());
-    config.inputs = job.inputs_snapshot.clone();
-    config.versions.push(crate::state::GenerationRecord {
-        version: version.clone(),
-        timestamp: chrono::Utc::now(),
-        provider_id: job.provider.id,
-        inputs_snapshot: job.inputs_snapshot.clone(),
-    });
-    config
-        .save(&folder_path)
-        .map_err(|err| GenerationFailure::Error(format!("Failed to save config: {}", err)))?;
-
     {
         let mut project_write = project.write();
-        project_write.set_generative_active_version(job.asset_id, Some(version.clone()));
-        project_write.set_generative_provider_id(job.asset_id, Some(job.provider.id));
+        project_write.update_generative_config(job.asset_id, |config| {
+            config.provider_id = Some(job.provider.id);
+            config.active_version = Some(version.clone());
+            config.inputs = job.inputs_snapshot.clone();
+            config.versions.push(crate::state::GenerationRecord {
+                version: version.clone(),
+                timestamp: chrono::Utc::now(),
+                provider_id: job.provider.id,
+                inputs_snapshot: job.inputs_snapshot.clone(),
+            });
+        });
+        project_write
+            .save_generative_config(job.asset_id)
+            .map_err(|err| GenerationFailure::Error(format!("Failed to save config: {}", err)))?;
     }
     preview_dirty.set(true);
 
@@ -1468,11 +1471,9 @@ pub fn App() -> Element {
                         thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         panel_width: left_w,
                         on_import: move |asset: crate::state::Asset| {
-                            let project_root = project.read().project_path.clone();
-                            project.write().add_asset(asset.clone());
-                            if let Some(project_root) = project_root {
-                                ensure_generative_config(&project_root, &asset);
-                            }
+                            let mut project_write = project.write();
+                            project_write.add_asset(asset.clone());
+                            let _ = project_write.save_generative_config(asset.id);
                             preview_dirty.set(true);
                             let thumbs = thumbnailer.read().clone();
                             let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
@@ -1706,18 +1707,17 @@ pub fn App() -> Element {
                     },
                     
                     // Attributes panel placeholder content
-                    AttributesPanelContent {
-                        key: "{attributes_key}",
-                        project: project,
-                        selection: selection,
-                        preview_dirty: preview_dirty,
-                        providers: provider_entries,
-                        previewer: previewer,
-                        thumbnailer: thumbnailer.read().clone(),
-                        thumbnail_cache_buster: thumbnail_cache_buster,
-                        generation_tick: generation_tick,
-                        on_enqueue_generation: on_enqueue_generation,
-                    }
+                        AttributesPanelContent {
+                            key: "{attributes_key}",
+                            project: project,
+                            selection: selection,
+                            preview_dirty: preview_dirty,
+                            providers: provider_entries,
+                            previewer: previewer,
+                            thumbnailer: thumbnailer.read().clone(),
+                            thumbnail_cache_buster: thumbnail_cache_buster,
+                            on_enqueue_generation: on_enqueue_generation,
+                        }
                 }
             }
 

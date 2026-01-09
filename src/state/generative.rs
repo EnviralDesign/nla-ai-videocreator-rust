@@ -103,28 +103,6 @@ fn temp_config_path(folder: &Path) -> PathBuf {
     folder.join("config.json.tmp")
 }
 
-pub fn ensure_generative_config(project_root: &Path, asset: &Asset) {
-    let folder = match &asset.kind {
-        AssetKind::GenerativeVideo { folder, .. }
-        | AssetKind::GenerativeImage { folder, .. }
-        | AssetKind::GenerativeAudio { folder, .. } => folder,
-        _ => return,
-    };
-
-    let folder_path = project_root.join(folder);
-    let config_path = folder_path.join("config.json");
-    if config_path.exists() {
-        return;
-    }
-
-    if let Err(err) = GenerativeConfig::default().save(&folder_path) {
-        println!(
-            "Failed to create generative config at {:?}: {}",
-            config_path, err
-        );
-    }
-}
-
 pub fn generative_info_for_clip(
     project: &Project,
     clip_id: uuid::Uuid,

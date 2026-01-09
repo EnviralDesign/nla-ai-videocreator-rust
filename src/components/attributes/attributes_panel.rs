@@ -12,7 +12,6 @@ use crate::providers::comfyui;
 use crate::state::{
     asset_display_name,
     delete_generative_version_files,
-    generative_info_for_clip,
     parse_version_index,
     GenerationJob,
     GenerationJobStatus,
@@ -27,49 +26,13 @@ pub fn AttributesPanelContent(
     selection: Signal<crate::state::SelectionState>,
     preview_dirty: Signal<bool>,
     providers: Signal<Vec<ProviderEntry>>,
-    generation_tick: Signal<u64>,
     on_enqueue_generation: EventHandler<GenerationJob>,
     previewer: Signal<std::sync::Arc<crate::core::preview::PreviewRenderer>>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
 ) -> Element {
-    let gen_config = use_signal(|| None::<crate::state::GenerativeConfig>);
     let mut gen_status = use_signal(|| None::<String>);
     let mut last_clip_id = use_signal(|| None::<uuid::Uuid>);
-
-    use_effect(move || {
-        let mut gen_config = gen_config.clone();
-        let _tick = generation_tick();
-        let selection_state = selection.read();
-        let selected_count = selection_state.clip_ids.len();
-        let selected_clip_id = selection_state.primary_clip();
-        drop(selection_state);
-
-        if selected_count != 1 {
-            gen_config.set(None);
-            return;
-        }
-
-        let Some(clip_id) = selected_clip_id else {
-            gen_config.set(None);
-            return;
-        };
-
-        let project_read = project.read();
-        let Some((folder, _output)) = generative_info_for_clip(&project_read, clip_id) else {
-            gen_config.set(None);
-            return;
-        };
-        let Some(project_root) = project_read.project_path.clone() else {
-            gen_config.set(None);
-            return;
-        };
-        let folder_path = project_root.join(folder);
-        drop(project_read);
-
-        let config = crate::state::GenerativeConfig::load(&folder_path).unwrap_or_default();
-        gen_config.set(Some(config));
-    });
 
     let selection_state = selection.read();
     let selected_count = selection_state.clip_ids.len();
@@ -153,6 +116,10 @@ pub fn AttributesPanelContent(
     };
 
     let asset = project_read.find_asset(clip.asset_id).cloned();
+    let config_snapshot = project_read
+        .generative_config(clip.asset_id)
+        .cloned()
+        .unwrap_or_default();
     let asset_display = asset
         .as_ref()
         .map(asset_display_name)
@@ -185,14 +152,7 @@ pub fn AttributesPanelContent(
             .collect(),
         None => Vec::new(),
     };
-    let config_snapshot = gen_config().unwrap_or_default();
-    let asset_provider_id = asset.as_ref().and_then(|asset| match &asset.kind {
-        crate::state::AssetKind::GenerativeVideo { provider_id, .. }
-        | crate::state::AssetKind::GenerativeImage { provider_id, .. }
-        | crate::state::AssetKind::GenerativeAudio { provider_id, .. } => *provider_id,
-        _ => None,
-    });
-    let selected_provider_id = config_snapshot.provider_id.or(asset_provider_id);
+    let selected_provider_id = config_snapshot.provider_id;
     let selected_provider = selected_provider_id.and_then(|id| {
         compatible_providers
             .iter()
@@ -206,18 +166,9 @@ pub fn AttributesPanelContent(
     let providers_path_label = crate::core::provider_store::global_providers_root()
         .display()
         .to_string();
-    let asset_active_version = asset.as_ref().and_then(|asset| match &asset.kind {
-        crate::state::AssetKind::GenerativeVideo { active_version, .. }
-        | crate::state::AssetKind::GenerativeImage { active_version, .. }
-        | crate::state::AssetKind::GenerativeAudio { active_version, .. } => {
-            active_version.clone()
-        }
-        _ => None,
-    });
     let selected_version_value = config_snapshot
         .active_version
         .clone()
-        .or(asset_active_version)
         .unwrap_or_default();
     let mut version_options: Vec<String> = config_snapshot
         .versions
@@ -239,8 +190,6 @@ pub fn AttributesPanelContent(
     let confirm_delete_version = use_signal(|| false);
     let can_delete_version = !selected_version_value.trim().is_empty();
     let on_provider_change = {
-        let mut gen_config = gen_config.clone();
-        let gen_folder_path = gen_folder_path.clone();
         let asset_id = clip.asset_id;
         let mut project = project.clone();
         Rc::new(RefCell::new(move |e: FormEvent| {
@@ -249,26 +198,12 @@ pub fn AttributesPanelContent(
                 .trim()
                 .parse::<uuid::Uuid>()
                 .ok();
-            let mut config = match gen_folder_path.as_ref() {
-                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
-                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
-                None => gen_config().unwrap_or_default(),
-            };
-            config.provider_id = provider_id;
-            if let Some(folder_path) = gen_folder_path.as_ref() {
-                if let Err(err) = config.save(folder_path) {
-                    println!("Failed to save generative config: {}", err);
-                }
-            }
-            gen_config.set(Some(config));
-            project
-                .write()
-                .set_generative_provider_id(asset_id, provider_id);
+            let mut project_write = project.write();
+            project_write.set_generative_provider_id(asset_id, provider_id);
+            let _ = project_write.save_generative_config(asset_id);
         }))
     };
     let on_version_change = {
-        let mut gen_config = gen_config.clone();
-        let gen_folder_path = gen_folder_path.clone();
         let asset_id = clip.asset_id;
         let mut project = project.clone();
         let mut preview_dirty = preview_dirty.clone();
@@ -283,32 +218,22 @@ pub fn AttributesPanelContent(
             } else {
                 Some(trimmed.to_string())
             };
-            let mut config = match gen_folder_path.as_ref() {
-                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
-                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
-                None => gen_config().unwrap_or_default(),
-            };
-            config.active_version = next_version.clone();
-            if let Some(version) = next_version.as_ref() {
-                if let Some(record) = config.versions.iter().find(|record| record.version == *version) {
-                    config.inputs = record.inputs_snapshot.clone();
-                    config.provider_id = Some(record.provider_id);
-                }
-            }
-            if let Some(folder_path) = gen_folder_path.as_ref() {
-                if let Err(err) = config.save(folder_path) {
-                    println!("Failed to save generative config: {}", err);
-                }
-            }
-            let provider_id = config.provider_id;
-            gen_config.set(Some(config));
-            project
-                .write()
-                .set_generative_active_version(asset_id, next_version);
-            if let Some(provider_id) = provider_id {
-                project
-                    .write()
-                    .set_generative_provider_id(asset_id, Some(provider_id));
+            {
+                let mut project_write = project.write();
+                project_write.update_generative_config(asset_id, |config| {
+                    config.active_version = next_version.clone();
+                    if let Some(version) = next_version.as_ref() {
+                        if let Some(record) = config
+                            .versions
+                            .iter()
+                            .find(|record| record.version == *version)
+                        {
+                            config.inputs = record.inputs_snapshot.clone();
+                            config.provider_id = Some(record.provider_id);
+                        }
+                    }
+                });
+                let _ = project_write.save_generative_config(asset_id);
             }
             preview_dirty.set(true);
             if let Some(asset) = project.read().find_asset(asset_id).cloned() {
@@ -323,7 +248,6 @@ pub fn AttributesPanelContent(
         }))
     };
     let on_delete_version = {
-        let gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
         let asset_id = clip.asset_id;
         let project = project.clone();
@@ -336,7 +260,6 @@ pub fn AttributesPanelContent(
         let version_options = version_options.clone();
         let selected_version_value = selected_version_value.clone();
         Rc::new(RefCell::new(move || {
-            let mut gen_config = gen_config.clone();
             let gen_folder_path = gen_folder_path.clone();
             let mut project = project.clone();
             let mut preview_dirty = preview_dirty.clone();
@@ -391,20 +314,25 @@ pub fn AttributesPanelContent(
                 }
                 previewer.read().invalidate_folder(&folder_path);
 
-                let mut config = crate::state::GenerativeConfig::load(&folder_path)
-                    .unwrap_or_else(|_| gen_config().unwrap_or_default());
-                config.versions.retain(|record| record.version != version);
-                config.active_version = next_active_clone.clone();
-                if let Err(err) = config.save(&folder_path) {
-                    gen_status.set(Some(format!("Failed to save config: {}", err)));
-                    confirm_delete_version.set(false);
-                    return;
+                {
+                    let mut project_write = project.write();
+                    project_write.update_generative_config(asset_id, |config| {
+                        config.versions.retain(|record| record.version != version);
+                        config.active_version = next_active_clone.clone();
+                        if let Some(next_active) = next_active_clone.as_ref() {
+                            if let Some(record) = config
+                                .versions
+                                .iter()
+                                .find(|record| record.version == *next_active)
+                            {
+                                config.inputs = record.inputs_snapshot.clone();
+                                config.provider_id = Some(record.provider_id);
+                            }
+                        }
+                    });
+                    let _ = project_write.save_generative_config(asset_id);
                 }
-                gen_config.set(Some(config));
 
-                project
-                    .write()
-                    .set_generative_active_version(asset_id, next_active_clone.clone());
                 preview_dirty.set(true);
 
                 if let Some(asset) = project.read().find_asset(asset_id).cloned() {
@@ -423,30 +351,22 @@ pub fn AttributesPanelContent(
     };
 
     let set_input_value = {
-        let mut gen_config = gen_config.clone();
-        let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
         Rc::new(RefCell::new(move |name: String, value: serde_json::Value| {
-            let mut config = match gen_folder_path.as_ref() {
-                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
-                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
-                None => gen_config().unwrap_or_default(),
-            };
-            config.inputs.insert(
-                name,
-                crate::state::InputValue::Literal { value },
-            );
-            if let Some(folder_path) = gen_folder_path.as_ref() {
-                if let Err(err) = config.save(folder_path) {
-                    println!("Failed to save generative config: {}", err);
-                }
-            }
-            gen_config.set(Some(config));
+            let mut project_write = project.write();
+            project_write.update_generative_config(asset_id, |config| {
+                config.inputs.insert(
+                    name,
+                    crate::state::InputValue::Literal { value },
+                );
+            });
+            let _ = project_write.save_generative_config(asset_id);
         }))
     };
 
     let asset_label = asset_display.clone();
     let on_generate = {
-        let gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
         let gen_status = gen_status.clone();
         let selected_provider = selected_provider.clone();
@@ -454,12 +374,13 @@ pub fn AttributesPanelContent(
         let clip_id = clip.id;
         let asset_label = asset_label.clone();
         let on_enqueue_generation = on_enqueue_generation.clone();
+        let project = project.clone();
         Rc::new(RefCell::new(move |_evt: MouseEvent| {
-            let mut gen_config = gen_config.clone();
             let gen_folder_path = gen_folder_path.clone();
             let mut gen_status = gen_status.clone();
             let selected_provider = selected_provider.clone();
             let on_enqueue_generation = on_enqueue_generation.clone();
+            let mut project = project.clone();
 
             let Some(provider) = selected_provider.clone() else {
                 gen_status.set(Some("Select a provider first.".to_string()));
@@ -470,16 +391,17 @@ pub fn AttributesPanelContent(
                 return;
             };
 
-            let mut config = crate::state::GenerativeConfig::load(&folder_path)
-                .unwrap_or_else(|_| gen_config().unwrap_or_default());
-            config.provider_id = Some(provider.id);
-            if let Err(err) = config.save(&folder_path) {
-                gen_status.set(Some(format!("Failed to save config: {}", err)));
-                return;
-            }
-            gen_config.set(Some(config.clone()));
+            let mut project_write = project.write();
+            project_write.update_generative_config(asset_id, |config| {
+                config.provider_id = Some(provider.id);
+            });
+            let config_snapshot = project_write
+                .generative_config(asset_id)
+                .cloned()
+                .unwrap_or_default();
+            let _ = project_write.save_generative_config(asset_id);
 
-            let resolved = resolve_provider_inputs(&provider, &config);
+            let resolved = resolve_provider_inputs(&provider, &config_snapshot);
             if !resolved.missing_required.is_empty() {
                 gen_status.set(Some(format!(
                     "Missing inputs: {}",

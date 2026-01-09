@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::state::Asset;
+use crate::state::{Asset, GenerativeConfig};
 use super::{Clip, ClipTransform, Marker, ProjectSettings, Track, TrackType};
 
 /// The main project container
@@ -28,6 +29,9 @@ pub struct Project {
     /// Path to the project folder (not serialized - set on load)
     #[serde(skip)]
     pub project_path: Option<PathBuf>,
+    /// In-memory generative configs keyed by asset id.
+    #[serde(skip)]
+    pub generative_configs: HashMap<Uuid, GenerativeConfig>,
 }
 
 impl Default for Project {
@@ -45,6 +49,7 @@ impl Default for Project {
             clips: Vec::new(),
             markers: Vec::new(),
             project_path: None,
+            generative_configs: HashMap::new(),
         }
     }
 }
@@ -76,6 +81,16 @@ impl Project {
     /// Find an asset by ID
     pub fn find_asset(&self, id: Uuid) -> Option<&Asset> {
         self.assets.iter().find(|a| a.id == id)
+    }
+
+    /// Get the in-memory generative config for an asset.
+    pub fn generative_config(&self, asset_id: Uuid) -> Option<&GenerativeConfig> {
+        self.generative_configs.get(&asset_id)
+    }
+
+    /// Get the in-memory generative config for an asset, mutably.
+    pub fn generative_config_mut(&mut self, asset_id: Uuid) -> Option<&mut GenerativeConfig> {
+        self.generative_configs.get_mut(&asset_id)
     }
 
     /// Set the cached duration (in seconds) for an asset
@@ -160,7 +175,13 @@ impl Project {
     /// Add an asset to the project
     pub fn add_asset(&mut self, asset: Asset) -> Uuid {
         let id = asset.id;
+        let is_generative = asset.is_generative();
         self.assets.push(asset);
+        if is_generative {
+            self.generative_configs
+                .entry(id)
+                .or_insert_with(GenerativeConfig::default);
+        }
         id
     }
 
@@ -231,6 +252,7 @@ impl Project {
         // Remove the asset
         let len = self.assets.len();
         self.assets.retain(|a| a.id != id);
+        self.generative_configs.remove(&id);
         self.assets.len() < len
     }
 
