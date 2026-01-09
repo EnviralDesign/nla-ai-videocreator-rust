@@ -104,19 +104,22 @@ impl Project {
         };
 
         for asset in self.assets.iter_mut() {
-            let (folder, active_version) = match &mut asset.kind {
+            let (folder, active_version, provider_id) = match &mut asset.kind {
                 AssetKind::GenerativeVideo {
                     folder,
                     active_version,
+                    provider_id,
                 }
                 | AssetKind::GenerativeImage {
                     folder,
                     active_version,
+                    provider_id,
                 }
                 | AssetKind::GenerativeAudio {
                     folder,
                     active_version,
-                } => (folder, active_version),
+                    provider_id,
+                } => (folder, active_version, provider_id),
                 _ => continue,
             };
 
@@ -132,12 +135,40 @@ impl Project {
                 }
             }
 
+            if config.provider_id.is_none() {
+                if let Some(existing) = provider_id.clone() {
+                    config.provider_id = Some(existing);
+                    changed = true;
+                }
+            }
+
             if config.active_version != *active_version {
                 *active_version = config.active_version.clone();
             }
 
+            if config.provider_id != *provider_id {
+                *provider_id = config.provider_id;
+            }
+
             if changed {
                 let _ = config.save(&folder_path);
+            }
+        }
+    }
+
+    pub fn set_generative_provider_id(
+        &mut self,
+        asset_id: Uuid,
+        provider_id: Option<Uuid>,
+    ) {
+        if let Some(asset) = self.assets.iter_mut().find(|asset| asset.id == asset_id) {
+            match &mut asset.kind {
+                AssetKind::GenerativeVideo { provider_id: stored, .. }
+                | AssetKind::GenerativeImage { provider_id: stored, .. }
+                | AssetKind::GenerativeAudio { provider_id: stored, .. } => {
+                    *stored = provider_id;
+                }
+                _ => {}
             }
         }
     }

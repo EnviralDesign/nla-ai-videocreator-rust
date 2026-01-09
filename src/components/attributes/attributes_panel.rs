@@ -186,7 +186,13 @@ pub fn AttributesPanelContent(
         None => Vec::new(),
     };
     let config_snapshot = gen_config().unwrap_or_default();
-    let selected_provider_id = config_snapshot.provider_id;
+    let asset_provider_id = asset.as_ref().and_then(|asset| match &asset.kind {
+        crate::state::AssetKind::GenerativeVideo { provider_id, .. }
+        | crate::state::AssetKind::GenerativeImage { provider_id, .. }
+        | crate::state::AssetKind::GenerativeAudio { provider_id, .. } => *provider_id,
+        _ => None,
+    });
+    let selected_provider_id = config_snapshot.provider_id.or(asset_provider_id);
     let selected_provider = selected_provider_id.and_then(|id| {
         compatible_providers
             .iter()
@@ -200,15 +206,28 @@ pub fn AttributesPanelContent(
     let providers_path_label = crate::core::provider_store::global_providers_root()
         .display()
         .to_string();
+    let asset_active_version = asset.as_ref().and_then(|asset| match &asset.kind {
+        crate::state::AssetKind::GenerativeVideo { active_version, .. }
+        | crate::state::AssetKind::GenerativeImage { active_version, .. }
+        | crate::state::AssetKind::GenerativeAudio { active_version, .. } => {
+            active_version.clone()
+        }
+        _ => None,
+    });
+    let selected_version_value = config_snapshot
+        .active_version
+        .clone()
+        .or(asset_active_version)
+        .unwrap_or_default();
     let mut version_options: Vec<String> = config_snapshot
         .versions
         .iter()
         .map(|record| record.version.clone())
         .collect();
-    if let Some(active_version) = config_snapshot.active_version.clone() {
-        if !version_options.contains(&active_version) {
-            version_options.push(active_version);
-        }
+    if !selected_version_value.trim().is_empty()
+        && !version_options.contains(&selected_version_value)
+    {
+        version_options.push(selected_version_value.clone());
     }
     version_options.sort_by(|a, b| match (parse_version_index(a), parse_version_index(b)) {
         (Some(a_num), Some(b_num)) => b_num.cmp(&a_num),
@@ -217,15 +236,13 @@ pub fn AttributesPanelContent(
         (None, None) => b.cmp(a),
     });
     version_options.dedup();
-    let selected_version_value = config_snapshot
-        .active_version
-        .clone()
-        .unwrap_or_default();
     let confirm_delete_version = use_signal(|| false);
     let can_delete_version = !selected_version_value.trim().is_empty();
     let on_provider_change = {
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
         Rc::new(RefCell::new(move |e: FormEvent| {
             let value = e.value();
             let provider_id = value
@@ -244,6 +261,9 @@ pub fn AttributesPanelContent(
                 }
             }
             gen_config.set(Some(config));
+            project
+                .write()
+                .set_generative_provider_id(asset_id, provider_id);
         }))
     };
     let on_version_change = {
@@ -280,10 +300,16 @@ pub fn AttributesPanelContent(
                     println!("Failed to save generative config: {}", err);
                 }
             }
+            let provider_id = config.provider_id;
             gen_config.set(Some(config));
             project
                 .write()
                 .set_generative_active_version(asset_id, next_version);
+            if let Some(provider_id) = provider_id {
+                project
+                    .write()
+                    .set_generative_provider_id(asset_id, Some(provider_id));
+            }
             preview_dirty.set(true);
             if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                 let thumbs = thumbnailer.clone();

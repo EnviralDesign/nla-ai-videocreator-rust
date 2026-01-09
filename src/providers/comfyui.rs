@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::core::paths;
 use crate::state::{
     input_value_as_bool, input_value_as_f64, input_value_as_i64, BindingTransform, ManifestInput,
     NodeSelector, ProviderInputType, ProviderManifest,
@@ -103,51 +104,14 @@ const WORKFLOW_INPUTS: &[WorkflowInputBinding] = &[
 
 /// Resolves a ComfyUI workflow path relative to the app root/exe as needed.
 pub fn resolve_workflow_path(path: Option<&str>) -> PathBuf {
-    let resolved = path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_WORKFLOW_PATH));
-    if resolved.is_absolute() {
-        resolved
-    } else {
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let candidate = base.join(&resolved);
-        if candidate.exists() {
-            return candidate;
-        }
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                let exe_candidate = parent.join(&resolved);
-                if exe_candidate.exists() {
-                    return exe_candidate;
-                }
-            }
-        }
-        base.join(resolved)
-    }
+    let resolved = path.unwrap_or(DEFAULT_WORKFLOW_PATH);
+    paths::resolve_resource_path(Path::new(resolved))
 }
 
 /// Resolves an optional manifest path relative to the app root/exe as needed.
 pub fn resolve_manifest_path(path: Option<&str>) -> Option<PathBuf> {
     let path = path?;
-    let resolved = PathBuf::from(path);
-    if resolved.is_absolute() {
-        return Some(resolved);
-    }
-
-    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let candidate = base.join(&resolved);
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let exe_candidate = parent.join(&resolved);
-            if exe_candidate.exists() {
-                return Some(exe_candidate);
-            }
-        }
-    }
-    Some(base.join(resolved))
+    Some(paths::resolve_resource_path(Path::new(path)))
 }
 
 /// Lightweight health check for a ComfyUI instance.

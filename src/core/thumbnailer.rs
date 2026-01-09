@@ -60,6 +60,7 @@ impl Thumbnailer {
             crate::state::AssetKind::GenerativeImage {
                 folder,
                 active_version,
+                ..
             } => {
                 let path = resolve_generative_source(
                     &self.project_root,
@@ -78,6 +79,7 @@ impl Thumbnailer {
             crate::state::AssetKind::GenerativeVideo {
                 folder,
                 active_version,
+                ..
             } => {
                 let path = resolve_generative_source(
                     &self.project_root,

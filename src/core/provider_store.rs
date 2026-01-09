@@ -37,7 +37,7 @@ pub fn global_providers_root() -> PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .or_else(|_| std::env::var("APPDATA"))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        .unwrap_or_else(|_| std::env::temp_dir());
     base.join("NLA-AI-VideoCreator").join("providers")
 }
 

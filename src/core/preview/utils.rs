@@ -134,6 +134,7 @@ pub(crate) fn resolve_asset_source(
         AssetKind::GenerativeImage {
             folder,
             active_version,
+            ..
         } => {
             let path = resolve_generative_path(
                 project_root,
@@ -146,6 +147,7 @@ pub(crate) fn resolve_asset_source(
         AssetKind::GenerativeVideo {
             folder,
             active_version,
+            ..
         } => {
             let path = resolve_generative_path(
                 project_root,

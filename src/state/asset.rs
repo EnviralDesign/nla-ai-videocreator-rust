@@ -33,6 +33,8 @@ pub enum AssetKind {
         folder: PathBuf,
         /// Currently active version (e.g., "v1")
         active_version: Option<String>,
+        /// Selected provider for this asset
+        provider_id: Option<Uuid>,
     },
     /// A generative image asset with version history
     GenerativeImage {
@@ -40,6 +42,8 @@ pub enum AssetKind {
         folder: PathBuf,
         /// Currently active version
         active_version: Option<String>,
+        /// Selected provider for this asset
+        provider_id: Option<Uuid>,
     },
     /// A generative audio asset with version history
     GenerativeAudio {
@@ -47,6 +51,8 @@ pub enum AssetKind {
         folder: PathBuf,
         /// Currently active version
         active_version: Option<String>,
+        /// Selected provider for this asset
+        provider_id: Option<Uuid>,
     },
 }
 
@@ -137,6 +143,7 @@ impl Asset {
             kind: AssetKind::GenerativeVideo {
                 folder,
                 active_version: None,
+                provider_id: None,
             },
         }
     }
@@ -150,6 +157,7 @@ impl Asset {
             kind: AssetKind::GenerativeImage {
                 folder,
                 active_version: None,
+                provider_id: None,
             },
         }
     }
@@ -163,6 +171,7 @@ impl Asset {
             kind: AssetKind::GenerativeAudio {
                 folder,
                 active_version: None,
+                provider_id: None,
             },
         }
     }

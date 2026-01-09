@@ -131,9 +131,11 @@ async fn execute_generation_job(
         .save(&folder_path)
         .map_err(|err| GenerationFailure::Error(format!("Failed to save config: {}", err)))?;
 
-    project
-        .write()
-        .set_generative_active_version(job.asset_id, Some(version.clone()));
+    {
+        let mut project_write = project.write();
+        project_write.set_generative_active_version(job.asset_id, Some(version.clone()));
+        project_write.set_generative_provider_id(job.asset_id, Some(job.provider.id));
+    }
     preview_dirty.set(true);
 
     if let Some(asset) = project.read().find_asset(job.asset_id).cloned() {
@@ -157,19 +159,26 @@ pub fn App() -> Element {
     let default_settings = crate::state::ProjectSettings::default();
     let default_preview_width = default_settings.preview_max_width;
     let default_preview_height = default_settings.preview_max_height;
+    let default_cache_root = crate::core::paths::app_cache_root().join("scratch");
+    let default_cache_root_for_thumbs = default_cache_root.clone();
+    let default_cache_root_for_preview = default_cache_root.clone();
     
     // Core services
-    let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
+    let mut thumbnailer = use_signal(move || {
+        std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(
+            default_cache_root_for_thumbs,
+        ))
+    });
     let thumbnail_refresh_tick = use_signal(|| 0_u64);
     let thumbnail_cache_buster = use_signal(|| 0_u64);
-    let mut previewer = use_signal(|| std::sync::Arc::new(
-        crate::core::preview::PreviewRenderer::new_with_limits(
-            std::path::PathBuf::from("projects/default"),
+    let mut previewer = use_signal(move || {
+        std::sync::Arc::new(crate::core::preview::PreviewRenderer::new_with_limits(
+            default_cache_root_for_preview,
             PREVIEW_CACHE_BUDGET_BYTES,
             default_preview_width,
             default_preview_height,
-        ),
-    ));
+        ))
+    });
     let preview_frame = use_signal(|| None::<crate::core::preview::PreviewFrameInfo>);
     let preview_stats = use_signal(|| None::<crate::core::preview::PreviewStats>);
     let mut preview_eval = use_signal(|| None::<document::Eval>);
@@ -1267,6 +1276,7 @@ pub fn App() -> Element {
                 75% {{ box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.0); }}
                 100% {{ box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.0); }}
             }}
+            .info-tooltip:hover .tooltip-content {{ opacity: 1; }}
             "#
         }
 

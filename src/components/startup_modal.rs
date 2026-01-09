@@ -357,17 +357,41 @@ pub fn StartupModal(
 
                             // Preview downsample section
                             div {
-                                label {
-                                    style: "
-                                        display: block; font-size: 11px; font-weight: 500;
-                                        color: {TEXT_MUTED}; margin-bottom: 8px;
-                                        text-transform: uppercase; letter-spacing: 0.5px;
-                                    ",
-                                    "Preview Downsample"
-                                }
-                                p {
-                                    style: "margin: 0 0 8px; font-size: 11px; color: {TEXT_DIM};",
-                                    "Caps the realtime preview size for smoother playback."
+                                div {
+                                    style: "display: flex; align-items: center; gap: 6px; margin-bottom: 8px;",
+                                    label {
+                                        style: "
+                                            display: block; font-size: 11px; font-weight: 500;
+                                            color: {TEXT_MUTED};
+                                            text-transform: uppercase; letter-spacing: 0.5px;
+                                        ",
+                                        "Preview Downsample"
+                                    }
+                                    div {
+                                        class: "info-tooltip",
+                                        style: "
+                                            position: relative; width: 14px; height: 14px;
+                                            border-radius: 50%; border: 1px solid {TEXT_DIM};
+                                            display: flex; align-items: center; justify-content: center;
+                                            font-size: 9px; color: {TEXT_DIM}; cursor: help;
+                                        ",
+                                        "!"
+                                        // Tooltip on hover
+                                        div {
+                                            style: "
+                                                position: absolute; left: 20px; top: -8px;
+                                                background: {BG_ELEVATED}; border: 1px solid {BORDER_DEFAULT};
+                                                border-radius: 6px; padding: 8px 12px;
+                                                font-size: 11px; color: {TEXT_SECONDARY};
+                                                white-space: nowrap; pointer-events: none;
+                                                opacity: 0; transition: opacity 0.2s ease;
+                                                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                                                z-index: 1000;
+                                            ",
+                                            class: "tooltip-content",
+                                            "Caps the realtime preview size for smoother playback."
+                                        }
+                                    }
                                 }
                                 div {
                                     style: "display: flex; gap: 8px; align-items: center;",
@@ -420,13 +444,13 @@ pub fn StartupModal(
                                         "Frame Rate" 
                                     }
                                     div {
-                                        style: "display: flex; align-items: center; gap: 6px;",
+                                        style: "position: relative; flex: 1;",
                                         input {
                                             style: "
-                                                flex: 1; padding: 10px 12px; background: {BG_BASE};
+                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
-                                                transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                                                transition: border-color 0.15s ease;
                                                 user-select: text;
                                             ",
                                             r#type: "number",
@@ -435,9 +459,12 @@ pub fn StartupModal(
                                             value: "{fps}",
                                             oninput: move |e| fps.set(e.value()),
                                         }
-                                        span { 
-                                            style: "color: {TEXT_DIM}; font-size: 11px;", 
-                                            "fps" 
+                                        span {
+                                            style: "
+                                                position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                                                color: {TEXT_DIM}; font-size: 11px; pointer-events: none;
+                                            ",
+                                            "fps"
                                         }
                                     }
                                 }
@@ -452,10 +479,10 @@ pub fn StartupModal(
                                         "Duration" 
                                     }
                                     div {
-                                        style: "display: flex; align-items: center; gap: 6px;",
+                                        style: "position: relative; flex: 1;",
                                         input {
                                             style: "
-                                                flex: 1; padding: 10px 12px; background: {BG_BASE};
+                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
                                                 transition: border-color 0.15s ease;
@@ -467,9 +494,12 @@ pub fn StartupModal(
                                             value: "{duration}",
                                             oninput: move |e| duration.set(e.value()),
                                         }
-                                        span { 
-                                            style: "color: {TEXT_DIM}; font-size: 11px;", 
-                                            "sec" 
+                                        span {
+                                            style: "
+                                                position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                                                color: {TEXT_DIM}; font-size: 11px; pointer-events: none;
+                                            ",
+                                            "sec"
                                         }
                                     }
                                 }

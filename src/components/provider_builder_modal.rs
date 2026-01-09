@@ -260,11 +260,8 @@ pub fn ProviderBuilderModal(
     let mut initial_workflow_path_for_pick = initial_workflow_path.clone();
     let pick_workflow = move |_| {
         let mut dialog = rfd::FileDialog::new();
-        if let Ok(root) = std::env::current_dir() {
-            let workflows_dir = root.join("workflows");
-            if workflows_dir.exists() {
-                dialog = dialog.set_directory(workflows_dir);
-            }
+        if let Some(workflows_dir) = crate::core::paths::resource_dir("workflows") {
+            dialog = dialog.set_directory(workflows_dir);
         }
         if let Some(path) = dialog
             .add_filter("ComfyUI API Workflow", &["json"])
