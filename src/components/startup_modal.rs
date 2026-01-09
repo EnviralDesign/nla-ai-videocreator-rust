@@ -182,21 +182,21 @@ pub fn StartupModal(
                                 "✨"
                             }
                             h2 {
-                                style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};",
+                                style: "margin: 0; font-size: 16px; font-weight: 600; color: {TEXT_PRIMARY}; letter-spacing: 0.3px;",
                                 "{section_title}"
                             }
                         }
                         
                         // Form content
                         div {
-                            style: "flex: 1; display: flex; flex-direction: column; gap: 16px;",
+                            style: "flex: 1; display: flex; flex-direction: column; gap: 18px;",
                             
                             // Project Name
                             div {
                                 label { 
                                     style: "
                                         display: block; font-size: 11px; font-weight: 500;
-                                        color: {TEXT_MUTED}; margin-bottom: 6px;
+                                        color: {TEXT_MUTED}; margin-bottom: 8px;
                                         text-transform: uppercase; letter-spacing: 0.5px;
                                     ", 
                                     "Project Name" 
@@ -233,63 +233,87 @@ pub fn StartupModal(
                                     style: "display: flex; gap: 6px; margin-bottom: 10px;",
                                     
                                     // 1080p preset
-                                    button {
-                                        style: "
-                                            padding: 6px 12px; border-radius: 6px; font-size: 11px;
-                                            border: 1px solid {BORDER_DEFAULT}; cursor: pointer;
-                                            background: {BG_SURFACE}; color: {TEXT_SECONDARY};
-                                            transition: all 0.15s ease;
-                                        ",
-                                        onclick: move |_| {
-                                            width.set("1920".to_string());
-                                            height.set("1080".to_string());
-                                        },
-                                        "1080p"
+                                    {
+                                        let is_active = width() == "1920" && height() == "1080";
+                                        let border_color = if is_active { ACCENT_VIDEO } else { BORDER_DEFAULT };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    padding: 6px 12px; border-radius: 6px; font-size: 11px;
+                                                    border: 1px solid {border_color}; cursor: pointer;
+                                                    background: {BG_SURFACE}; color: {TEXT_SECONDARY};
+                                                    transition: all 0.15s ease;
+                                                ",
+                                                onclick: move |_| {
+                                                    width.set("1920".to_string());
+                                                    height.set("1080".to_string());
+                                                },
+                                                "1080p"
+                                            }
+                                        }
                                     }
                                     
                                     // 4K preset
-                                    button {
-                                        style: "
-                                            padding: 6px 12px; border-radius: 6px; font-size: 11px;
-                                            border: 1px solid {BORDER_DEFAULT}; cursor: pointer;
-                                            background: {BG_SURFACE}; color: {TEXT_SECONDARY};
-                                            transition: all 0.15s ease;
-                                        ",
-                                        onclick: move |_| {
-                                            width.set("3840".to_string());
-                                            height.set("2160".to_string());
-                                        },
-                                        "4K"
+                                    {
+                                        let is_active = width() == "3840" && height() == "2160";
+                                        let border_color = if is_active { ACCENT_VIDEO } else { BORDER_DEFAULT };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    padding: 6px 12px; border-radius: 6px; font-size: 11px;
+                                                    border: 1px solid {border_color}; cursor: pointer;
+                                                    background: {BG_SURFACE}; color: {TEXT_SECONDARY};
+                                                    transition: all 0.15s ease;
+                                                ",
+                                                onclick: move |_| {
+                                                    width.set("3840".to_string());
+                                                    height.set("2160".to_string());
+                                                },
+                                                "4K"
+                                            }
+                                        }
                                     }
                                     
                                     // Vertical (9:16) preset
-                                    button {
-                                        style: "
-                                            padding: 6px 12px; border-radius: 6px; font-size: 11px;
-                                            border: 1px solid {BORDER_DEFAULT}; cursor: pointer;
-                                            background: {BG_SURFACE}; color: {TEXT_SECONDARY};
-                                            transition: all 0.15s ease;
-                                        ",
-                                        onclick: move |_| {
-                                            width.set("1080".to_string());
-                                            height.set("1920".to_string());
-                                        },
-                                        "9:16"
+                                    {
+                                        let is_active = width() == "1080" && height() == "1920";
+                                        let border_color = if is_active { ACCENT_VIDEO } else { BORDER_DEFAULT };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    padding: 6px 12px; border-radius: 6px; font-size: 11px;
+                                                    border: 1px solid {border_color}; cursor: pointer;
+                                                    background: {BG_SURFACE}; color: {TEXT_SECONDARY};
+                                                    transition: all 0.15s ease;
+                                                ",
+                                                onclick: move |_| {
+                                                    width.set("1080".to_string());
+                                                    height.set("1920".to_string());
+                                                },
+                                                "9:16"
+                                            }
+                                        }
                                     }
                                     
                                     // Square preset
-                                    button {
-                                        style: "
-                                            padding: 6px 12px; border-radius: 6px; font-size: 11px;
-                                            border: 1px solid {BORDER_DEFAULT}; cursor: pointer;
-                                            background: {BG_SURFACE}; color: {TEXT_SECONDARY};
-                                            transition: all 0.15s ease;
-                                        ",
-                                        onclick: move |_| {
-                                            width.set("1080".to_string());
-                                            height.set("1080".to_string());
-                                        },
-                                        "1:1"
+                                    {
+                                        let is_active = width() == "1080" && height() == "1080";
+                                        let border_color = if is_active { ACCENT_VIDEO } else { BORDER_DEFAULT };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    padding: 6px 12px; border-radius: 6px; font-size: 11px;
+                                                    border: 1px solid {border_color}; cursor: pointer;
+                                                    background: {BG_SURFACE}; color: {TEXT_SECONDARY};
+                                                    transition: all 0.15s ease;
+                                                ",
+                                                onclick: move |_| {
+                                                    width.set("1080".to_string());
+                                                    height.set("1080".to_string());
+                                                },
+                                                "1:1"
+                                            }
+                                        }
                                     }
                                 }
                                 
@@ -298,10 +322,10 @@ pub fn StartupModal(
                                     style: "display: flex; gap: 8px; align-items: center;",
                                     input {
                                         style: "
-                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
-                                            text-align: center;
+                                            text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
                                         ",
                                         r#type: "number",
@@ -316,10 +340,10 @@ pub fn StartupModal(
                                     }
                                     input {
                                         style: "
-                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
-                                            text-align: center;
+                                            text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
                                         ",
                                         r#type: "number",
@@ -336,7 +360,7 @@ pub fn StartupModal(
                                 label {
                                     style: "
                                         display: block; font-size: 11px; font-weight: 500;
-                                        color: {TEXT_MUTED}; margin-bottom: 6px;
+                                        color: {TEXT_MUTED}; margin-bottom: 8px;
                                         text-transform: uppercase; letter-spacing: 0.5px;
                                     ",
                                     "Preview Downsample"
@@ -349,10 +373,10 @@ pub fn StartupModal(
                                     style: "display: flex; gap: 8px; align-items: center;",
                                     input {
                                         style: "
-                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
-                                            text-align: center;
+                                            text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
                                         ",
                                         r#type: "number",
@@ -367,10 +391,10 @@ pub fn StartupModal(
                                     }
                                     input {
                                         style: "
-                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
-                                            text-align: center;
+                                            text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
                                         ",
                                         r#type: "number",
@@ -384,13 +408,13 @@ pub fn StartupModal(
 
                             // FPS & Duration row
                             div {
-                                style: "display: flex; gap: 16px;",
+                                style: "display: flex; gap: 20px;",
                                 div {
                                     style: "flex: 1;",
                                     label { 
                                         style: "
                                             display: block; font-size: 11px; font-weight: 500;
-                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            color: {TEXT_MUTED}; margin-bottom: 8px;
                                             text-transform: uppercase; letter-spacing: 0.5px;
                                         ", 
                                         "Frame Rate" 
@@ -399,9 +423,10 @@ pub fn StartupModal(
                                         style: "display: flex; align-items: center; gap: 6px;",
                                         input {
                                             style: "
-                                                flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                                flex: 1; padding: 10px 12px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                                transition: border-color 0.15s ease, box-shadow 0.15s ease;
                                                 user-select: text;
                                             ",
                                             r#type: "number",
@@ -421,7 +446,7 @@ pub fn StartupModal(
                                     label { 
                                         style: "
                                             display: block; font-size: 11px; font-weight: 500;
-                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            color: {TEXT_MUTED}; margin-bottom: 8px;
                                             text-transform: uppercase; letter-spacing: 0.5px;
                                         ", 
                                         "Duration" 
@@ -430,9 +455,10 @@ pub fn StartupModal(
                                         style: "display: flex; align-items: center; gap: 6px;",
                                         input {
                                             style: "
-                                                flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                                flex: 1; padding: 10px 12px; background: {BG_BASE};
                                                 border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                                 color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                                transition: border-color 0.15s ease;
                                                 user-select: text;
                                             ",
                                             r#type: "number",
@@ -451,7 +477,7 @@ pub fn StartupModal(
 
                             // Divider
                             div { 
-                                style: "height: 1px; background: linear-gradient(90deg, {BORDER_SUBTLE} 0%, transparent 100%); margin: 4px 0;" 
+                                style: "height: 1px; background: linear-gradient(90deg, {BORDER_SUBTLE} 0%, transparent 100%); margin: 8px 0;" 
                             }
                             
                             // Location
@@ -460,7 +486,7 @@ pub fn StartupModal(
                                     label {
                                         style: "
                                             display: block; font-size: 11px; font-weight: 500;
-                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            color: {TEXT_MUTED}; margin-bottom: 8px;
                                             text-transform: uppercase; letter-spacing: 0.5px;
                                         ",
                                         "Project Folder"
@@ -480,7 +506,7 @@ pub fn StartupModal(
                                     label { 
                                         style: "
                                             display: block; font-size: 11px; font-weight: 500;
-                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            color: {TEXT_MUTED}; margin-bottom: 8px;
                                             text-transform: uppercase; letter-spacing: 0.5px;
                                         ", 
                                         "Save Location" 
@@ -634,7 +660,7 @@ pub fn StartupModal(
                                     "📂"
                                 }
                                 h2 {
-                                    style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};",
+                                    style: "margin: 0; font-size: 16px; font-weight: 600; color: {TEXT_PRIMARY}; letter-spacing: 0.3px;",
                                     "Recent Projects"
                                 }
                             }
