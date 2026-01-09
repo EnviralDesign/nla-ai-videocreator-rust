@@ -9,6 +9,9 @@ pub fn GenerationQueuePanel(
     jobs: Vec<GenerationJob>,
     on_close: EventHandler<MouseEvent>,
     on_delete_job: EventHandler<uuid::Uuid>,
+    paused: bool,
+    pause_reason: Option<String>,
+    on_resume: EventHandler<MouseEvent>,
 ) -> Element {
     if !open {
         return rsx! {};
@@ -54,6 +57,33 @@ pub fn GenerationQueuePanel(
 
             div {
                 style: "display: flex; flex-direction: column; gap: 8px; overflow-y: auto;",
+                if paused {
+                    div {
+                        style: "
+                            display: flex; flex-direction: column; gap: 6px;
+                            padding: 10px; border: 1px solid #f97316;
+                            border-radius: 8px; background-color: rgba(249, 115, 22, 0.08);
+                        ",
+                        span {
+                            style: "font-size: 11px; color: #fdba74; text-transform: uppercase; letter-spacing: 0.5px;",
+                            "Queue Paused"
+                        }
+                        if let Some(reason) = pause_reason.as_ref() {
+                            span { style: "font-size: 11px; color: {TEXT_MUTED};", "{reason}" }
+                        }
+                        button {
+                            class: "collapse-btn",
+                            style: "
+                                align-self: flex-start; padding: 6px 10px;
+                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                font-size: 11px; cursor: pointer;
+                            ",
+                            onclick: move |e| on_resume.call(e),
+                            "Resume Queue"
+                        }
+                    }
+                }
                 if jobs.is_empty() {
                     div {
                         style: "

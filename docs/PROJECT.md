@@ -802,6 +802,14 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Queue badge stays orange when active and shifts to gray only when paused.
+- **2026-01-09:** Queue badge now uses a neutral gray and the QUE toggle shimmers while jobs run.
+- **2026-01-09:** Generative config saves are atomic to prevent versions/provider state from being clobbered.
+- **2026-01-09:** Queue now retries offline providers once after 5s, then pauses with a resume action.
+- **2026-01-09:** Timeline zoom no longer auto-clamps on window resize (zoom stays stateful).
+- **2026-01-09:** Preview GPU device now requests adapter max texture limits (with downlevel fallback).
+- **2026-01-09:** Preview GPU size guard now uses device limits (prevents oversize Surface::configure panics).
+- **2026-01-09:** Native preview now falls back to the canvas when the GPU surface exceeds device texture limits.
 - **2026-01-09:** Queue panel now shows newest jobs at the top.
 - **2026-01-09:** Added a ComfyUI health check before enqueueing generation jobs (blocks offline providers).
 - **2026-01-09:** Added a queue-item context menu to remove queued/completed jobs.

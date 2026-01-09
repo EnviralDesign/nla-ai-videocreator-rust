@@ -35,6 +35,8 @@ pub struct PreviewGpuSurface {
     config: wgpu::SurfaceConfiguration,
     size: dioxus::desktop::tao::dpi::PhysicalSize<u32>,
     position: dioxus::desktop::tao::dpi::PhysicalPosition<i32>,
+    max_surface_size: u32,
+    over_limit: bool,
     sampler: wgpu::Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     uniform_bind_group_layout: wgpu::BindGroupLayout,
@@ -81,15 +83,32 @@ impl PreviewGpuSurface {
             force_fallback_adapter: false,
         }))?;
 
+        let adapter_limits = adapter.limits();
+        let mut requested_limits = wgpu::Limits::downlevel_defaults();
+        requested_limits.max_texture_dimension_1d = adapter_limits.max_texture_dimension_1d;
+        requested_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
+        requested_limits.max_texture_dimension_3d = adapter_limits.max_texture_dimension_3d;
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits: requested_limits,
             },
             None,
         ))
+        .or_else(|_| {
+            pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            ))
+        })
         .ok()?;
+        let max_surface_size = device.limits().max_texture_dimension_2d.max(1);
 
         let surface_caps = surface.get_capabilities(&adapter);
         let format = surface_caps
@@ -103,8 +122,8 @@ impl PreviewGpuSurface {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width: size.width.max(1).min(max_surface_size),
+            height: size.height.max(1).min(max_surface_size),
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             desired_maximum_frame_latency: 2,
@@ -318,6 +337,8 @@ impl PreviewGpuSurface {
             config,
             size,
             position: dioxus::desktop::tao::dpi::PhysicalPosition::new(0, 0),
+            max_surface_size,
+            over_limit: false,
             sampler,
             texture_bind_group_layout,
             uniform_bind_group_layout,
@@ -361,6 +382,19 @@ impl PreviewGpuSurface {
             return false;
         }
 
+        if size.width > self.max_surface_size || size.height > self.max_surface_size {
+            self.over_limit = true;
+            if self.visible {
+                self.window.set_visible(false);
+                self.visible = false;
+            }
+            return false;
+        }
+
+        if self.over_limit {
+            self.over_limit = false;
+        }
+
         let mut changed = false;
         if self.position != position {
             self.window.set_outer_position(position);
@@ -382,6 +416,9 @@ impl PreviewGpuSurface {
     }
 
     pub fn upload_layers(&mut self, stack: &PreviewLayerStack) -> bool {
+        if self.over_limit {
+            return false;
+        }
         self.canvas_size = (
             stack.canvas_width.max(1),
             stack.canvas_height.max(1),
@@ -492,7 +529,14 @@ impl PreviewGpuSurface {
         }
     }
 
+    pub fn over_limit(&self) -> bool {
+        self.over_limit
+    }
+
     pub fn render_layers(&mut self) {
+        if self.over_limit {
+            return;
+        }
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {

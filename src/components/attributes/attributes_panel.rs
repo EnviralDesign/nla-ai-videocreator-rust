@@ -486,6 +486,8 @@ pub fn AttributesPanelContent(
                     created_at: chrono::Utc::now(),
                     status: GenerationJobStatus::Queued,
                     progress: None,
+                    attempts: 0,
+                    next_attempt_at: None,
                     provider: provider.clone(),
                     output_type: provider.output_type,
                     asset_id,

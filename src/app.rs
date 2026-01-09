@@ -5,6 +5,7 @@
 use dioxus::desktop::{use_window, use_wry_event_handler};
 use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent as TaoWindowEvent};
 use dioxus::prelude::*;
+use chrono::Utc;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -45,6 +46,11 @@ enum PreviewCanvasMessage {
     Clear,
 }
 
+enum GenerationFailure {
+    Offline(String),
+    Error(String),
+}
+
 async fn execute_generation_job(
     job: GenerationJob,
     mut project: Signal<crate::state::Project>,
@@ -52,9 +58,11 @@ async fn execute_generation_job(
     mut preview_dirty: Signal<bool>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
-) -> Result<String, String> {
+) -> Result<String, GenerationFailure> {
     if job.output_type != ProviderOutputType::Image {
-        return Err("Only image outputs are supported in the queue right now.".to_string());
+        return Err(GenerationFailure::Error(
+            "Only image outputs are supported in the queue right now.".to_string(),
+        ));
     }
 
     let folder_path = job.folder_path.clone();
@@ -70,6 +78,9 @@ async fn execute_generation_job(
         } => {
             let workflow_path = comfyui::resolve_workflow_path(workflow_path.as_deref());
             let manifest_path = comfyui::resolve_manifest_path(manifest_path.as_deref());
+            if let Err(err) = comfyui::check_health(&base_url).await {
+                return Err(GenerationFailure::Offline(err));
+            }
             comfyui::generate_image(
                 &base_url,
                 &workflow_path,
@@ -77,15 +88,34 @@ async fn execute_generation_job(
                 manifest_path.as_deref(),
             )
             .await
+            .map_err(|err| GenerationFailure::Error(err))
         }
-        _ => Err("Provider connection not supported yet.".to_string()),
-    }?;
+        _ => Err(GenerationFailure::Error(
+            "Provider connection not supported yet.".to_string(),
+        )),
+    };
+
+    let image = match image {
+        Ok(image) => image,
+        Err(GenerationFailure::Error(err)) => {
+            if let ProviderConnection::ComfyUi { base_url, .. } = job.provider.connection.clone()
+            {
+                if let Err(health_err) = comfyui::check_health(&base_url).await {
+                    return Err(GenerationFailure::Offline(health_err));
+                }
+            }
+            return Err(GenerationFailure::Error(err));
+        }
+        Err(other) => return Err(other),
+    };
 
     std::fs::create_dir_all(&folder_path)
-        .map_err(|err| format!("Failed to create output folder: {}", err))?;
+        .map_err(|err| {
+            GenerationFailure::Error(format!("Failed to create output folder: {}", err))
+        })?;
     let output_path = folder_path.join(format!("{}.{}", version, image.extension));
     std::fs::write(&output_path, &image.bytes)
-        .map_err(|err| format!("Failed to save output: {}", err))?;
+        .map_err(|err| GenerationFailure::Error(format!("Failed to save output: {}", err)))?;
     previewer.read().invalidate_folder(&folder_path);
 
     config.provider_id = Some(job.provider.id);
@@ -99,7 +129,7 @@ async fn execute_generation_job(
     });
     config
         .save(&folder_path)
-        .map_err(|err| format!("Failed to save config: {}", err))?;
+        .map_err(|err| GenerationFailure::Error(format!("Failed to save config: {}", err)))?;
 
     project
         .write()
@@ -167,6 +197,9 @@ pub fn App() -> Element {
     let generation_queue = use_signal(|| Vec::<GenerationJob>::new());
     let generation_active = use_signal(|| None::<uuid::Uuid>);
     let generation_tick = use_signal(|| 0_u64);
+    let generation_retry_tick = use_signal(|| 0_u64);
+    let generation_paused = use_signal(|| false);
+    let generation_pause_reason = use_signal(|| None::<String>);
     let mut queue_open = use_signal(|| false);
 
     // Startup Modal state - check if we have a valid project path on load
@@ -189,19 +222,6 @@ pub fn App() -> Element {
     
     // Derive duration from project
     let duration = project.read().duration();
-
-    use_effect(move || {
-        let (min_zoom, max_zoom) = timeline_zoom_bounds(
-            project.read().duration(),
-            timeline_viewport_width(),
-            project.read().settings.fps,
-        );
-        let current_zoom = zoom();
-        let clamped = current_zoom.clamp(min_zoom, max_zoom);
-        if (clamped - current_zoom).abs() > 0.01 {
-            zoom.set(clamped);
-        }
-    });
 
     use_effect(move || {
         let current_path = project.read().project_path.clone();
@@ -261,22 +281,43 @@ pub fn App() -> Element {
 
     use_effect(move || {
         let _queue_snapshot = generation_queue();
+        let _retry_tick = generation_retry_tick();
+        if generation_paused() {
+            return;
+        }
         let mut generation_queue = generation_queue.clone();
         let mut generation_active = generation_active.clone();
         if generation_active().is_some() {
             return;
         }
 
+        let now = Utc::now();
         let next_job = {
             let mut queue = generation_queue.write();
-            let job = queue
-                .iter_mut()
-                .find(|job| job.status == GenerationJobStatus::Queued);
-            job.map(|job| {
-                job.status = GenerationJobStatus::Running;
-                job.progress = Some(0.0);
-                job.clone()
-            })
+            let next_index = queue
+                .iter()
+                .position(|job| job.status == GenerationJobStatus::Queued);
+            match next_index {
+                Some(index) => {
+                    let job = &mut queue[index];
+                    if let Some(next_at) = job.next_attempt_at {
+                        if next_at > now {
+                            None
+                        } else {
+                            job.status = GenerationJobStatus::Running;
+                            job.progress = Some(0.0);
+                            job.next_attempt_at = None;
+                            Some(job.clone())
+                        }
+                    } else {
+                        job.status = GenerationJobStatus::Running;
+                        job.progress = Some(0.0);
+                        job.next_attempt_at = None;
+                        Some(job.clone())
+                    }
+                }
+                None => None,
+            }
         };
 
         let Some(job) = next_job else {
@@ -288,6 +329,9 @@ pub fn App() -> Element {
         let mut generation_queue = generation_queue.clone();
         let mut generation_active = generation_active.clone();
         let mut generation_tick = generation_tick.clone();
+        let generation_retry_tick = generation_retry_tick.clone();
+        let mut generation_paused = generation_paused.clone();
+        let mut generation_pause_reason = generation_pause_reason.clone();
         let project = project.clone();
         let previewer = previewer.clone();
         let preview_dirty = preview_dirty.clone();
@@ -313,8 +357,32 @@ pub fn App() -> Element {
                         entry.version = Some(version.clone());
                         entry.progress = Some(1.0);
                         entry.error = None;
+                        entry.attempts = 0;
+                        entry.next_attempt_at = None;
                     }
-                    Err(err) => {
+                    Err(GenerationFailure::Offline(err)) => {
+                        if entry.attempts == 0 {
+                            entry.attempts = 1;
+                            entry.status = GenerationJobStatus::Queued;
+                            entry.next_attempt_at = Some(Utc::now() + chrono::Duration::seconds(5));
+                            entry.error = Some("Provider offline, retrying in 5s".to_string());
+                            let mut generation_retry_tick = generation_retry_tick.clone();
+                            spawn(async move {
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                                generation_retry_tick.set(generation_retry_tick() + 1);
+                            });
+                        } else {
+                            entry.status = GenerationJobStatus::Queued;
+                            entry.next_attempt_at = None;
+                            entry.error = Some("Provider offline, queue paused.".to_string());
+                            generation_paused.set(true);
+                            generation_pause_reason.set(Some(format!(
+                                "Provider offline: {}",
+                                err
+                            )));
+                        }
+                    }
+                    Err(GenerationFailure::Error(err)) => {
                         entry.status = GenerationJobStatus::Failed;
                         entry.error = Some(err.clone());
                         entry.progress = None;
@@ -781,6 +849,15 @@ pub fn App() -> Element {
                 }
 
                 let changed = gpu.apply_bounds(bounds);
+                if gpu.over_limit() {
+                    if preview_native_active() {
+                        preview_native_active.set(false);
+                    }
+                    preview_native_uploaded.set(None);
+                    gpu.clear_layers();
+                    preview_dirty.set(true);
+                    return;
+                }
                 if should_render || changed || uploaded {
                     gpu.render_layers();
                 }
@@ -1111,6 +1188,8 @@ pub fn App() -> Element {
         .iter()
         .filter(|job| matches!(job.status, GenerationJobStatus::Queued | GenerationJobStatus::Running))
         .count();
+    let queue_running = generation_active().is_some();
+    let queue_paused = generation_paused();
     let on_enqueue_generation = {
         let mut generation_queue = generation_queue.clone();
         move |job: GenerationJob| {
@@ -1126,6 +1205,27 @@ pub fn App() -> Element {
                     return;
                 }
                 queue.remove(index);
+            }
+        }
+    };
+    let on_resume_generation_queue = {
+        let mut generation_paused = generation_paused.clone();
+        let mut generation_pause_reason = generation_pause_reason.clone();
+        let mut generation_queue = generation_queue.clone();
+        move |_| {
+            generation_paused.set(false);
+            generation_pause_reason.set(None);
+            let mut queue = generation_queue.write();
+            for job in queue.iter_mut() {
+                if job.status == GenerationJobStatus::Queued {
+                    job.attempts = 0;
+                    job.next_attempt_at = None;
+                    if let Some(error) = job.error.as_ref() {
+                        if error.contains("Provider offline") {
+                            job.error = None;
+                        }
+                    }
+                }
             }
         }
     };
@@ -1153,6 +1253,13 @@ pub fn App() -> Element {
             .menu-button:hover {{ background-color: {BG_HOVER} !important; }}
             .menu-item {{ transition: background-color 0.1s ease; }}
             .menu-item:hover:not(:disabled) {{ background-color: {BG_HOVER}; }}
+            .queue-running {{ animation: queuePulse 1.6s ease-in-out infinite; }}
+            @keyframes queuePulse {{
+                0% {{ box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.0); }}
+                45% {{ box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.35); }}
+                75% {{ box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.0); }}
+                100% {{ box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.0); }}
+            }}
             "#
         }
 
@@ -1300,6 +1407,8 @@ pub fn App() -> Element {
                     },
                     queue_count: queue_count,
                     queue_open: queue_open(),
+                    queue_running: queue_running,
+                    queue_paused: queue_paused,
                     on_toggle_queue: move |_| {
                         queue_open.set(!queue_open());
                     },
@@ -1603,6 +1712,9 @@ pub fn App() -> Element {
                 jobs: generation_queue(),
                 on_close: move |_| queue_open.set(false),
                 on_delete_job: on_delete_generation_job,
+                paused: generation_paused(),
+                pause_reason: generation_pause_reason(),
+                on_resume: on_resume_generation_queue,
             }
 
             // Startup Modal (Blocks everything until Project is created/loaded)

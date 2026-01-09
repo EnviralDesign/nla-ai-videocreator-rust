@@ -48,6 +48,8 @@ pub fn TitleBar(
     on_toggle_hw_decode: EventHandler<MouseEvent>,
     queue_count: usize,
     queue_open: bool,
+    queue_running: bool,
+    queue_paused: bool,
     on_toggle_queue: EventHandler<MouseEvent>,
     on_menu_open: EventHandler<bool>,
 ) -> Element {
@@ -311,6 +313,8 @@ pub fn TitleBar(
                     label: "QUE",
                     enabled: queue_open,
                     badge_count: queue_count,
+                    running: queue_running,
+                    paused: queue_paused,
                     on_toggle: on_toggle_queue,
                 }
             }
@@ -467,21 +471,30 @@ fn QuickToggleBadge(
     label: &'static str,
     enabled: bool,
     badge_count: usize,
+    running: bool,
+    paused: bool,
     on_toggle: EventHandler<MouseEvent>,
 ) -> Element {
     let bg = if enabled { ACCENT_PRIMARY } else { BG_BASE };
     let border = if enabled { ACCENT_PRIMARY } else { BORDER_DEFAULT };
     let text = if enabled { "#000" } else { TEXT_MUTED };
     let show_badge = badge_count > 0;
+    let badge_bg = if paused { BORDER_STRONG } else { ACCENT_MARKER };
+    let badge_text_color = if paused { TEXT_PRIMARY } else { "#111" };
     let badge_text = if badge_count > 99 {
         "99+".to_string()
     } else {
         badge_count.to_string()
     };
+    let button_class = if running {
+        "collapse-btn queue-running"
+    } else {
+        "collapse-btn"
+    };
 
     rsx! {
         button {
-            class: "collapse-btn",
+            class: "{button_class}",
             style: "
                 position: relative;
                 background: {bg}; border: 1px solid {border};
@@ -496,8 +509,8 @@ fn QuickToggleBadge(
                     style: "
                         position: absolute; top: -6px; right: -4px;
                         min-width: 16px; height: 16px;
-                        background-color: {ACCENT_MARKER};
-                        color: #111; font-size: 9px; font-weight: 700;
+                        background-color: {badge_bg};
+                        color: {badge_text_color}; font-size: 9px; font-weight: 700;
                         border-radius: 999px; padding: 0 4px;
                         display: inline-flex; align-items: center; justify-content: center;
                         border: 1px solid {BG_BASE};

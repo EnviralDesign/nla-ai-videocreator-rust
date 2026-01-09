@@ -54,29 +54,53 @@ impl Default for GenerativeConfig {
 impl GenerativeConfig {
     pub fn load(folder: &Path) -> io::Result<Self> {
         let path = config_path(folder);
+        let tmp_path = temp_config_path(folder);
         let json = match fs::read_to_string(&path) {
             Ok(json) => json,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self::default());
+                if let Ok(json) = fs::read_to_string(&tmp_path) {
+                    json
+                } else {
+                    return Ok(Self::default());
+                }
             }
             Err(err) => return Err(err),
         };
-        let config = serde_json::from_str(&json)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        Ok(config)
+        match serde_json::from_str(&json) {
+            Ok(config) => Ok(config),
+            Err(err) => {
+                if let Ok(tmp_json) = fs::read_to_string(&tmp_path) {
+                    let config = serde_json::from_str(&tmp_json)
+                        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    Ok(config)
+                } else {
+                    Err(io::Error::new(io::ErrorKind::InvalidData, err))
+                }
+            }
+        }
     }
 
     pub fn save(&self, folder: &Path) -> io::Result<()> {
         fs::create_dir_all(folder)?;
         let json = serde_json::to_string_pretty(self)
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-        fs::write(config_path(folder), json)?;
+        let path = config_path(folder);
+        let tmp_path = temp_config_path(folder);
+        fs::write(&tmp_path, json)?;
+        if path.exists() {
+            let _ = fs::remove_file(&path);
+        }
+        fs::rename(&tmp_path, &path)?;
         Ok(())
     }
 }
 
 fn config_path(folder: &Path) -> PathBuf {
     folder.join("config.json")
+}
+
+fn temp_config_path(folder: &Path) -> PathBuf {
+    folder.join("config.json.tmp")
 }
 
 pub fn ensure_generative_config(project_root: &Path, asset: &Asset) {
@@ -179,6 +203,8 @@ pub struct GenerationJob {
     pub created_at: DateTime<Utc>,
     pub status: GenerationJobStatus,
     pub progress: Option<f32>,
+    pub attempts: u8,
+    pub next_attempt_at: Option<DateTime<Utc>>,
     pub provider: ProviderEntry,
     pub output_type: ProviderOutputType,
     pub asset_id: Uuid,
