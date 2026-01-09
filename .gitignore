@@ -49,3 +49,4 @@ ehthumbs.db
 .tmp/*
 
 .venv
+generate-git-history-video-here.bat
