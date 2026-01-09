@@ -146,6 +146,7 @@ pub fn ProviderTextAreaField(
 ) -> Element {
     let mut text = use_signal(|| value.clone());
     let mut last_prop_value = use_signal(|| value.clone());
+    let mut is_focused = use_signal(|| false);
 
     use_effect(move || {
         let v = value.clone();
@@ -167,25 +168,51 @@ pub fn ProviderTextAreaField(
     };
 
     let mut commit_on_blur = make_commit();
+    let text_value = text();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            textarea {
-                rows: "{rows}",
-                value: "{text()}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px; line-height: 1.4;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    resize: vertical;
-                    user-select: text;
-                ",
-                oninput: move |e| text.set(e.value()),
-                onblur: move |_| commit_on_blur(),
+            if is_focused() {
+                textarea {
+                    rows: "{rows}",
+                    style: "
+                        width: 100%; min-width: 0; box-sizing: border-box;
+                        padding: 6px 8px; font-size: 12px; line-height: 1.4;
+                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                        outline: none;
+                        resize: vertical;
+                        user-select: text;
+                    ",
+                    oninput: move |e| text.set(e.value()),
+                    onfocus: move |_| is_focused.set(true),
+                    onblur: move |_| {
+                        is_focused.set(false);
+                        commit_on_blur();
+                    },
+                }
+            } else {
+                textarea {
+                    rows: "{rows}",
+                    value: "{text_value}",
+                    style: "
+                        width: 100%; min-width: 0; box-sizing: border-box;
+                        padding: 6px 8px; font-size: 12px; line-height: 1.4;
+                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                        outline: none;
+                        resize: vertical;
+                        user-select: text;
+                    ",
+                    oninput: move |e| text.set(e.value()),
+                    onfocus: move |_| is_focused.set(true),
+                    onblur: move |_| {
+                        is_focused.set(false);
+                        commit_on_blur();
+                    },
+                }
             }
         }
     }

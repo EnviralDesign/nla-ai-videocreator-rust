@@ -178,7 +178,6 @@ pub fn AssetItem(
                 } else {
                     span { 
                         style: "flex: 1; min-width: 0; font-size: 12px; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                        onmousedown: move |e| e.stop_propagation(),
                         ondoubleclick: {
                             let asset_name = asset_name.clone();
                             let mut draft_name = draft_name.clone();

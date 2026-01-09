@@ -21,6 +21,7 @@ pub fn ProvidersModal(
     on_provider_save: EventHandler<MouseEvent>,
     on_provider_delete: EventHandler<MouseEvent>,
 ) -> Element {
+    let mut editor_focused = use_signal(|| false);
     rsx! {
         if !show() {
             div {}
@@ -211,24 +212,50 @@ pub fn ProvidersModal(
                     // Right editor
                     div {
                         style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;",
-                        textarea {
-                            style: "
-                                flex: 1; width: 100%;
-                                background-color: {BG_SURFACE};
-                                border: 1px solid {BORDER_DEFAULT};
-                                border-radius: 6px;
-                                color: {TEXT_PRIMARY};
-                                font-family: 'SF Mono', Consolas, monospace;
-                                font-size: 11px; line-height: 1.5;
-                                padding: 10px; resize: none;
-                                white-space: pre;
-                                user-select: text;
-                            ",
-                            value: "{provider_editor_text()}",
-                            oninput: move |e| {
-                                provider_editor_text.set(e.value());
-                                provider_editor_dirty.set(true);
-                                provider_editor_error.set(None);
+                        if editor_focused() {
+                            textarea {
+                                style: "
+                                    flex: 1; width: 100%;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px;
+                                    color: {TEXT_PRIMARY};
+                                    font-family: 'SF Mono', Consolas, monospace;
+                                    font-size: 11px; line-height: 1.5;
+                                    padding: 10px; resize: none;
+                                    white-space: pre;
+                                    user-select: text;
+                                ",
+                                oninput: move |e| {
+                                    provider_editor_text.set(e.value());
+                                    provider_editor_dirty.set(true);
+                                    provider_editor_error.set(None);
+                                },
+                                onfocus: move |_| editor_focused.set(true),
+                                onblur: move |_| editor_focused.set(false),
+                            }
+                        } else {
+                            textarea {
+                                style: "
+                                    flex: 1; width: 100%;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px;
+                                    color: {TEXT_PRIMARY};
+                                    font-family: 'SF Mono', Consolas, monospace;
+                                    font-size: 11px; line-height: 1.5;
+                                    padding: 10px; resize: none;
+                                    white-space: pre;
+                                    user-select: text;
+                                ",
+                                value: "{provider_editor_text()}",
+                                oninput: move |e| {
+                                    provider_editor_text.set(e.value());
+                                    provider_editor_dirty.set(true);
+                                    provider_editor_error.set(None);
+                                },
+                                onfocus: move |_| editor_focused.set(true),
+                                onblur: move |_| editor_focused.set(false),
                             }
                         }
                         if let Some(error) = provider_editor_error() {

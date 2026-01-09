@@ -806,6 +806,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Asset rows now start drag from the entire row (text included), not just the icon.
+- **2026-01-09:** Multiline textareas stop resetting the caret to the end while typing (provider inputs + providers editor).
 - **2026-01-09:** Generative configs now load once into project memory and UI edits write through the project state (no disk reads on selection); config files persist on save/generate.
 - **2026-01-09:** Removed generation-record backcompat defaults (provider IDs now required in version records) and moved workflow/cache roots out of `projects/`.
 - **2026-01-09:** Removed asset-level provider fields and centralized provider/version metadata in generative configs.
