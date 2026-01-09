@@ -770,6 +770,7 @@ v1.0 - Public Release
 | **Context Menus** | ✅ Complete | Custom right-click menus (delete, move up/down) |
 | **Window Config** | ✅ Complete | Custom title, no default menu bar |
 | **Asset Panel** | ✅ Complete | Display assets, import files via native dialog |
+| **File Copy** | ✅ Complete | Imported assets are copied into the project folder |
 
 ### In Progress 🔄
 | Area | Status | Next Steps |
@@ -778,7 +779,6 @@ v1.0 - Public Release
 | **Thumbnails** | ✅ Complete | Background generation & `nla://` protocol |
 | **Preview Engine** | 🟨 In Progress | v0 frame server + compositor wired; next: canvas buffer + caching |
 | **Audio Playback** | 🔲 Not Started | Waveform visualization, sync with timeline |
-| **File Copy** | 🔲 Not Started | Copy imported files into project folder |
 
 ### Code Structure
 ```
@@ -802,6 +802,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Marked file copy into project folders as complete (import pipeline already copies assets).
 - **2026-01-08:** Provider input fields now remount on version switch to reflect saved input snapshots immediately.
 - **2026-01-08:** Switching generative versions now restores the saved inputs (and provider) from that version’s snapshot.
 - **2026-01-08:** Added multiline text inputs (builder toggle + textarea rendering) for provider inputs.
