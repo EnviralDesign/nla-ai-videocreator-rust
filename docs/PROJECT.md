@@ -802,6 +802,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Provider input fields now remount on version switch to reflect saved input snapshots immediately.
+- **2026-01-08:** Switching generative versions now restores the saved inputs (and provider) from that version’s snapshot.
 - **2026-01-08:** Added multiline text inputs (builder toggle + textarea rendering) for provider inputs.
 - **2026-01-08:** Output key placeholder now follows the selected output type in the Provider Builder.
 - **2026-01-08:** Added a dynamic output key hint in the Provider Builder Output tab.

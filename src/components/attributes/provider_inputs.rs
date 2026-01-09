@@ -16,8 +16,14 @@ pub(super) fn render_provider_inputs(
     selected_provider: Option<ProviderEntry>,
     show_missing_provider: bool,
     config_snapshot: &GenerativeConfig,
+    version_key: &str,
     set_input_value: Rc<RefCell<dyn FnMut(String, serde_json::Value)>>,
 ) -> Element {
+    let version_key = if version_key.trim().is_empty() {
+        "current"
+    } else {
+        version_key
+    };
     rsx! {
         div {
             style: "
@@ -52,6 +58,7 @@ pub(super) fn render_provider_inputs(
                             let current_value = stored_value.or_else(|| input.default.clone());
                             let input_name = input.name.clone();
                             let input_type = input.input_type.clone();
+                            let field_key = format!("{}::{}", version_key, input.name);
                             let set_input_value = set_input_value.clone();
                             match input_type {
                                 ProviderInputType::Text => {
@@ -67,6 +74,7 @@ pub(super) fn render_provider_inputs(
                                     rsx! {
                                         if multiline {
                                             ProviderTextAreaField {
+                                                key: "{field_key}",
                                                 label: label.clone(),
                                                 value: value.clone(),
                                                 rows: 3,
@@ -77,6 +85,7 @@ pub(super) fn render_provider_inputs(
                                             }
                                         } else {
                                             ProviderTextField {
+                                                key: "{field_key}",
                                                 label: label.clone(),
                                                 value: value.clone(),
                                                 on_commit: move |next| {
@@ -94,6 +103,7 @@ pub(super) fn render_provider_inputs(
                                         .unwrap_or(0.0);
                                     rsx! {
                                         ProviderFloatField {
+                                            key: "{field_key}",
                                             label: label.clone(),
                                             value,
                                             step: "0.1",
@@ -113,6 +123,7 @@ pub(super) fn render_provider_inputs(
                                         .unwrap_or(0);
                                     rsx! {
                                         ProviderIntegerField {
+                                            key: "{field_key}",
                                             label: label.clone(),
                                             value,
                                             on_commit: move |next: i64| {
@@ -129,6 +140,7 @@ pub(super) fn render_provider_inputs(
                                         .unwrap_or(false);
                                     rsx! {
                                         div {
+                                            key: "{field_key}",
                                             style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
                                             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
                                             button {
@@ -156,6 +168,7 @@ pub(super) fn render_provider_inputs(
                                         .unwrap_or_default();
                                     rsx! {
                                         div {
+                                            key: "{field_key}",
                                             style: "display: flex; flex-direction: column; gap: 4px;",
                                             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
                                             select {
@@ -182,6 +195,7 @@ pub(super) fn render_provider_inputs(
                                 | ProviderInputType::Audio => {
                                     rsx! {
                                         div {
+                                            key: "{field_key}",
                                             style: "font-size: 10px; color: {TEXT_DIM};",
                                             "{label} (asset inputs not wired yet)"
                                         }

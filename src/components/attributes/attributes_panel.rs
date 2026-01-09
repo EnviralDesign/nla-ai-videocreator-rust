@@ -258,6 +258,12 @@ pub fn AttributesPanelContent(
             };
             let mut config = gen_config().unwrap_or_default();
             config.active_version = next_version.clone();
+            if let Some(version) = next_version.as_ref() {
+                if let Some(record) = config.versions.iter().find(|record| record.version == *version) {
+                    config.inputs = record.inputs_snapshot.clone();
+                    config.provider_id = Some(record.provider_id);
+                }
+            }
             if let Some(folder_path) = gen_folder_path.as_ref() {
                 if let Err(err) = config.save(folder_path) {
                     println!("Failed to save generative config: {}", err);
@@ -694,6 +700,7 @@ pub fn AttributesPanelContent(
                     selected_provider,
                     show_missing_provider,
                     &config_snapshot,
+                    &selected_version_value,
                     set_input_value.clone(),
                 )}
             }
