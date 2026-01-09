@@ -46,6 +46,9 @@ pub fn TitleBar(
     on_toggle_preview_stats: EventHandler<MouseEvent>,
     use_hw_decode: bool,
     on_toggle_hw_decode: EventHandler<MouseEvent>,
+    queue_count: usize,
+    queue_open: bool,
+    on_toggle_queue: EventHandler<MouseEvent>,
     on_menu_open: EventHandler<bool>,
 ) -> Element {
     // Track which menu is currently open (None = all closed)
@@ -304,6 +307,12 @@ pub fn TitleBar(
                     enabled: use_hw_decode,
                     on_toggle: on_toggle_hw_decode,
                 }
+                QuickToggleBadge {
+                    label: "QUE",
+                    enabled: queue_open,
+                    badge_count: queue_count,
+                    on_toggle: on_toggle_queue,
+                }
             }
 
             // Click-away backdrop when menu is open
@@ -448,6 +457,54 @@ fn QuickToggle(
             ",
             onclick: move |e| on_toggle.call(e),
             "{label}"
+        }
+    }
+}
+
+/// Quick toggle button with a small badge count.
+#[component]
+fn QuickToggleBadge(
+    label: &'static str,
+    enabled: bool,
+    badge_count: usize,
+    on_toggle: EventHandler<MouseEvent>,
+) -> Element {
+    let bg = if enabled { ACCENT_PRIMARY } else { BG_BASE };
+    let border = if enabled { ACCENT_PRIMARY } else { BORDER_DEFAULT };
+    let text = if enabled { "#000" } else { TEXT_MUTED };
+    let show_badge = badge_count > 0;
+    let badge_text = if badge_count > 99 {
+        "99+".to_string()
+    } else {
+        badge_count.to_string()
+    };
+
+    rsx! {
+        button {
+            class: "collapse-btn",
+            style: "
+                position: relative;
+                background: {bg}; border: 1px solid {border};
+                color: {text}; font-size: 10px; font-weight: 500;
+                cursor: pointer; padding: 2px 8px; border-radius: 999px;
+                text-transform: uppercase; letter-spacing: 0.5px;
+            ",
+            onclick: move |e| on_toggle.call(e),
+            "{label}"
+            if show_badge {
+                span {
+                    style: "
+                        position: absolute; top: -6px; right: -4px;
+                        min-width: 16px; height: 16px;
+                        background-color: {ACCENT_MARKER};
+                        color: #111; font-size: 9px; font-weight: 700;
+                        border-radius: 999px; padding: 0 4px;
+                        display: inline-flex; align-items: center; justify-content: center;
+                        border: 1px solid {BG_BASE};
+                    ",
+                    "{badge_text}"
+                }
+            }
         }
     }
 }

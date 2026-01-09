@@ -802,6 +802,15 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Queue panel now shows newest jobs at the top.
+- **2026-01-09:** Added a ComfyUI health check before enqueueing generation jobs (blocks offline providers).
+- **2026-01-09:** Added a queue-item context menu to remove queued/completed jobs.
+- **2026-01-09:** Generative config saves now reload from disk to avoid overwriting versions/provider state.
+- **2026-01-09:** Queue processing now reacts to enqueue events (fixes jobs stuck in queued state).
+- **2026-01-09:** Queue panel now suspends the native preview overlay to avoid being obscured.
+- **2026-01-09:** Added a generative job queue with sequential execution and per-job status tracking.
+- **2026-01-09:** Added a top-bar QUE toggle with badge counts and a queue panel overlay for pending/completed jobs.
+- **2026-01-09:** Generation now queues jobs and refreshes generative configs on completion (no blocking).
 - **2026-01-08:** Marked file copy into project folders as complete (import pipeline already copies assets).
 - **2026-01-08:** Provider input fields now remount on version switch to reflect saved input snapshots immediately.
 - **2026-01-08:** Switching generative versions now restores the saved inputs (and provider) from that version’s snapshot.
@@ -956,5 +965,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-08*
+*Last updated: 2026-01-09*
 

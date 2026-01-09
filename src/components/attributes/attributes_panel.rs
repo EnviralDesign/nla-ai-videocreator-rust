@@ -7,13 +7,15 @@ use crate::components::common::{NumericField, ProviderTextField};
 use super::generative_controls::render_generative_controls;
 use super::provider_inputs::render_provider_inputs;
 use crate::constants::*;
-use crate::core::generation::{next_version_label, resolve_provider_inputs};
+use crate::core::generation::resolve_provider_inputs;
 use crate::providers::comfyui;
 use crate::state::{
     asset_display_name,
     delete_generative_version_files,
     generative_info_for_clip,
     parse_version_index,
+    GenerationJob,
+    GenerationJobStatus,
     ProviderConnection,
     ProviderEntry,
     ProviderOutputType,
@@ -25,17 +27,19 @@ pub fn AttributesPanelContent(
     selection: Signal<crate::state::SelectionState>,
     preview_dirty: Signal<bool>,
     providers: Signal<Vec<ProviderEntry>>,
+    generation_tick: Signal<u64>,
+    on_enqueue_generation: EventHandler<GenerationJob>,
     previewer: Signal<std::sync::Arc<crate::core::preview::PreviewRenderer>>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
 ) -> Element {
     let gen_config = use_signal(|| None::<crate::state::GenerativeConfig>);
     let mut gen_status = use_signal(|| None::<String>);
-    let mut gen_busy = use_signal(|| false);
     let mut last_clip_id = use_signal(|| None::<uuid::Uuid>);
 
     use_effect(move || {
         let mut gen_config = gen_config.clone();
+        let _tick = generation_tick();
         let selection_state = selection.read();
         let selected_count = selection_state.clip_ids.len();
         let selected_clip_id = selection_state.primary_clip();
@@ -76,7 +80,6 @@ pub fn AttributesPanelContent(
         if last_clip_id() != selected_clip_id {
             last_clip_id.set(selected_clip_id);
             gen_status.set(None);
-            gen_busy.set(false);
         }
     });
 
@@ -229,7 +232,11 @@ pub fn AttributesPanelContent(
                 .trim()
                 .parse::<uuid::Uuid>()
                 .ok();
-            let mut config = gen_config().unwrap_or_default();
+            let mut config = match gen_folder_path.as_ref() {
+                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
+                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
+                None => gen_config().unwrap_or_default(),
+            };
             config.provider_id = provider_id;
             if let Some(folder_path) = gen_folder_path.as_ref() {
                 if let Err(err) = config.save(folder_path) {
@@ -256,7 +263,11 @@ pub fn AttributesPanelContent(
             } else {
                 Some(trimmed.to_string())
             };
-            let mut config = gen_config().unwrap_or_default();
+            let mut config = match gen_folder_path.as_ref() {
+                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
+                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
+                None => gen_config().unwrap_or_default(),
+            };
             config.active_version = next_version.clone();
             if let Some(version) = next_version.as_ref() {
                 if let Some(record) = config.versions.iter().find(|record| record.version == *version) {
@@ -354,7 +365,8 @@ pub fn AttributesPanelContent(
                 }
                 previewer.read().invalidate_folder(&folder_path);
 
-                let mut config = gen_config().unwrap_or_default();
+                let mut config = crate::state::GenerativeConfig::load(&folder_path)
+                    .unwrap_or_else(|_| gen_config().unwrap_or_default());
                 config.versions.retain(|record| record.version != version);
                 config.active_version = next_active_clone.clone();
                 if let Err(err) = config.save(&folder_path) {
@@ -388,7 +400,11 @@ pub fn AttributesPanelContent(
         let mut gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
         Rc::new(RefCell::new(move |name: String, value: serde_json::Value| {
-            let mut config = gen_config().unwrap_or_default();
+            let mut config = match gen_folder_path.as_ref() {
+                Some(folder_path) => crate::state::GenerativeConfig::load(folder_path)
+                    .unwrap_or_else(|_| gen_config().unwrap_or_default()),
+                None => gen_config().unwrap_or_default(),
+            };
             config.inputs.insert(
                 name,
                 crate::state::InputValue::Literal { value },
@@ -402,33 +418,22 @@ pub fn AttributesPanelContent(
         }))
     };
 
+    let asset_label = asset_display.clone();
     let on_generate = {
-        let project = project.clone();
         let gen_config = gen_config.clone();
         let gen_folder_path = gen_folder_path.clone();
         let gen_status = gen_status.clone();
-        let gen_busy = gen_busy.clone();
-        let preview_dirty = preview_dirty.clone();
-        let previewer = previewer.clone();
-        let thumbnailer = thumbnailer.clone();
-        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
         let selected_provider = selected_provider.clone();
         let asset_id = clip.asset_id;
+        let clip_id = clip.id;
+        let asset_label = asset_label.clone();
+        let on_enqueue_generation = on_enqueue_generation.clone();
         Rc::new(RefCell::new(move |_evt: MouseEvent| {
-            let mut project = project.clone();
             let mut gen_config = gen_config.clone();
             let gen_folder_path = gen_folder_path.clone();
             let mut gen_status = gen_status.clone();
-            let mut gen_busy = gen_busy.clone();
-            let mut preview_dirty = preview_dirty.clone();
-            let previewer = previewer.clone();
-            let thumbnailer = thumbnailer.clone();
-            let thumbnail_cache_buster = thumbnail_cache_buster.clone();
             let selected_provider = selected_provider.clone();
-
-            if gen_busy() {
-                return;
-            }
+            let on_enqueue_generation = on_enqueue_generation.clone();
 
             let Some(provider) = selected_provider.clone() else {
                 gen_status.set(Some("Select a provider first.".to_string()));
@@ -439,10 +444,14 @@ pub fn AttributesPanelContent(
                 return;
             };
 
-            let mut config = gen_config().unwrap_or_default();
-            if config.provider_id.is_none() {
-                config.provider_id = Some(provider.id);
+            let mut config = crate::state::GenerativeConfig::load(&folder_path)
+                .unwrap_or_else(|_| gen_config().unwrap_or_default());
+            config.provider_id = Some(provider.id);
+            if let Err(err) = config.save(&folder_path) {
+                gen_status.set(Some(format!("Failed to save config: {}", err)));
+                return;
             }
+            gen_config.set(Some(config.clone()));
 
             let resolved = resolve_provider_inputs(&provider, &config);
             if !resolved.missing_required.is_empty() {
@@ -453,96 +462,44 @@ pub fn AttributesPanelContent(
                 return;
             }
 
-            let resolved_inputs = resolved.values.clone();
             let input_snapshot = resolved.snapshot.clone();
+            let inputs = resolved.values.clone();
+            let job_asset_label = asset_label.clone();
 
-            gen_status.set(Some("Queued...".to_string()));
-            gen_busy.set(true);
+            gen_status.set(Some("Checking provider...".to_string()));
 
             spawn(async move {
-                let result = match provider.connection.clone() {
-                    ProviderConnection::ComfyUi {
-                        base_url,
-                        workflow_path,
-                        manifest_path,
-                        ..
-                    } => {
-                        let workflow_path =
-                            comfyui::resolve_workflow_path(workflow_path.as_deref());
-                        let manifest_path =
-                            comfyui::resolve_manifest_path(manifest_path.as_deref());
-                        comfyui::generate_image(
-                            &base_url,
-                            &workflow_path,
-                            &resolved_inputs,
-                            manifest_path.as_deref(),
-                        )
-                            .await
+                let health = match provider.connection.clone() {
+                    ProviderConnection::ComfyUi { base_url, .. } => {
+                        comfyui::check_health(&base_url).await
                     }
-                    _ => Err("Provider connection not supported yet.".to_string()),
+                    _ => Err("Provider health check not supported for this adapter yet.".to_string()),
                 };
 
-                match result {
-                    Ok(image) => {
-                        let mut config = gen_config().unwrap_or_default();
-                        let version = next_version_label(&config);
-                        let _ = std::fs::create_dir_all(&folder_path);
-                        let output_path = folder_path.join(format!(
-                            "{}.{}",
-                            version, image.extension
-                        ));
-                        if let Err(err) = std::fs::write(&output_path, &image.bytes) {
-                            gen_status.set(Some(format!(
-                                "Failed to save output: {}",
-                                err
-                            )));
-                            gen_busy.set(false);
-                            return;
-                        }
-                        previewer.read().invalidate_folder(&folder_path);
-
-                        config.provider_id = Some(provider.id);
-                        config.active_version = Some(version.clone());
-                        config.inputs = input_snapshot.clone();
-                        config.versions.push(crate::state::GenerationRecord {
-                            version: version.clone(),
-                            timestamp: chrono::Utc::now(),
-                            provider_id: provider.id,
-                            inputs_snapshot: input_snapshot.clone(),
-                        });
-                        if let Err(err) = config.save(&folder_path) {
-                            gen_status.set(Some(format!(
-                                "Failed to save config: {}",
-                                err
-                            )));
-                            gen_busy.set(false);
-                            return;
-                        }
-                        gen_config.set(Some(config));
-
-                        project
-                            .write()
-                            .set_generative_active_version(asset_id, Some(version.clone()));
-                        preview_dirty.set(true);
-
-                        let maybe_asset = project.read().find_asset(asset_id).cloned();
-                        if let Some(asset) = maybe_asset {
-                            let thumbs = thumbnailer.clone();
-                            let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
-                            spawn(async move {
-                                thumbs.generate(&asset, true).await;
-                                thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
-                            });
-                        }
-
-                        gen_status.set(Some(format!("Generated {}", version)));
-                    }
-                    Err(err) => {
-                        gen_status.set(Some(format!("Generation failed: {}", err)));
-                    }
+                if let Err(err) = health {
+                    gen_status.set(Some(format!("Provider offline: {}", err)));
+                    return;
                 }
 
-                gen_busy.set(false);
+                let job = GenerationJob {
+                    id: uuid::Uuid::new_v4(),
+                    created_at: chrono::Utc::now(),
+                    status: GenerationJobStatus::Queued,
+                    progress: None,
+                    provider: provider.clone(),
+                    output_type: provider.output_type,
+                    asset_id,
+                    clip_id,
+                    asset_label: job_asset_label,
+                    folder_path: folder_path.clone(),
+                    inputs,
+                    inputs_snapshot: input_snapshot,
+                    version: None,
+                    error: None,
+                };
+
+                on_enqueue_generation.call(job);
+                gen_status.set(Some("Queued".to_string()));
             });
         }))
     };
@@ -550,8 +507,8 @@ pub fn AttributesPanelContent(
     let transform = clip.transform;
     let clip_id = clip.id;
     let clip_label = clip.label.clone().unwrap_or_default();
-    let generate_label = if gen_busy() { "Generating..." } else { "Generate" };
-    let generate_opacity = if gen_busy() { "0.6" } else { "1.0" };
+    let generate_label = "Generate";
+    let generate_opacity = "1.0";
 
     rsx! {
         div {

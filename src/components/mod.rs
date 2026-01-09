@@ -12,6 +12,7 @@ mod providers_modal;
 mod provider_builder_modal;
 mod new_project_modal;
 mod track_context_menu;
+mod generation_queue_panel;
 
 pub use startup_modal::StartupModal;
 pub use title_bar::TitleBar;
@@ -22,3 +23,4 @@ pub use providers_modal::ProvidersModal;
 pub use provider_builder_modal::{ProviderBuilderModal, ProviderBuilderSaved, ProviderBuilderSeed};
 pub use new_project_modal::NewProjectModal;
 pub use track_context_menu::TrackContextMenu;
+pub use generation_queue_panel::GenerationQueuePanel;

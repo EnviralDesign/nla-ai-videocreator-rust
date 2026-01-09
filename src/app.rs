@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use crate::core::generation::next_version_label;
 use crate::core::media::{resolve_asset_duration_seconds, spawn_asset_duration_probe, spawn_missing_duration_probes};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::core::provider_store::{
@@ -21,15 +22,17 @@ use crate::core::provider_store::{
     write_provider_file,
 };
 use crate::state::{
-    ensure_generative_config, ProviderConnection, ProviderEntry, ProviderManifest,
+    ensure_generative_config, GenerationJob, GenerationJobStatus, ProviderConnection,
+    ProviderEntry, ProviderManifest, ProviderOutputType,
 };
 use crate::providers::comfyui;
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 use crate::constants::*;
 use crate::components::{
-    NewProjectModal, PreviewPanel, ProviderBuilderModal, ProviderBuilderSaved, ProviderBuilderSeed,
-    ProvidersModal, SidePanel, StartupModal, StatusBar, TitleBar, TrackContextMenu,
+    GenerationQueuePanel, NewProjectModal, PreviewPanel, ProviderBuilderModal,
+    ProviderBuilderSaved, ProviderBuilderSeed, ProvidersModal, SidePanel, StartupModal, StatusBar,
+    TitleBar, TrackContextMenu,
 };
 use crate::components::assets::AssetsPanelContent;
 use crate::components::attributes::AttributesPanelContent;
@@ -40,6 +43,79 @@ use crate::components::attributes::AttributesPanelContent;
 enum PreviewCanvasMessage {
     Frame { version: u64, width: u32, height: u32 },
     Clear,
+}
+
+async fn execute_generation_job(
+    job: GenerationJob,
+    mut project: Signal<crate::state::Project>,
+    previewer: Signal<std::sync::Arc<crate::core::preview::PreviewRenderer>>,
+    mut preview_dirty: Signal<bool>,
+    thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
+    thumbnail_cache_buster: Signal<u64>,
+) -> Result<String, String> {
+    if job.output_type != ProviderOutputType::Image {
+        return Err("Only image outputs are supported in the queue right now.".to_string());
+    }
+
+    let folder_path = job.folder_path.clone();
+    let mut config = crate::state::GenerativeConfig::load(&folder_path).unwrap_or_default();
+    let version = next_version_label(&config);
+
+    let image = match job.provider.connection.clone() {
+        ProviderConnection::ComfyUi {
+            base_url,
+            workflow_path,
+            manifest_path,
+            ..
+        } => {
+            let workflow_path = comfyui::resolve_workflow_path(workflow_path.as_deref());
+            let manifest_path = comfyui::resolve_manifest_path(manifest_path.as_deref());
+            comfyui::generate_image(
+                &base_url,
+                &workflow_path,
+                &job.inputs,
+                manifest_path.as_deref(),
+            )
+            .await
+        }
+        _ => Err("Provider connection not supported yet.".to_string()),
+    }?;
+
+    std::fs::create_dir_all(&folder_path)
+        .map_err(|err| format!("Failed to create output folder: {}", err))?;
+    let output_path = folder_path.join(format!("{}.{}", version, image.extension));
+    std::fs::write(&output_path, &image.bytes)
+        .map_err(|err| format!("Failed to save output: {}", err))?;
+    previewer.read().invalidate_folder(&folder_path);
+
+    config.provider_id = Some(job.provider.id);
+    config.active_version = Some(version.clone());
+    config.inputs = job.inputs_snapshot.clone();
+    config.versions.push(crate::state::GenerationRecord {
+        version: version.clone(),
+        timestamp: chrono::Utc::now(),
+        provider_id: job.provider.id,
+        inputs_snapshot: job.inputs_snapshot.clone(),
+    });
+    config
+        .save(&folder_path)
+        .map_err(|err| format!("Failed to save config: {}", err))?;
+
+    project
+        .write()
+        .set_generative_active_version(job.asset_id, Some(version.clone()));
+    preview_dirty.set(true);
+
+    if let Some(asset) = project.read().find_asset(job.asset_id).cloned() {
+        let thumbs = thumbnailer.clone();
+        let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        spawn(async move {
+            thumbs.generate(&asset, true).await;
+            thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+        });
+    }
+
+    Ok(version)
 }
 
 /// Main application component
@@ -88,6 +164,10 @@ pub fn App() -> Element {
     let desktop_for_events = desktop.clone();
     let desktop_for_redraw = desktop.clone();
     let mut preview_dirty = use_signal(|| true);
+    let generation_queue = use_signal(|| Vec::<GenerationJob>::new());
+    let generation_active = use_signal(|| None::<uuid::Uuid>);
+    let generation_tick = use_signal(|| 0_u64);
+    let mut queue_open = use_signal(|| false);
 
     // Startup Modal state - check if we have a valid project path on load
     // For MVP, we start with a dummy project, so we check if project_path is None
@@ -177,6 +257,77 @@ pub fn App() -> Element {
                 thumbnail_refresh_tick.set(thumbnail_refresh_tick() + 1);
             }
         }
+    });
+
+    use_effect(move || {
+        let _queue_snapshot = generation_queue();
+        let mut generation_queue = generation_queue.clone();
+        let mut generation_active = generation_active.clone();
+        if generation_active().is_some() {
+            return;
+        }
+
+        let next_job = {
+            let mut queue = generation_queue.write();
+            let job = queue
+                .iter_mut()
+                .find(|job| job.status == GenerationJobStatus::Queued);
+            job.map(|job| {
+                job.status = GenerationJobStatus::Running;
+                job.progress = Some(0.0);
+                job.clone()
+            })
+        };
+
+        let Some(job) = next_job else {
+            return;
+        };
+
+        generation_active.set(Some(job.id));
+
+        let mut generation_queue = generation_queue.clone();
+        let mut generation_active = generation_active.clone();
+        let mut generation_tick = generation_tick.clone();
+        let project = project.clone();
+        let previewer = previewer.clone();
+        let preview_dirty = preview_dirty.clone();
+        let thumbnailer = thumbnailer.read().clone();
+        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+
+        spawn(async move {
+            let result = execute_generation_job(
+                job.clone(),
+                project,
+                previewer,
+                preview_dirty,
+                thumbnailer,
+                thumbnail_cache_buster,
+            )
+            .await;
+
+            let mut queue = generation_queue.write();
+            if let Some(entry) = queue.iter_mut().find(|entry| entry.id == job.id) {
+                match &result {
+                    Ok(version) => {
+                        entry.status = GenerationJobStatus::Succeeded;
+                        entry.version = Some(version.clone());
+                        entry.progress = Some(1.0);
+                        entry.error = None;
+                    }
+                    Err(err) => {
+                        entry.status = GenerationJobStatus::Failed;
+                        entry.error = Some(err.clone());
+                        entry.progress = None;
+                    }
+                }
+            }
+
+            if result.is_ok() {
+                generation_tick.set(generation_tick() + 1);
+            }
+
+            generation_active.set(None);
+        });
     });
 
     use_future(move || {
@@ -887,7 +1038,8 @@ pub fn App() -> Element {
         let suspended = show_providers_dialog()
             || show_provider_builder()
             || show_new_project_dialog()
-            || menu_open();
+            || menu_open()
+            || queue_open();
         if preview_native_suspended() == suspended {
             return;
         }
@@ -955,6 +1107,28 @@ pub fn App() -> Element {
     let left_resizing = dragging() == Some("left");
     let right_resizing = dragging() == Some("right");
     let timeline_resizing = dragging() == Some("timeline");
+    let queue_count = generation_queue()
+        .iter()
+        .filter(|job| matches!(job.status, GenerationJobStatus::Queued | GenerationJobStatus::Running))
+        .count();
+    let on_enqueue_generation = {
+        let mut generation_queue = generation_queue.clone();
+        move |job: GenerationJob| {
+            generation_queue.write().push(job);
+        }
+    };
+    let on_delete_generation_job = {
+        let mut generation_queue = generation_queue.clone();
+        move |job_id: uuid::Uuid| {
+            let mut queue = generation_queue.write();
+            if let Some(index) = queue.iter().position(|job| job.id == job_id) {
+                if queue[index].status == GenerationJobStatus::Running {
+                    return;
+                }
+                queue.remove(index);
+            }
+        }
+    };
 
     rsx! {
         // Global CSS with drag state handling
@@ -1101,11 +1275,11 @@ pub fn App() -> Element {
                 }
             }
 
-            TitleBar { 
-                project_name: project.read().name.clone(),
-                on_new_project: move |_| {
-                    show_new_project_dialog.set(true);
-                },
+                TitleBar { 
+                    project_name: project.read().name.clone(),
+                    on_new_project: move |_| {
+                        show_new_project_dialog.set(true);
+                    },
                 on_save: move |_| {
                      // Since project knows its own path (if loaded/saved once), we can just save
                      // If it's effectively unsaved (default path), we might want a "Save As" flow eventually
@@ -1119,15 +1293,20 @@ pub fn App() -> Element {
                 on_toggle_preview_stats: move |_| {
                     show_preview_stats.set(!show_preview_stats());
                 },
-                use_hw_decode: use_hw_decode(),
-                on_toggle_hw_decode: move |_| {
-                    use_hw_decode.set(!use_hw_decode());
-                    preview_dirty.set(true);
-                },
-                on_menu_open: move |is_open| {
-                    menu_open.set(is_open);
-                },
-            }
+                    use_hw_decode: use_hw_decode(),
+                    on_toggle_hw_decode: move |_| {
+                        use_hw_decode.set(!use_hw_decode());
+                        preview_dirty.set(true);
+                    },
+                    queue_count: queue_count,
+                    queue_open: queue_open(),
+                    on_toggle_queue: move |_| {
+                        queue_open.set(!queue_open());
+                    },
+                    on_menu_open: move |is_open| {
+                        menu_open.set(is_open);
+                    },
+                }
 
             // Main content
             div {
@@ -1404,6 +1583,8 @@ pub fn App() -> Element {
                         previewer: previewer,
                         thumbnailer: thumbnailer.read().clone(),
                         thumbnail_cache_buster: thumbnail_cache_buster,
+                        generation_tick: generation_tick,
+                        on_enqueue_generation: on_enqueue_generation,
                     }
                 }
             }
@@ -1415,6 +1596,13 @@ pub fn App() -> Element {
                 project: project,
                 selection: selection,
                 preview_dirty: preview_dirty,
+            }
+
+            GenerationQueuePanel {
+                open: queue_open(),
+                jobs: generation_queue(),
+                on_close: move |_| queue_open.set(false),
+                on_delete_job: on_delete_generation_job,
             }
 
             // Startup Modal (Blocks everything until Project is created/loaded)

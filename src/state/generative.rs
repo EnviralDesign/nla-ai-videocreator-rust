@@ -8,7 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-use crate::state::{Asset, AssetKind, Project, ProviderOutputType};
+use crate::state::{Asset, AssetKind, Project, ProviderEntry, ProviderOutputType};
 
 /// Input value bound to a provider field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -163,4 +163,30 @@ pub fn next_generative_index(
         }
     }
     max_index + 1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationJobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenerationJob {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub status: GenerationJobStatus,
+    pub progress: Option<f32>,
+    pub provider: ProviderEntry,
+    pub output_type: ProviderOutputType,
+    pub asset_id: Uuid,
+    pub clip_id: Uuid,
+    pub asset_label: String,
+    pub folder_path: PathBuf,
+    pub inputs: HashMap<String, serde_json::Value>,
+    pub inputs_snapshot: HashMap<String, InputValue>,
+    pub version: Option<String>,
+    pub error: Option<String>,
 }

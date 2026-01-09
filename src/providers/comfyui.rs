@@ -150,6 +150,25 @@ pub fn resolve_manifest_path(path: Option<&str>) -> Option<PathBuf> {
     Some(base.join(resolved))
 }
 
+/// Lightweight health check for a ComfyUI instance.
+pub async fn check_health(base_url: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|err| format!("Failed to build HTTP client: {}", err))?;
+    let url = format!("{}/system_stats", base_url.trim_end_matches('/'));
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("Connection failed: {}", err))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Health check failed ({})", response.status()))
+    }
+}
+
 /// Submits a ComfyUI workflow and downloads the first image output.
 pub async fn generate_image(
     base_url: &str,
