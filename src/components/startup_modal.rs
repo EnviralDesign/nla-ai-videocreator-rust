@@ -3,16 +3,60 @@ use std::path::PathBuf;
 use crate::constants::*;
 use crate::state::ProjectSettings;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum StartupModalMode {
+    Create,
+    Edit,
+}
+
 #[component]
 pub fn StartupModal(
+    mode: StartupModalMode,
+    initial_name: Option<String>,
+    initial_settings: Option<ProjectSettings>,
+    initial_folder: Option<PathBuf>,
     on_create: EventHandler<(PathBuf, String, ProjectSettings)>,
     on_open: EventHandler<PathBuf>,
+    on_update: EventHandler<ProjectSettings>,
+    on_close: EventHandler<MouseEvent>,
 ) -> Element {
-    let mut name = use_signal(|| "My New Project".to_string());
-    let mut width = use_signal(|| "1920".to_string());
-    let mut height = use_signal(|| "1080".to_string());
-    let mut fps = use_signal(|| "60".to_string());
-    let mut duration = use_signal(|| "60".to_string());
+    let is_edit = mode == StartupModalMode::Edit;
+    let seed_name = initial_name.unwrap_or_else(|| "My New Project".to_string());
+    let seed_settings = initial_settings.unwrap_or_default();
+    let width_default = seed_settings.width;
+    let height_default = seed_settings.height;
+    let fps_default = seed_settings.fps;
+    let duration_default = seed_settings.duration_seconds;
+    let preview_default_width = seed_settings.preview_max_width;
+    let preview_default_height = seed_settings.preview_max_height;
+    let mut name = use_signal(|| seed_name.clone());
+    let mut width = use_signal(|| seed_settings.width.to_string());
+    let mut height = use_signal(|| seed_settings.height.to_string());
+    let mut fps = use_signal(|| seed_settings.fps.to_string());
+    let mut duration = use_signal(|| seed_settings.duration_seconds.to_string());
+    let mut preview_max_width = use_signal(|| seed_settings.preview_max_width.to_string());
+    let mut preview_max_height = use_signal(|| seed_settings.preview_max_height.to_string());
+    let header_title = if is_edit {
+        "Project Settings"
+    } else {
+        "NLA AI Video Creator"
+    };
+    let header_subtitle = if is_edit {
+        "Update resolution, timing, and preview performance."
+    } else {
+        "Create a new project or open an existing one"
+    };
+    let section_title = if is_edit {
+        "Edit Project"
+    } else {
+        "Create New Project"
+    };
+    let name_input_bg = if is_edit { BG_SURFACE } else { BG_BASE };
+    let left_panel_border = if is_edit {
+        "border-right: none;"
+    } else {
+        "border-right: 1px solid {BORDER_DEFAULT};"
+    };
     
     // Default projects folder
     let projects_folder = std::env::current_dir().unwrap_or_default().join("projects");
@@ -22,7 +66,8 @@ pub fn StartupModal(
     let projects_folder_for_scan = projects_folder.clone();
     
     // Use `Option<PathBuf>` to store the selected parent directory
-    let mut parent_dir = use_signal(move || projects_folder_clone.clone());
+    let initial_parent = initial_folder.unwrap_or_else(|| projects_folder_clone.clone());
+    let mut parent_dir = use_signal(move || initial_parent.clone());
     
     // Refresh counter - increment to force re-scan of projects
     let mut refresh_counter = use_signal(|| 0u32);
@@ -96,16 +141,16 @@ pub fn StartupModal(
                         border-bottom: 1px solid {BORDER_DEFAULT}; 
                         background: linear-gradient(180deg, {BG_SURFACE} 0%, {BG_ELEVATED} 100%);
                     ",
-                    h1 { 
+                    h1 {
                         style: "
-                            margin: 0; font-size: 22px; font-weight: 600; 
+                            margin: 0; font-size: 22px; font-weight: 600;
                             color: {TEXT_PRIMARY}; letter-spacing: -0.3px;
-                        ", 
-                        "NLA AI Video Creator" 
+                        ",
+                        "{header_title}"
                     }
-                    p { 
-                        style: "margin: 6px 0 0; font-size: 13px; color: {TEXT_MUTED};", 
-                        "Create a new project or open an existing one" 
+                    p {
+                        style: "margin: 6px 0 0; font-size: 13px; color: {TEXT_MUTED};",
+                        "{header_subtitle}"
                     }
                 }
                 
@@ -119,7 +164,7 @@ pub fn StartupModal(
                     div {
                         style: "
                             flex: 1.2; padding: 24px 28px; 
-                            border-right: 1px solid {BORDER_DEFAULT}; 
+                            {left_panel_border}
                             display: flex; flex-direction: column;
                         ",
                         
@@ -136,9 +181,9 @@ pub fn StartupModal(
                                 ",
                                 "✨"
                             }
-                            h2 { 
-                                style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};", 
-                                "Create New Project" 
+                            h2 {
+                                style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};",
+                                "{section_title}"
                             }
                         }
                         
@@ -159,12 +204,13 @@ pub fn StartupModal(
                                 input {
                                     style: "
                                         width: 100%; padding: 10px 14px; 
-                                        background: {BG_BASE}; border: 1px solid {BORDER_DEFAULT}; 
+                                        background: {name_input_bg}; border: 1px solid {BORDER_DEFAULT}; 
                                         border-radius: 6px; color: {TEXT_PRIMARY}; 
                                         font-size: 13px; outline: none;
                                         transition: border-color 0.15s ease;
                                         user-select: text;
                                     ",
+                                    readonly: is_edit,
                                     value: "{name}",
                                     placeholder: "Enter project name...",
                                     oninput: move |e| name.set(e.value()),
@@ -285,6 +331,57 @@ pub fn StartupModal(
                                 }
                             }
 
+                            // Preview downsample section
+                            div {
+                                label {
+                                    style: "
+                                        display: block; font-size: 11px; font-weight: 500;
+                                        color: {TEXT_MUTED}; margin-bottom: 6px;
+                                        text-transform: uppercase; letter-spacing: 0.5px;
+                                    ",
+                                    "Preview Downsample"
+                                }
+                                p {
+                                    style: "margin: 0 0 8px; font-size: 11px; color: {TEXT_DIM};",
+                                    "Caps the realtime preview size for smoother playback."
+                                }
+                                div {
+                                    style: "display: flex; gap: 8px; align-items: center;",
+                                    input {
+                                        style: "
+                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                            text-align: center;
+                                            user-select: text;
+                                        ",
+                                        r#type: "number",
+                                        min: "1",
+                                        step: "1",
+                                        value: "{preview_max_width}",
+                                        oninput: move |e| preview_max_width.set(e.value()),
+                                    }
+                                    span {
+                                        style: "color: {TEXT_DIM}; font-size: 12px; font-weight: 500;",
+                                        "×"
+                                    }
+                                    input {
+                                        style: "
+                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                            text-align: center;
+                                            user-select: text;
+                                        ",
+                                        r#type: "number",
+                                        min: "1",
+                                        step: "1",
+                                        value: "{preview_max_height}",
+                                        oninput: move |e| preview_max_height.set(e.value()),
+                                    }
+                                }
+                            }
+
                             // FPS & Duration row
                             div {
                                 style: "display: flex; gap: 16px;",
@@ -358,188 +455,273 @@ pub fn StartupModal(
                             }
                             
                             // Location
-                            div {
-                                label { 
-                                    style: "
-                                        display: block; font-size: 11px; font-weight: 500;
-                                        color: {TEXT_MUTED}; margin-bottom: 6px;
-                                        text-transform: uppercase; letter-spacing: 0.5px;
-                                    ", 
-                                    "Save Location" 
-                                }
+                            if is_edit {
                                 div {
-                                    style: "display: flex; gap: 8px;",
+                                    label {
+                                        style: "
+                                            display: block; font-size: 11px; font-weight: 500;
+                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            text-transform: uppercase; letter-spacing: 0.5px;
+                                        ",
+                                        "Project Folder"
+                                    }
                                     div {
                                         style: "
-                                            flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                            padding: 8px 12px; background: {BG_BASE};
                                             border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
                                             color: {TEXT_DIM}; font-size: 12px;
                                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                                         ",
                                         "{parent_dir().to_string_lossy()}"
                                     }
-                                    button {
-                                        class: "collapse-btn",
+                                }
+                            } else {
+                                div {
+                                    label { 
                                         style: "
-                                            padding: 8px 14px; background: {BG_SURFACE}; 
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; 
-                                            color: {TEXT_SECONDARY}; font-size: 12px; cursor: pointer;
-                                            transition: all 0.15s ease;
-                                        ",
-                                        onclick: move |_| {
-                                            let start_dir = projects_folder_for_browse.clone();
-                                            if let Some(path) = rfd::FileDialog::new()
-                                                .set_directory(&start_dir)
-                                                .pick_folder() 
-                                            {
-                                                parent_dir.set(path);
-                                            }
-                                        },
-                                        "Browse"
+                                            display: block; font-size: 11px; font-weight: 500;
+                                            color: {TEXT_MUTED}; margin-bottom: 6px;
+                                            text-transform: uppercase; letter-spacing: 0.5px;
+                                        ", 
+                                        "Save Location" 
+                                    }
+                                    div {
+                                        style: "display: flex; gap: 8px;",
+                                        div {
+                                            style: "
+                                                flex: 1; padding: 8px 12px; background: {BG_BASE};
+                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                color: {TEXT_DIM}; font-size: 12px;
+                                                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                                            ",
+                                            "{parent_dir().to_string_lossy()}"
+                                        }
+                                        button {
+                                            class: "collapse-btn",
+                                            style: "
+                                                padding: 8px 14px; background: {BG_SURFACE}; 
+                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; 
+                                                color: {TEXT_SECONDARY}; font-size: 12px; cursor: pointer;
+                                                transition: all 0.15s ease;
+                                            ",
+                                            onclick: move |_| {
+                                                let start_dir = projects_folder_for_browse.clone();
+                                                if let Some(path) = rfd::FileDialog::new()
+                                                    .set_directory(&start_dir)
+                                                    .pick_folder() 
+                                                {
+                                                    parent_dir.set(path);
+                                                }
+                                            },
+                                            "Browse"
+                                        }
                                     }
                                 }
                             }
                         }
                         
-                        // Create button
-                        button {
-                            class: "collapse-btn",
-                            style: "
-                                width: 100%; padding: 12px; margin-top: 20px;
-                                background: linear-gradient(180deg, {ACCENT_VIDEO} 0%, #1ea34b 100%);
-                                border: none; border-radius: 8px;
-                                color: white; font-size: 13px; font-weight: 600; 
-                                cursor: pointer; transition: all 0.2s ease;
-                                box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
-                            ",
-                            onclick: move |_| {
-                                let n = name();
-                                if !n.trim().is_empty() {
-                                    let settings = crate::state::ProjectSettings {
-                                        width: parse_u32(&width(), 1920, 1),
-                                        height: parse_u32(&height(), 1080, 1),
-                                        fps: parse_f64(&fps(), 60.0, 1.0),
-                                        duration_seconds: parse_f64(&duration(), 60.0, 1.0),
-                                    };
-                                    on_create.call((parent_dir(), n, settings));
+                        // Create/edit actions
+                        if is_edit {
+                            div {
+                                style: "display: flex; gap: 12px; margin-top: 20px;",
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        flex: 1; padding: 12px; border-radius: 8px;
+                                        background: {BG_SURFACE}; border: 1px solid {BORDER_DEFAULT};
+                                        color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 600;
+                                        cursor: pointer; transition: all 0.2s ease;
+                                    ",
+                                    onclick: move |e| {
+                                        on_close.call(e);
+                                    },
+                                    "Cancel"
                                 }
-                            },
-                            "Create Project"
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        flex: 1; padding: 12px;
+                                        background: linear-gradient(180deg, {ACCENT_VIDEO} 0%, #1ea34b 100%);
+                                        border: none; border-radius: 8px;
+                                        color: white; font-size: 13px; font-weight: 600;
+                                        cursor: pointer; transition: all 0.2s ease;
+                                        box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+                                    ",
+                                    onclick: move |e| {
+                                        let settings = crate::state::ProjectSettings {
+                                            width: parse_u32(&width(), width_default, 1),
+                                            height: parse_u32(&height(), height_default, 1),
+                                            fps: parse_f64(&fps(), fps_default, 1.0),
+                                            duration_seconds: parse_f64(&duration(), duration_default, 1.0),
+                                            preview_max_width: parse_u32(
+                                                &preview_max_width(),
+                                                preview_default_width,
+                                                1,
+                                            ),
+                                            preview_max_height: parse_u32(
+                                                &preview_max_height(),
+                                                preview_default_height,
+                                                1,
+                                            ),
+                                        };
+                                        on_update.call(settings);
+                                        on_close.call(e);
+                                    },
+                                    "Save Changes"
+                                }
+                            }
+                        } else {
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    width: 100%; padding: 12px; margin-top: 20px;
+                                    background: linear-gradient(180deg, {ACCENT_VIDEO} 0%, #1ea34b 100%);
+                                    border: none; border-radius: 8px;
+                                    color: white; font-size: 13px; font-weight: 600; 
+                                    cursor: pointer; transition: all 0.2s ease;
+                                    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+                                ",
+                                onclick: move |_| {
+                                    let n = name();
+                                    if !n.trim().is_empty() {
+                                        let settings = crate::state::ProjectSettings {
+                                            width: parse_u32(&width(), width_default, 1),
+                                            height: parse_u32(&height(), height_default, 1),
+                                            fps: parse_f64(&fps(), fps_default, 1.0),
+                                            duration_seconds: parse_f64(&duration(), duration_default, 1.0),
+                                            preview_max_width: parse_u32(
+                                                &preview_max_width(),
+                                                preview_default_width,
+                                                1,
+                                            ),
+                                            preview_max_height: parse_u32(
+                                                &preview_max_height(),
+                                                preview_default_height,
+                                                1,
+                                            ),
+                                        };
+                                        on_create.call((parent_dir(), n, settings));
+                                    }
+                                },
+                                "Create Project"
+                            }
                         }
                     }
                     
                     // ═══════════════════════════════════════════════════════════
                     // RIGHT: Open Existing Project
                     // ═══════════════════════════════════════════════════════════
-                    div {
-                        style: "
-                            flex: 0.8; padding: 24px 28px; 
-                            display: flex; flex-direction: column; 
-                            background-color: {BG_BASE}; 
-                            min-width: 0; overflow: hidden;
-                        ",
-                        
-                        // Section header
+                    if !is_edit {
                         div {
-                            style: "display: flex; align-items: center; gap: 10px; margin-bottom: 16px;",
+                            style: "
+                                flex: 0.8; padding: 24px 28px;
+                                display: flex; flex-direction: column;
+                                background-color: {BG_BASE};
+                                min-width: 0; overflow: hidden;
+                            ",
+
+                            // Section header
                             div {
-                                style: "
-                                    width: 32px; height: 32px; border-radius: 8px;
-                                    background: linear-gradient(135deg, {ACCENT_AUDIO}22 0%, {ACCENT_AUDIO}11 100%);
-                                    border: 1px solid {ACCENT_AUDIO}33;
-                                    display: flex; align-items: center; justify-content: center;
-                                    font-size: 14px;
-                                ",
-                                "📂"
-                            }
-                            h2 { 
-                                style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};", 
-                                "Recent Projects" 
-                            }
-                        }
-                        
-                        // Project list or empty state
-                        if existing_projects.is_empty() {
-                            div {
-                                style: "
-                                    flex: 1; display: flex; flex-direction: column; 
-                                    align-items: center; justify-content: center; 
-                                    border: 1px dashed {BORDER_DEFAULT}; border-radius: 8px;
-                                    padding: 32px;
-                                ",
-                                div { 
-                                    style: "font-size: 40px; opacity: 0.3; margin-bottom: 12px;", 
-                                    "📁" 
+                                style: "display: flex; align-items: center; gap: 10px; margin-bottom: 16px;",
+                                div {
+                                    style: "
+                                        width: 32px; height: 32px; border-radius: 8px;
+                                        background: linear-gradient(135deg, {ACCENT_AUDIO}22 0%, {ACCENT_AUDIO}11 100%);
+                                        border: 1px solid {ACCENT_AUDIO}33;
+                                        display: flex; align-items: center; justify-content: center;
+                                        font-size: 14px;
+                                    ",
+                                    "📂"
                                 }
-                                p { 
-                                    style: "margin: 0; font-size: 13px; color: {TEXT_DIM}; text-align: center;", 
-                                    "No projects yet" 
-                                }
-                                p { 
-                                    style: "margin: 6px 0 0; font-size: 11px; color: {TEXT_DIM}; text-align: center;", 
-                                    "Create one to get started" 
+                                h2 {
+                                    style: "margin: 0; font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};",
+                                    "Recent Projects"
                                 }
                             }
-                        } else {
-                            div {
-                                style: "
-                                    flex: 1; overflow-y: auto; overflow-x: hidden;
-                                    border: 1px solid {BORDER_SUBTLE}; border-radius: 8px;
-                                    background-color: {BG_ELEVATED};
-                                    min-height: 0;
-                                ",
-                                for (proj_name, proj_path) in existing_projects.iter() {
-                                    {
-                                        let path_clone = proj_path.clone();
-                                        let path_for_menu = proj_path.clone();
-                                        let name_for_menu = proj_name.clone();
-                                        let on_open_clone = on_open.clone();
-                                        rsx! {
-                                            div {
-                                                class: "collapse-btn",
-                                                key: "{proj_path.display()}",
-                                                style: "
-                                                    padding: 12px 14px; cursor: pointer;
-                                                    border-bottom: 1px solid {BORDER_SUBTLE};
-                                                    transition: background-color 0.15s ease;
-                                                ",
-                                                onclick: move |_| {
-                                                    on_open_clone.call(path_clone.clone());
-                                                },
-                                                oncontextmenu: move |e| {
-                                                    e.prevent_default();
-                                                    context_menu.set(Some((
-                                                        e.client_coordinates().x,
-                                                        e.client_coordinates().y,
-                                                        path_for_menu.clone(),
-                                                        name_for_menu.clone()
-                                                    )));
-                                                },
+
+                            // Project list or empty state
+                            if existing_projects.is_empty() {
+                                div {
+                                    style: "
+                                        flex: 1; display: flex; flex-direction: column;
+                                        align-items: center; justify-content: center;
+                                        border: 1px dashed {BORDER_DEFAULT}; border-radius: 8px;
+                                        padding: 32px;
+                                    ",
+                                    div {
+                                        style: "font-size: 40px; opacity: 0.3; margin-bottom: 12px;",
+                                        "📁"
+                                    }
+                                    p {
+                                        style: "margin: 0; font-size: 13px; color: {TEXT_DIM}; text-align: center;",
+                                        "No projects yet"
+                                    }
+                                    p {
+                                        style: "margin: 6px 0 0; font-size: 11px; color: {TEXT_DIM}; text-align: center;",
+                                        "Create one to get started"
+                                    }
+                                }
+                            } else {
+                                div {
+                                    style: "
+                                        flex: 1; overflow-y: auto; overflow-x: hidden;
+                                        border: 1px solid {BORDER_SUBTLE}; border-radius: 8px;
+                                        background-color: {BG_ELEVATED};
+                                        min-height: 0;
+                                    ",
+                                    for (proj_name, proj_path) in existing_projects.iter() {
+                                        {
+                                            let path_clone = proj_path.clone();
+                                            let path_for_menu = proj_path.clone();
+                                            let name_for_menu = proj_name.clone();
+                                            let on_open_clone = on_open.clone();
+                                            rsx! {
                                                 div {
-                                                    style: "display: flex; align-items: center; gap: 10px; min-width: 0;",
+                                                    class: "collapse-btn",
+                                                    key: "{proj_path.display()}",
+                                                    style: "
+                                                        padding: 12px 14px; cursor: pointer;
+                                                        border-bottom: 1px solid {BORDER_SUBTLE};
+                                                        transition: background-color 0.15s ease;
+                                                    ",
+                                                    onclick: move |_| {
+                                                        on_open_clone.call(path_clone.clone());
+                                                    },
+                                                    oncontextmenu: move |e| {
+                                                        e.prevent_default();
+                                                        context_menu.set(Some((
+                                                            e.client_coordinates().x,
+                                                            e.client_coordinates().y,
+                                                            path_for_menu.clone(),
+                                                            name_for_menu.clone()
+                                                        )));
+                                                    },
                                                     div {
-                                                        style: "
-                                                            width: 28px; height: 28px; border-radius: 6px;
-                                                            background: {BG_SURFACE}; border: 1px solid {BORDER_SUBTLE};
-                                                            display: flex; align-items: center; justify-content: center;
-                                                            font-size: 12px; flex-shrink: 0;
-                                                        ",
-                                                        "🎬"
-                                                    }
-                                                    div {
-                                                        style: "flex: 1; min-width: 0; overflow: hidden;",
-                                                        div { 
+                                                        style: "display: flex; align-items: center; gap: 10px; min-width: 0;",
+                                                        div {
                                                             style: "
-                                                                font-size: 13px; font-weight: 500; color: {TEXT_PRIMARY}; 
-                                                                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-                                                            ", 
-                                                            "{proj_name}" 
+                                                                width: 28px; height: 28px; border-radius: 6px;
+                                                                background: {BG_SURFACE}; border: 1px solid {BORDER_SUBTLE};
+                                                                display: flex; align-items: center; justify-content: center;
+                                                                font-size: 12px; flex-shrink: 0;
+                                                            ",
+                                                            "🎬"
                                                         }
-                                                    }
-                                                    // Arrow indicator
-                                                    span {
-                                                        style: "color: {TEXT_DIM}; font-size: 10px;",
-                                                        "→"
+                                                        div {
+                                                            style: "flex: 1; min-width: 0; overflow: hidden;",
+                                                            div {
+                                                                style: "
+                                                                    font-size: 13px; font-weight: 500; color: {TEXT_PRIMARY};
+                                                                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                                                                ",
+                                                                "{proj_name}"
+                                                            }
+                                                        }
+                                                        // Arrow indicator
+                                                        span {
+                                                            style: "color: {TEXT_DIM}; font-size: 10px;",
+                                                            "→"
+                                                        }
                                                     }
                                                 }
                                             }
@@ -547,31 +729,31 @@ pub fn StartupModal(
                                     }
                                 }
                             }
-                        }
-                        
-                        // Browse button
-                        button {
-                            class: "collapse-btn",
-                            style: "
-                                width: 100%; padding: 10px; margin-top: 16px; flex-shrink: 0;
-                                background-color: {BG_SURFACE}; border: 1px solid {BORDER_DEFAULT};
-                                border-radius: 8px; color: {TEXT_SECONDARY}; 
-                                font-size: 12px; font-weight: 500; cursor: pointer;
-                                transition: all 0.15s ease;
-                                display: flex; align-items: center; justify-content: center; gap: 6px;
-                            ",
-                            onclick: move |_| {
-                                let start_dir = projects_folder_for_open.clone();
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .set_directory(&start_dir)
-                                    .set_title("Open Project")
-                                    .pick_folder()
-                                {
-                                    on_open.call(path);
-                                }
-                            },
-                            span { style: "font-size: 11px;", "📁" }
-                            "Browse for Project..."
+
+                            // Browse button
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    width: 100%; padding: 10px; margin-top: 16px; flex-shrink: 0;
+                                    background-color: {BG_SURFACE}; border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 8px; color: {TEXT_SECONDARY};
+                                    font-size: 12px; font-weight: 500; cursor: pointer;
+                                    transition: all 0.15s ease;
+                                    display: flex; align-items: center; justify-content: center; gap: 6px;
+                                ",
+                                onclick: move |_| {
+                                    let start_dir = projects_folder_for_open.clone();
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .set_directory(&start_dir)
+                                        .set_title("Open Project")
+                                        .pick_folder()
+                                    {
+                                        on_open.call(path);
+                                    }
+                                },
+                                span { style: "font-size: 11px;", "📁" }
+                                "Browse for Project..."
+                            }
                         }
                     }
                 }

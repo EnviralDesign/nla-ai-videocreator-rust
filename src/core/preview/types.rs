@@ -3,8 +3,6 @@ use std::sync::Arc;
 
 use image::{Rgba, RgbaImage};
 
-pub const DEFAULT_MAX_PREVIEW_WIDTH: u32 = 960;
-pub const DEFAULT_MAX_PREVIEW_HEIGHT: u32 = 540;
 pub const FFMPEG_TIME_EPSILON: f64 = 0.001;
 pub const MAX_CACHE_BUCKETS: usize = 120;
 pub const PLATE_BORDER_WIDTH: u32 = 1;

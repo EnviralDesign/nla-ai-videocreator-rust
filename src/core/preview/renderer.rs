@@ -17,8 +17,7 @@ use super::{
     },
     types::{
         FrameKey, PlateCache, PreviewDecodeMode, PreviewFrameInfo, PreviewLayerGpu,
-        PreviewLayerPlacement, PreviewLayerStack, PreviewStats, RenderOutput,
-        DEFAULT_MAX_PREVIEW_HEIGHT, DEFAULT_MAX_PREVIEW_WIDTH, MAX_CACHE_BUCKETS,
+        PreviewLayerPlacement, PreviewLayerStack, PreviewStats, RenderOutput, MAX_CACHE_BUCKETS,
         PLATE_BORDER_COLOR, PLATE_BORDER_WIDTH,
     },
     utils::{
@@ -38,16 +37,20 @@ pub struct PreviewRenderer {
 }
 
 impl PreviewRenderer {
-    /// Create a new preview renderer rooted at the project's folder.
-    pub fn new(project_root: PathBuf, max_cache_bytes: usize) -> Self {
+    /// Create a new preview renderer with explicit preview bounds.
+    pub fn new_with_limits(
+        project_root: PathBuf,
+        max_cache_bytes: usize,
+        max_width: u32,
+        max_height: u32,
+    ) -> Self {
+        let max_width = max_width.max(1);
+        let max_height = max_height.max(1);
         Self {
             project_root,
-            max_width: DEFAULT_MAX_PREVIEW_WIDTH,
-            max_height: DEFAULT_MAX_PREVIEW_HEIGHT,
-            video_decoder: VideoDecodeWorker::new(
-                DEFAULT_MAX_PREVIEW_WIDTH,
-                DEFAULT_MAX_PREVIEW_HEIGHT,
-            ),
+            max_width,
+            max_height,
+            video_decoder: VideoDecodeWorker::new(max_width, max_height),
             frame_cache: Mutex::new(FrameCache::new(max_cache_bytes)),
             plate_cache: Mutex::new(None),
         }

@@ -41,6 +41,7 @@ pub fn TitleBar(
     project_name: String,
     on_new_project: EventHandler<MouseEvent>,
     on_save: EventHandler<MouseEvent>,
+    on_project_settings: EventHandler<MouseEvent>,
     on_open_providers: EventHandler<MouseEvent>,
     show_preview_stats: bool,
     on_toggle_preview_stats: EventHandler<MouseEvent>,
@@ -50,11 +51,17 @@ pub fn TitleBar(
     queue_open: bool,
     queue_running: bool,
     queue_paused: bool,
+    project_loaded: bool,
     on_toggle_queue: EventHandler<MouseEvent>,
     on_menu_open: EventHandler<bool>,
 ) -> Element {
     // Track which menu is currently open (None = all closed)
     let mut active_menu = use_signal(|| None::<String>);
+    let project_settings_item = if project_loaded {
+        MenuItem::new("Project Settings...")
+    } else {
+        MenuItem::new("Project Settings...").disabled()
+    };
 
     // Close menu on any click outside
     let close_menus = move |_: MouseEvent| {
@@ -102,6 +109,13 @@ pub fn TitleBar(
                         MenuItemButton {
                             item: MenuItem::new("Open Project...").with_hotkey("Ctrl+O").disabled(),
                             on_click: move |_| {},
+                        }
+                        MenuItemButton {
+                            item: project_settings_item.clone(),
+                            on_click: move |e| {
+                                active_menu.set(None); on_menu_open.call(false);
+                                on_project_settings.call(e);
+                            },
                         }
                         MenuDivider {}
                         MenuItemButton {

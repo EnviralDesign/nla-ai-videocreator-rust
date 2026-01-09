@@ -14,7 +14,7 @@ mod new_project_modal;
 mod track_context_menu;
 mod generation_queue_panel;
 
-pub use startup_modal::StartupModal;
+pub use startup_modal::{StartupModal, StartupModalMode};
 pub use title_bar::TitleBar;
 pub use side_panel::SidePanel;
 pub use status_bar::StatusBar;

@@ -33,7 +33,7 @@ use crate::constants::*;
 use crate::components::{
     GenerationQueuePanel, NewProjectModal, PreviewPanel, ProviderBuilderModal,
     ProviderBuilderSaved, ProviderBuilderSeed, ProvidersModal, SidePanel, StartupModal, StatusBar,
-    TitleBar, TrackContextMenu,
+    StartupModalMode, TitleBar, TrackContextMenu,
 };
 use crate::components::assets::AssetsPanelContent;
 use crate::components::attributes::AttributesPanelContent;
@@ -154,15 +154,20 @@ pub fn App() -> Element {
     // Project state - the core data model
     let mut project = use_signal(|| crate::state::Project::default());
     let mut provider_entries = use_signal(|| Vec::<ProviderEntry>::new());
+    let default_settings = crate::state::ProjectSettings::default();
+    let default_preview_width = default_settings.preview_max_width;
+    let default_preview_height = default_settings.preview_max_height;
     
     // Core services
     let mut thumbnailer = use_signal(|| std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(std::path::PathBuf::from("projects/default")))); // Temporary default path, updated on load
     let thumbnail_refresh_tick = use_signal(|| 0_u64);
     let thumbnail_cache_buster = use_signal(|| 0_u64);
     let mut previewer = use_signal(|| std::sync::Arc::new(
-        crate::core::preview::PreviewRenderer::new(
+        crate::core::preview::PreviewRenderer::new_with_limits(
             std::path::PathBuf::from("projects/default"),
             PREVIEW_CACHE_BUDGET_BYTES,
+            default_preview_width,
+            default_preview_height,
         ),
     ));
     let preview_frame = use_signal(|| None::<crate::core::preview::PreviewFrameInfo>);
@@ -867,6 +872,7 @@ pub fn App() -> Element {
 
     // Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
+    let mut show_project_settings_dialog = use_signal(|| false);
     let show_providers_dialog = use_signal(|| false);
     let show_provider_builder = use_signal(|| false);
     let builder_seed = use_signal(|| ProviderBuilderSeed::New);
@@ -1115,6 +1121,7 @@ pub fn App() -> Element {
         let suspended = show_providers_dialog()
             || show_provider_builder()
             || show_new_project_dialog()
+            || show_project_settings_dialog()
             || menu_open()
             || queue_open();
         if preview_native_suspended() == suspended {
@@ -1387,19 +1394,24 @@ pub fn App() -> Element {
                     on_new_project: move |_| {
                         show_new_project_dialog.set(true);
                     },
-                on_save: move |_| {
-                     // Since project knows its own path (if loaded/saved once), we can just save
-                     // If it's effectively unsaved (default path), we might want a "Save As" flow eventually
-                     // For now, MVP assumes we have a path from startup or just saves to current effective path
-                     let _ = project.read().save(); 
-                },
-                on_open_providers: move |_| {
-                    open_providers_dialog();
-                },
-                show_preview_stats: show_preview_stats(),
-                on_toggle_preview_stats: move |_| {
-                    show_preview_stats.set(!show_preview_stats());
-                },
+                    on_save: move |_| {
+                        // Since project knows its own path (if loaded/saved once), we can just save
+                        // If it's effectively unsaved (default path), we might want a "Save As" flow eventually
+                        // For now, MVP assumes we have a path from startup or just saves to current effective path
+                        let _ = project.read().save(); 
+                    },
+                    on_project_settings: move |_| {
+                        if project.read().project_path.is_some() && startup_done() {
+                            show_project_settings_dialog.set(true);
+                        }
+                    },
+                    on_open_providers: move |_| {
+                        open_providers_dialog();
+                    },
+                    show_preview_stats: show_preview_stats(),
+                    on_toggle_preview_stats: move |_| {
+                        show_preview_stats.set(!show_preview_stats());
+                    },
                     use_hw_decode: use_hw_decode(),
                     on_toggle_hw_decode: move |_| {
                         use_hw_decode.set(!use_hw_decode());
@@ -1409,6 +1421,7 @@ pub fn App() -> Element {
                     queue_open: queue_open(),
                     queue_running: queue_running,
                     queue_paused: queue_paused,
+                    project_loaded: project.read().project_path.is_some() && startup_done(),
                     on_toggle_queue: move |_| {
                         queue_open.set(!queue_open());
                     },
@@ -1720,17 +1733,24 @@ pub fn App() -> Element {
             // Startup Modal (Blocks everything until Project is created/loaded)
             if show_startup {
                 StartupModal {
+                    mode: StartupModalMode::Create,
+                    initial_name: None,
+                    initial_settings: None,
+                    initial_folder: None,
                     on_create: move |(parent_dir, name, settings): (std::path::PathBuf, String, crate::state::ProjectSettings)| {
                         // Create full path: parent_dir/name
                         let project_dir = parent_dir.join(&name);
+                        let preview_limits = (settings.preview_max_width, settings.preview_max_height);
                         match crate::state::Project::create_in_with_settings(&project_dir, &name, settings) {
                             Ok(new_proj) => {
                                 // Initialize thumbnailer with new project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(new_proj.project_path.clone().unwrap())));
                                 previewer.set(std::sync::Arc::new(
-                                    crate::core::preview::PreviewRenderer::new(
+                                    crate::core::preview::PreviewRenderer::new_with_limits(
                                         new_proj.project_path.clone().unwrap(),
                                         PREVIEW_CACHE_BUDGET_BYTES,
+                                        preview_limits.0,
+                                        preview_limits.1,
                                     ),
                                 ));
                                 provider_entries.set(load_global_provider_entries_or_empty());
@@ -1747,10 +1767,16 @@ pub fn App() -> Element {
                             Ok(loaded_proj) => {
                                 // Initialize thumbnailer with loaded project path
                                 thumbnailer.set(std::sync::Arc::new(crate::core::thumbnailer::Thumbnailer::new(loaded_proj.project_path.clone().unwrap())));
+                                let preview_limits = (
+                                    loaded_proj.settings.preview_max_width,
+                                    loaded_proj.settings.preview_max_height,
+                                );
                                 previewer.set(std::sync::Arc::new(
-                                    crate::core::preview::PreviewRenderer::new(
+                                    crate::core::preview::PreviewRenderer::new_with_limits(
                                         loaded_proj.project_path.clone().unwrap(),
                                         PREVIEW_CACHE_BUDGET_BYTES,
+                                        preview_limits.0,
+                                        preview_limits.1,
                                     ),
                                 ));
                                 provider_entries.set(load_global_provider_entries_or_empty());
@@ -1761,7 +1787,43 @@ pub fn App() -> Element {
                             },
                             Err(e) => println!("Error loading project: {}", e),
                         }
-                    }
+                    },
+                    on_update: move |_| {},
+                    on_close: move |_| {},
+                }
+            }
+
+            if show_project_settings_dialog() {
+                StartupModal {
+                    mode: StartupModalMode::Edit,
+                    initial_name: Some(project.read().name.clone()),
+                    initial_settings: Some(project.read().settings.clone()),
+                    initial_folder: project.read().project_path.clone(),
+                    on_create: move |_| {},
+                    on_open: move |_| {},
+                    on_update: move |settings: crate::state::ProjectSettings| {
+                        let preview_limits = (settings.preview_max_width, settings.preview_max_height);
+                        let project_path = project.read().project_path.clone();
+                        {
+                            let mut project_mut = project.write();
+                            project_mut.settings = settings;
+                        }
+                        if let Some(path) = project_path {
+                            previewer.set(std::sync::Arc::new(
+                                crate::core::preview::PreviewRenderer::new_with_limits(
+                                    path,
+                                    PREVIEW_CACHE_BUDGET_BYTES,
+                                    preview_limits.0,
+                                    preview_limits.1,
+                                ),
+                            ));
+                        }
+                        preview_dirty.set(true);
+                        let _ = project.read().save();
+                    },
+                    on_close: move |_| {
+                        show_project_settings_dialog.set(false);
+                    },
                 }
             }
 

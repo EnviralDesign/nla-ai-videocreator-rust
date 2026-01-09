@@ -330,7 +330,10 @@ workflows/
   "settings": {
     "width": 1920,
     "height": 1080,
-    "fps": 24
+    "fps": 24,
+    "duration_seconds": 60.0,
+    "preview_max_width": 960,
+    "preview_max_height": 540
   },
   "tracks": {
     "audio": [...],
@@ -370,7 +373,8 @@ workflows/
   - [x] Core data structures (Project, Track, Clip, Asset, Marker)
   - [x] Project save/load (JSON serialization)
   - [x] Project creation workflow (new project → folder)
-  - [x] Project settings (resolution, fps)
+  - [x] Project settings (resolution, fps, duration, preview downsample)
+  - [x] Project settings edit flow (reuse startup modal UI)
   - [x] In-project asset storage (audio/, images/, video/, generated/)
 
 - [x] **Timeline Editor** (Foundation) ✓
@@ -802,6 +806,10 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-09:** Removed unused preview default constants and the unused renderer constructor to keep the build warning-free.
+- **2026-01-09:** Added `PartialEq` to ProjectSettings so the project settings modal can accept optional settings props.
+- **2026-01-09:** Added a project settings edit flow (reusing the startup modal UI) with a File → Project Settings entry.
+- **2026-01-09:** Preview renderer now honors per-project preview downsample limits (configurable in project settings).
 - **2026-01-09:** Queue badge stays orange when active and shifts to gray only when paused.
 - **2026-01-09:** Queue badge now uses a neutral gray and the QUE toggle shimmers while jobs run.
 - **2026-01-09:** Generative config saves are atomic to prevent versions/provider state from being clobbered.
