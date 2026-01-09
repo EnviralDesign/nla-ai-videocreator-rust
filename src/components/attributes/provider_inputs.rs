@@ -4,7 +4,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 
 use crate::components::common::{
-    ProviderFloatField, ProviderIntegerField, ProviderTextField,
+    ProviderFloatField, ProviderIntegerField, ProviderTextAreaField, ProviderTextField,
 };
 use crate::constants::*;
 use crate::state::{
@@ -59,13 +59,30 @@ pub(super) fn render_provider_inputs(
                                         .as_ref()
                                         .and_then(input_value_as_string)
                                         .unwrap_or_default();
+                                    let multiline = input
+                                        .ui
+                                        .as_ref()
+                                        .map(|ui| ui.multiline)
+                                        .unwrap_or(false);
                                     rsx! {
-                                        ProviderTextField {
-                                            label: label.clone(),
-                                            value: value.clone(),
-                                            on_commit: move |next| {
-                                                set_input_value
-                                                    .borrow_mut()(input_name.clone(), serde_json::Value::String(next));
+                                        if multiline {
+                                            ProviderTextAreaField {
+                                                label: label.clone(),
+                                                value: value.clone(),
+                                                rows: 3,
+                                                on_commit: move |next| {
+                                                    set_input_value
+                                                        .borrow_mut()(input_name.clone(), serde_json::Value::String(next));
+                                                }
+                                            }
+                                        } else {
+                                            ProviderTextField {
+                                                label: label.clone(),
+                                                value: value.clone(),
+                                                on_commit: move |next| {
+                                                    set_input_value
+                                                        .borrow_mut()(input_name.clone(), serde_json::Value::String(next));
+                                                }
                                             }
                                         }
                                     }

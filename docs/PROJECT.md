@@ -802,6 +802,10 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-08:** Added multiline text inputs (builder toggle + textarea rendering) for provider inputs.
+- **2026-01-08:** Output key placeholder now follows the selected output type in the Provider Builder.
+- **2026-01-08:** Added a dynamic output key hint in the Provider Builder Output tab.
+- **2026-01-08:** Split Provider Builder into Inputs/Output tabs with a three-column layout (browser, inspector, config).
 - **2026-01-08:** Clicking the provider list background now clears selection (same as clicking the selected item).
 - **2026-01-08:** Providers modal now supports deselection and updates the Build button label based on selection.
 - **2026-01-08:** Hid tag fields in the Provider Builder UI; tagging is now a documented TODO.

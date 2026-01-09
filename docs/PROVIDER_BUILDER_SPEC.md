@@ -49,6 +49,12 @@ Fields:
 
 **Goal:** Find inputs to expose.
 
+Layout (current build):
+- **Left column:** Node browser (search + list)
+- **Middle column:** Node inspector + input/output actions
+- **Right column:** Provider settings + exposed inputs/output summary
+- **Tabs:** `Inputs` and `Output` modes switch what the middle/right panels show
+
 Left panel:
 - Search bar (class type, title, input key)
 - Filters: class type, category, has inputs, has outputs

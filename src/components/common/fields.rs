@@ -138,6 +138,60 @@ pub fn ProviderTextField(
 }
 
 #[component]
+pub fn ProviderTextAreaField(
+    label: String,
+    value: String,
+    rows: u32,
+    on_commit: EventHandler<String>,
+) -> Element {
+    let mut text = use_signal(|| value.clone());
+    let mut last_prop_value = use_signal(|| value.clone());
+
+    use_effect(move || {
+        let v = value.clone();
+        if v != last_prop_value() {
+            text.set(v.clone());
+            last_prop_value.set(v);
+        }
+    });
+
+    let make_commit = || {
+        let text = text.clone();
+        let mut last_prop_value = last_prop_value.clone();
+        let on_commit = on_commit.clone();
+        move || {
+            let next = text();
+            on_commit.call(next.clone());
+            last_prop_value.set(next);
+        }
+    };
+
+    let mut commit_on_blur = make_commit();
+
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
+            span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
+            textarea {
+                rows: "{rows}",
+                value: "{text()}",
+                style: "
+                    width: 100%; min-width: 0; box-sizing: border-box;
+                    padding: 6px 8px; font-size: 12px; line-height: 1.4;
+                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                    outline: none;
+                    resize: vertical;
+                    user-select: text;
+                ",
+                oninput: move |e| text.set(e.value()),
+                onblur: move |_| commit_on_blur(),
+            }
+        }
+    }
+}
+
+#[component]
 pub fn ProviderFloatField(
     label: String,
     value: f64,

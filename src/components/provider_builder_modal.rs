@@ -9,7 +9,7 @@ use crate::core::provider_store::{provider_path_for_entry, write_provider_file};
 use crate::state::{
     ComfyOutputSelector, ComfyWorkflowRef, InputBinding, ManifestInput, NodeSelector,
     ProviderConnection, ProviderEntry, ProviderInputField, ProviderInputType, ProviderManifest,
-    ProviderOutputType,
+    ProviderOutputType, InputUi,
 };
 
 #[derive(Clone)]
@@ -27,6 +27,12 @@ pub enum ProviderBuilderSeed {
         manifest: Option<ProviderManifest>,
         error: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuilderMode {
+    Inputs,
+    Output,
 }
 
 #[derive(Clone)]
@@ -51,6 +57,7 @@ struct BuilderInput {
     default_text: String,
     enum_options: String,
     tag: String,
+    multiline: bool,
     selector: NodeSelectorDraft,
 }
 
@@ -72,6 +79,7 @@ pub fn ProviderBuilderModal(
     let mut output_key = use_signal(|| "images".to_string());
     let output_tag = use_signal(String::new);
     let output_node = use_signal(|| None::<OutputNodeDraft>);
+    let builder_mode = use_signal(|| BuilderMode::Inputs);
 
     let exposed_inputs = use_signal(Vec::<BuilderInput>::new);
     let builder_error = use_signal(|| None::<String>);
@@ -94,6 +102,7 @@ pub fn ProviderBuilderModal(
     let mut output_key_effect = output_key.clone();
     let mut output_tag_effect = output_tag.clone();
     let mut output_node_effect = output_node.clone();
+    let mut builder_mode_effect = builder_mode.clone();
     let mut exposed_inputs_effect = exposed_inputs.clone();
     let mut builder_error_effect = builder_error.clone();
     let mut editing_provider_id_effect = editing_provider_id.clone();
@@ -122,6 +131,7 @@ pub fn ProviderBuilderModal(
         output_key_effect.set("images".to_string());
         output_tag_effect.set(String::new());
         output_node_effect.set(None);
+        builder_mode_effect.set(BuilderMode::Inputs);
         exposed_inputs_effect.set(Vec::new());
         builder_error_effect.set(None);
         editing_provider_id_effect.set(None);
@@ -197,6 +207,7 @@ pub fn ProviderBuilderModal(
                             default_text,
                             enum_options,
                             tag: input.bind.selector.tag.unwrap_or_default(),
+                            multiline: input.ui.as_ref().map(|ui| ui.multiline).unwrap_or(false),
                             selector: NodeSelectorDraft {
                                 class_type: input.bind.selector.class_type,
                                 input_key: input.bind.selector.input_key,
@@ -339,6 +350,7 @@ pub fn ProviderBuilderModal(
                 default_text: String::new(),
                 enum_options: String::new(),
                 tag: String::new(),
+                multiline: false,
                 selector,
             };
             let mut next = exposed_inputs();
@@ -437,13 +449,14 @@ pub fn ProviderBuilderModal(
                     input_key: input.selector.input_key.clone(),
                     title: input.selector.title.clone(),
                 };
+                let input_ui = build_input_ui(input);
                 manifest_inputs.push(ManifestInput {
                     name: input.name.clone(),
                     label: input.label.clone(),
                     input_type: input_type.clone(),
                     required: input.required,
                     default: default_value.clone(),
-                    ui: None,
+                    ui: input_ui.clone(),
                     bind: InputBinding {
                         selector,
                         transform: None,
@@ -455,6 +468,7 @@ pub fn ProviderBuilderModal(
                     input_type,
                     required: input.required,
                     default: default_value,
+                    ui: input_ui,
                 });
             }
 
@@ -536,6 +550,42 @@ pub fn ProviderBuilderModal(
             on_saved.call(ProviderBuilderSaved { provider_path });
             show.set(false);
         }
+    };
+
+    let active_mode = builder_mode();
+    let inputs_active = active_mode == BuilderMode::Inputs;
+    let outputs_active = active_mode == BuilderMode::Output;
+    let input_tab_bg = if inputs_active { BG_ELEVATED } else { "transparent" };
+    let output_tab_bg = if outputs_active { BG_ELEVATED } else { "transparent" };
+    let input_tab_border = if inputs_active { BORDER_DEFAULT } else { "transparent" };
+    let output_tab_border = if outputs_active { BORDER_DEFAULT } else { "transparent" };
+    let input_tab_color = if inputs_active { TEXT_PRIMARY } else { TEXT_SECONDARY };
+    let output_tab_color = if outputs_active { TEXT_PRIMARY } else { TEXT_SECONDARY };
+    let mut builder_mode_inputs = builder_mode.clone();
+    let mut builder_mode_outputs = builder_mode.clone();
+    let output_status_label = if let Some(output) = output_node() {
+        let title = output.title.clone().unwrap_or_default();
+        if title.is_empty() {
+            format!("Output: {} ({})", output.class_type, output_key())
+        } else {
+            format!(
+                "Output: {} ({})",
+                title,
+                output_key()
+            )
+        }
+    } else {
+        "Output: Not set".to_string()
+    };
+    let output_key_hint = match output_type() {
+        ProviderOutputType::Image => "History key usually \"images\" for image outputs.",
+        ProviderOutputType::Video => "History key often \"videos\" (or \"gifs\" for GIF nodes).",
+        ProviderOutputType::Audio => "History key varies; common values include \"audio\" or \"samples\".",
+    };
+    let output_key_placeholder = match output_type() {
+        ProviderOutputType::Image => "Output key (images)",
+        ProviderOutputType::Video => "Output key (videos)",
+        ProviderOutputType::Audio => "Output key (audio)",
     };
 
     rsx! {
@@ -633,7 +683,45 @@ pub fn ProviderBuilderModal(
                         }
                     }
                     div {
-                        style: "flex: 1; display: flex; min-height: 0;",
+                        style: "flex: 1; display: flex; flex-direction: column; min-height: 0;",
+                        div {
+                            style: "
+                                padding: 8px 18px;
+                                border-bottom: 1px solid {BORDER_DEFAULT};
+                                background-color: {BG_SURFACE};
+                                display: flex; align-items: center; justify-content: space-between;
+                            ",
+                            div {
+                                style: "display: flex; gap: 6px;",
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        padding: 4px 10px; font-size: 11px;
+                                        background-color: {input_tab_bg};
+                                        border: 1px solid {input_tab_border};
+                                        border-radius: 6px; color: {input_tab_color};
+                                        cursor: pointer;
+                                    ",
+                                    onclick: move |_| builder_mode_inputs.set(BuilderMode::Inputs),
+                                    "Inputs"
+                                }
+                                button {
+                                    class: "collapse-btn",
+                                    style: "
+                                        padding: 4px 10px; font-size: 11px;
+                                        background-color: {output_tab_bg};
+                                        border: 1px solid {output_tab_border};
+                                        border-radius: 6px; color: {output_tab_color};
+                                        cursor: pointer;
+                                    ",
+                                    onclick: move |_| builder_mode_outputs.set(BuilderMode::Output),
+                                    "Output"
+                                }
+                            }
+                            div { style: "font-size: 10px; color: {TEXT_DIM};", "{output_status_label}" }
+                        }
+                        div {
+                            style: "flex: 1; display: flex; min-height: 0;",
                         // Left: Node list
                         div {
                             style: "
@@ -707,7 +795,98 @@ pub fn ProviderBuilderModal(
                                 }
                             }
                         }
-                        // Right: Builder details
+                        // Middle: Node details
+                        div {
+                            style: "
+                                width: 260px; padding: 12px;
+                                border-right: 1px solid {BORDER_SUBTLE};
+                                background-color: {BG_ELEVATED};
+                                display: flex; flex-direction: column; gap: 12px;
+                                overflow-y: auto;
+                            ",
+                            if let Some(node) = selected_node {
+                                div {
+                                    style: "
+                                        padding: 10px; border: 1px solid {BORDER_SUBTLE};
+                                        background-color: {BG_SURFACE}; border-radius: 6px;
+                                    ",
+                                    div { style: "font-size: 12px; color: {TEXT_PRIMARY}; font-weight: 600;", "{node.title.clone().unwrap_or_else(|| \"Untitled\".to_string())}" }
+                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "Class: {node.class_type}" }
+                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "Node ID: {node.id}" }
+                                }
+                                if inputs_active {
+                                    div {
+                                        style: "
+                                            padding: 10px; border: 1px solid {BORDER_SUBTLE};
+                                            background-color: {BG_SURFACE}; border-radius: 6px;
+                                            display: flex; flex-direction: column; gap: 6px;
+                                        ",
+                                        div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Inputs" }
+                                        if node.inputs.is_empty() {
+                                            div { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs found." }
+                                        } else {
+                                            for input in node.inputs.iter() {
+                                                {
+                                                    let node_clone = node.clone();
+                                                    let input_key = input.clone();
+                                                    rsx! {
+                                                        div {
+                                                            key: "{input}",
+                                                            style: "display: flex; align-items: center; justify-content: space-between;",
+                                                            span { style: "font-size: 11px; color: {TEXT_PRIMARY};", "{input}" }
+                                                            button {
+                                                                class: "collapse-btn",
+                                                                style: "
+                                                                    padding: 2px 8px; font-size: 10px;
+                                                                    background-color: {BG_ELEVATED};
+                                                                    border: 1px solid {BORDER_DEFAULT};
+                                                                    border-radius: 4px; color: {TEXT_PRIMARY};
+                                                                    cursor: pointer;
+                                                                ",
+                                                                onclick: move |_| add_input_from_node(&node_clone, &input_key),
+                                                                "Expose"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    div {
+                                        style: "
+                                            padding: 10px; border: 1px solid {BORDER_SUBTLE};
+                                            background-color: {BG_SURFACE}; border-radius: 6px;
+                                            display: flex; flex-direction: column; gap: 6px;
+                                        ",
+                                        div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Output Node" }
+                                        button {
+                                            class: "collapse-btn",
+                                            style: "
+                                                padding: 6px 8px; font-size: 11px;
+                                                background-color: {BG_ELEVATED};
+                                                border: 1px solid {BORDER_DEFAULT};
+                                                border-radius: 6px; color: {TEXT_PRIMARY};
+                                                cursor: pointer;
+                                            ",
+                                            onclick: move |_| set_output_from_node(&node),
+                                            "Use Node as Output"
+                                        }
+                                        div { style: "font-size: 10px; color: {TEXT_DIM};", "Output key is configured in the Output panel." }
+                                    }
+                                }
+                            } else {
+                                div {
+                                    style: "font-size: 11px; color: {TEXT_DIM};",
+                                    if inputs_active {
+                                        "Select a node to expose inputs."
+                                    } else {
+                                        "Select a node to set the output."
+                                    }
+                                }
+                            }
+                        }
+                        // Right: Provider config
                         div {
                             style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow-y: auto;",
                             div {
@@ -754,216 +933,127 @@ pub fn ProviderBuilderModal(
                                 }
                             }
 
-                            if let Some(node) = selected_node {
+                            if inputs_active {
                                 div {
                                     style: "
                                         padding: 10px; border: 1px solid {BORDER_SUBTLE};
                                         background-color: {BG_SURFACE}; border-radius: 6px;
+                                        display: flex; flex-direction: column; gap: 8px;
                                     ",
-                                    div { style: "font-size: 12px; color: {TEXT_PRIMARY}; font-weight: 600;", "{node.title.clone().unwrap_or_else(|| \"Untitled\".to_string())}" }
-                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "Class: {node.class_type}" }
-                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "Node ID: {node.id}" }
-                                }
-                                div {
-                                    style: "
-                                        padding: 10px; border: 1px solid {BORDER_SUBTLE};
-                                        background-color: {BG_SURFACE}; border-radius: 6px;
-                                        display: flex; flex-direction: column; gap: 6px;
-                                    ",
-                                    div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Inputs" }
-                                    if node.inputs.is_empty() {
-                                        div { style: "font-size: 11px; color: {TEXT_DIM};", "No inputs found." }
+                                    div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Exposed Inputs" }
+                                    if exposed_inputs().is_empty() {
+                                        div { style: "font-size: 11px; color: {TEXT_DIM};", "Expose inputs from a node to build the provider UI." }
                                     } else {
-                                        for input in node.inputs.iter() {
+                                        for (index, input) in exposed_inputs().iter().enumerate() {
                                             {
-                                                let node_clone = node.clone();
-                                                let input_key = input.clone();
+                                                let mut exposed_inputs = exposed_inputs.clone();
+                                                let input_clone = input.clone();
                                                 rsx! {
-                                                    div {
-                                                        key: "{input}",
-                                                        style: "display: flex; align-items: center; justify-content: space-between;",
-                                                        span { style: "font-size: 11px; color: {TEXT_PRIMARY};", "{input}" }
-                                                        button {
-                                                            class: "collapse-btn",
-                                                            style: "
-                                                                padding: 2px 8px; font-size: 10px;
-                                                                background-color: {BG_ELEVATED};
-                                                                border: 1px solid {BORDER_DEFAULT};
-                                                                border-radius: 4px; color: {TEXT_PRIMARY};
-                                                                cursor: pointer;
-                                                            ",
-                                                            onclick: move |_| add_input_from_node(&node_clone, &input_key),
-                                                            "Expose"
+                                                div {
+                                                    key: "input-{index}",
+                                                        style: "
+                                                            display: flex; flex-direction: column; gap: 6px;
+                                                            padding: 8px; border: 1px solid {BORDER_DEFAULT};
+                                                            border-radius: 6px; background-color: {BG_ELEVATED};
+                                                        ",
+                                                        div {
+                                                            style: "display: flex; gap: 6px;",
+                                                            input {
+                                                                style: "
+                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                                ",
+                                                                value: "{input.name}",
+                                                                placeholder: "name",
+                                                                oninput: move |e| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.name = e.value();
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                            }
+                                                            input {
+                                                                style: "
+                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                                ",
+                                                                value: "{input.label}",
+                                                                placeholder: "label",
+                                                                oninput: move |e| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.label = e.value();
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                            }
+                                                            button {
+                                                                class: "collapse-btn",
+                                                                style: "
+                                                                    padding: 6px 8px; font-size: 11px;
+                                                                    background-color: transparent;
+                                                                    border: 1px solid {BORDER_DEFAULT};
+                                                                    border-radius: 6px; color: #ef4444;
+                                                                    cursor: pointer;
+                                                                ",
+                                                                onclick: move |_| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if index < next.len() {
+                                                                        next.remove(index);
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                                "Remove"
+                                                            }
                                                         }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                div {
-                                    style: "
-                                        padding: 10px; border: 1px solid {BORDER_SUBTLE};
-                                        background-color: {BG_SURFACE}; border-radius: 6px;
-                                        display: flex; flex-direction: column; gap: 6px;
-                                    ",
-                                    div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Output" }
-                                    div {
-                                        style: "display: flex; gap: 8px;",
-                                        input {
-                                            style: "
-                                                flex: 1; padding: 6px 8px; font-size: 11px;
-                                                background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            ",
-                                            value: "{output_key()}",
-                                            placeholder: "Output key (images)",
-                                            oninput: move |e| output_key.set(e.value()),
-                                        }
-                                        button {
-                                            class: "collapse-btn",
-                                            style: "
-                                                padding: 6px 8px; font-size: 11px;
-                                                background-color: {BG_ELEVATED};
-                                                border: 1px solid {BORDER_DEFAULT};
-                                                border-radius: 6px; color: {TEXT_PRIMARY};
-                                                cursor: pointer;
-                                            ",
-                                            onclick: move |_| set_output_from_node(&node),
-                                            "Use Node"
-                                        }
-                                    }
-                                    div {
-                                        style: "font-size: 10px; color: {TEXT_DIM};",
-                                        if let Some(output) = output_node() {
-                                            "{output.class_type} {output.title.clone().unwrap_or_else(|| \"\".to_string())}"
-                                        } else {
-                                            "No output node selected."
-                                        }
-                                    }
-                                }
-                            } else {
-                                div {
-                                    style: "font-size: 11px; color: {TEXT_DIM};",
-                                    "Select a node to inspect inputs and set output."
-                                }
-                            }
-                            div {
-                                style: "
-                                    padding: 10px; border: 1px solid {BORDER_SUBTLE};
-                                    background-color: {BG_SURFACE}; border-radius: 6px;
-                                    display: flex; flex-direction: column; gap: 8px;
-                                ",
-                                div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Exposed Inputs" }
-                                if exposed_inputs().is_empty() {
-                                    div { style: "font-size: 11px; color: {TEXT_DIM};", "Expose inputs from a node to build the provider UI." }
-                                } else {
-                                    for (index, input) in exposed_inputs().iter().enumerate() {
-                                        {
-                                            let mut exposed_inputs = exposed_inputs.clone();
-                                            let input_clone = input.clone();
-                                            rsx! {
-                                            div {
-                                                key: "input-{index}",
-                                                    style: "
-                                                        display: flex; flex-direction: column; gap: 6px;
-                                                        padding: 8px; border: 1px solid {BORDER_DEFAULT};
-                                                        border-radius: 6px; background-color: {BG_ELEVATED};
-                                                    ",
-                                                    div {
-                                                        style: "display: flex; gap: 6px;",
-                                                        input {
-                                                            style: "
-                                                                flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                            ",
-                                                            value: "{input.name}",
-                                                            placeholder: "name",
-                                                            oninput: move |e| {
-                                                                let mut next = exposed_inputs();
-                                                                if let Some(target) = next.get_mut(index) {
-                                                                    target.name = e.value();
-                                                                }
-                                                                exposed_inputs.set(next);
-                                                            },
-                                                        }
-                                                        input {
-                                                            style: "
-                                                                flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                            ",
-                                                            value: "{input.label}",
-                                                            placeholder: "label",
-                                                            oninput: move |e| {
-                                                                let mut next = exposed_inputs();
-                                                                if let Some(target) = next.get_mut(index) {
-                                                                    target.label = e.value();
-                                                                }
-                                                                exposed_inputs.set(next);
-                                                            },
-                                                        }
-                                                        button {
-                                                            class: "collapse-btn",
-                                                            style: "
-                                                                padding: 6px 8px; font-size: 11px;
-                                                                background-color: transparent;
-                                                                border: 1px solid {BORDER_DEFAULT};
-                                                                border-radius: 6px; color: #ef4444;
-                                                                cursor: pointer;
-                                                            ",
-                                                            onclick: move |_| {
-                                                                let mut next = exposed_inputs();
-                                                                if index < next.len() {
-                                                                    next.remove(index);
-                                                                }
-                                                                exposed_inputs.set(next);
-                                                            },
-                                                            "Remove"
-                                                        }
-                                                    }
-                                                    div {
-                                                        style: "display: flex; gap: 6px; align-items: center;",
-                                                        select {
-                                                            value: "{input.input_type_key}",
-                                                            style: "
-                                                                width: 140px; padding: 6px 8px; font-size: 11px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                            ",
+                                                        div {
+                                                            style: "display: flex; gap: 6px; align-items: center;",
+                                                            select {
+                                                                value: "{input.input_type_key}",
+                                                                style: "
+                                                                    width: 140px; padding: 6px 8px; font-size: 11px;
+                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                                ",
                                                             onchange: move |e| {
                                                                 let mut next = exposed_inputs();
                                                                 if let Some(target) = next.get_mut(index) {
-                                                                    target.input_type_key = e.value();
+                                                                    let next_type = e.value();
+                                                                    target.input_type_key = next_type.clone();
+                                                                    if next_type != "text" {
+                                                                        target.multiline = false;
+                                                                    }
                                                                 }
                                                                 exposed_inputs.set(next);
                                                             },
-                                                            option { value: "text", "Text" }
-                                                            option { value: "number", "Number" }
-                                                            option { value: "integer", "Integer" }
-                                                            option { value: "boolean", "Boolean" }
-                                                            option { value: "enum", "Enum" }
-                                                            option { value: "image", "Image" }
-                                                            option { value: "video", "Video" }
-                                                            option { value: "audio", "Audio" }
-                                                        }
-                                                        input {
-                                                            style: "
-                                                                flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                            ",
-                                                            value: "{input.default_text}",
-                                                            placeholder: "default (optional)",
-                                                            oninput: move |e| {
-                                                                let mut next = exposed_inputs();
-                                                                if let Some(target) = next.get_mut(index) {
-                                                                    target.default_text = e.value();
-                                                                }
-                                                                exposed_inputs.set(next);
-                                                            },
-                                                        }
+                                                                option { value: "text", "Text" }
+                                                                option { value: "number", "Number" }
+                                                                option { value: "integer", "Integer" }
+                                                                option { value: "boolean", "Boolean" }
+                                                                option { value: "enum", "Enum" }
+                                                                option { value: "image", "Image" }
+                                                                option { value: "video", "Video" }
+                                                                option { value: "audio", "Audio" }
+                                                            }
+                                                            input {
+                                                                style: "
+                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                                ",
+                                                                value: "{input.default_text}",
+                                                                placeholder: "default (optional)",
+                                                                oninput: move |e| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.default_text = e.value();
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                            }
                                                         label {
                                                             style: "font-size: 10px; color: {TEXT_DIM}; display: flex; gap: 6px; align-items: center;",
                                                             input {
@@ -979,36 +1069,84 @@ pub fn ProviderBuilderModal(
                                                             }
                                                             "Required"
                                                         }
-                                                    }
-                                                    if input.input_type_key == "enum" {
-                                                        input {
-                                                            style: "
-                                                                width: 100%; padding: 6px 8px; font-size: 11px;
-                                                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                            ",
-                                                            value: "{input.enum_options}",
-                                                            placeholder: "Enum options (comma-separated)",
-                                                            oninput: move |e| {
-                                                                let mut next = exposed_inputs();
-                                                                if let Some(target) = next.get_mut(index) {
-                                                                    target.enum_options = e.value();
+                                                        if input.input_type_key == "text" {
+                                                            label {
+                                                                style: "font-size: 10px; color: {TEXT_DIM}; display: flex; gap: 6px; align-items: center;",
+                                                                input {
+                                                                    r#type: "checkbox",
+                                                                    checked: input.multiline,
+                                                                    onchange: move |_| {
+                                                                        let mut next = exposed_inputs();
+                                                                        if let Some(target) = next.get_mut(index) {
+                                                                            target.multiline = !target.multiline;
+                                                                        }
+                                                                        exposed_inputs.set(next);
+                                                                    },
                                                                 }
-                                                                exposed_inputs.set(next);
-                                                            },
+                                                                "Multiline"
+                                                            }
                                                         }
                                                     }
-                                                    div {
-                                                        style: "font-size: 10px; color: {TEXT_DIM};",
-                                                        "Bind: {input_clone.selector.class_type} / {input_clone.selector.input_key}"
+                                                        if input.input_type_key == "enum" {
+                                                            input {
+                                                                style: "
+                                                                    width: 100%; padding: 6px 8px; font-size: 11px;
+                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                                                ",
+                                                                value: "{input.enum_options}",
+                                                                placeholder: "Enum options (comma-separated)",
+                                                                oninput: move |e| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.enum_options = e.value();
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                            }
+                                                        }
+                                                        div {
+                                                            style: "font-size: 10px; color: {TEXT_DIM};",
+                                                            "Bind: {input_clone.selector.class_type} / {input_clone.selector.input_key}"
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            } else {
+                                div {
+                                    style: "
+                                        padding: 10px; border: 1px solid {BORDER_SUBTLE};
+                                        background-color: {BG_SURFACE}; border-radius: 6px;
+                                        display: flex; flex-direction: column; gap: 8px;
+                                    ",
+                                    div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Output Settings" }
+                                    input {
+                                        style: "
+                                            width: 100%; padding: 6px 8px; font-size: 11px;
+                                            background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
+                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                        ",
+                                        value: "{output_key()}",
+                                        placeholder: "{output_key_placeholder}",
+                                        oninput: move |e| output_key.set(e.value()),
+                                    }
+                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "{output_key_hint}" }
+                                    div {
+                                        style: "font-size: 10px; color: {TEXT_DIM};",
+                                        if let Some(output) = output_node() {
+                                            "{output.class_type} {output.title.clone().unwrap_or_else(|| \"\".to_string())}"
+                                        } else {
+                                            "No output node selected."
+                                        }
+                                    }
+                                    div { style: "font-size: 10px; color: {TEXT_DIM};", "Output key maps to the ComfyUI history output list." }
+                                }
                             }
                         }
+                    }
                     }
 
                     div {
@@ -1112,6 +1250,22 @@ fn default_value_to_text(value: Option<&serde_json::Value>) -> String {
         Some(other) => other.to_string(),
         None => String::new(),
     }
+}
+
+fn build_input_ui(input: &BuilderInput) -> Option<InputUi> {
+    if input.input_type_key != "text" || !input.multiline {
+        return None;
+    }
+    Some(InputUi {
+        min: None,
+        max: None,
+        step: None,
+        placeholder: None,
+        multiline: true,
+        group: None,
+        advanced: false,
+        unit: None,
+    })
 }
 
 fn parse_input_type(input: &BuilderInput) -> Result<ProviderInputType, String> {
