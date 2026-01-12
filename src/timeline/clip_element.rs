@@ -353,9 +353,20 @@ pub(crate) fn ClipElement(
                 {
                     let mut waveform_url = String::new();
                     if let Some(cache) = waveform_cache().as_ref() {
+                        let base_block = cache
+                            .levels
+                            .first()
+                            .map(|level| level.block_size.max(1))
+                            .unwrap_or(1);
+                        let max_columns = ((clip.duration.max(0.0) * cache.sample_rate as f64)
+                            / base_block as f64)
+                            .ceil() as usize;
+                        let mut render_width = clip_width.max(1) as usize;
+                        render_width = render_width.min(WAVEFORM_MAX_WIDTH_PX).min(max_columns.max(1));
+
                         let key = WaveformKey {
                             buster: waveform_buster_value,
-                            width: clip_width.max(1) as usize,
+                            width: render_width,
                             zoom_bits: zoom.to_bits(),
                             trim_bits: trim_in_seconds.to_bits(),
                             duration_bits: clip.duration.to_bits(),
@@ -375,7 +386,7 @@ pub(crate) fn ClipElement(
                                     project_root,
                                     clip.asset_id,
                                     &key,
-                                    32,
+                                    WAVEFORM_BMP_HEIGHT_PX,
                                 );
                                 let bmp_url = crate::utils::get_local_file_url(&bmp_path);
 
@@ -388,23 +399,23 @@ pub(crate) fn ClipElement(
                                         cache,
                                         clip.duration,
                                         trim_in_seconds,
-                                        clip_width.max(1) as usize,
+                                        render_width,
                                     );
                                     let columns_elapsed = columns_start.elapsed();
 
                                     let bitmap_start = Instant::now();
                                     let bitmap = waveform_bitmap_from_columns(
                                         &columns,
-                                        clip_width.max(1) as usize,
-                                        32,
+                                        render_width,
+                                        WAVEFORM_BMP_HEIGHT_PX,
                                     );
                                     let bitmap_elapsed = bitmap_start.elapsed();
 
                                     match write_waveform_bmp(
                                         &bmp_path,
                                         clip.asset_id,
-                                        clip_width.max(1) as usize,
-                                        32,
+                                        render_width,
+                                        WAVEFORM_BMP_HEIGHT_PX,
                                         &bitmap,
                                     ) {
                                         Ok((encode_ms, write_ms, byte_len)) => {
@@ -417,7 +428,7 @@ pub(crate) fn ClipElement(
                                                     "[PERF DEBUG] Waveform bmp build: clip_id={} asset_id={} width={} zoom={} columns={} columns_ms={} bitmap_ms={} bmp_encode_ms={} bmp_write_ms={} bmp_bytes={}",
                                                     clip_id,
                                                     clip.asset_id,
-                                                    clip_width,
+                                                    render_width,
                                                     zoom,
                                                     columns.len(),
                                                     columns_elapsed.as_millis(),
@@ -447,6 +458,7 @@ pub(crate) fn ClipElement(
                                     position: absolute; left: 0; right: 0; top: 0; bottom: 0;
                                     width: 100%; height: 100%;
                                     pointer-events: none; z-index: 0;
+                                    opacity: 0.6;
                                 ",
                                 src: "{waveform_url}",
                                 draggable: "false",
@@ -750,6 +762,10 @@ struct WaveColumn {
     y_bottom: f32,
 }
 
+const WAVEFORM_BMP_HEIGHT_PX: usize = 32;
+const WAVEFORM_MAX_WIDTH_PX: usize = 60_000;
+const WAVEFORM_PIXEL_VALUE: u8 = 160;
+
 fn waveform_columns_for_clip(
     cache: &PeakCache,
     clip_duration: f64,
@@ -834,7 +850,7 @@ fn waveform_bitmap_from_columns(
         y_bottom = y_bottom.clamp(0, max_y);
         let base = x;
         for y in y_top..=y_bottom {
-            buffer[y as usize * width + base] = 255;
+            buffer[y as usize * width + base] = WAVEFORM_PIXEL_VALUE;
         }
     }
 
