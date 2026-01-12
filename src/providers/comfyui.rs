@@ -177,7 +177,11 @@ pub async fn generate_image(
         output_key.as_deref(),
         output_index,
     )
-        .ok_or_else(|| "ComfyUI history did not include image outputs.".to_string())?;
+        .ok_or_else(|| {
+            "ComfyUI history did not include image outputs. This can happen when cached \
+results are returned for identical inputs; try changing the seed or using batch seed offsets."
+                .to_string()
+        })?;
     let bytes = download_image(&client, base_url, &image_ref).await?;
 
     let extension = Path::new(&image_ref.filename)

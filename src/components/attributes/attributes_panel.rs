@@ -7,18 +7,25 @@ use crate::components::common::{NumericField, ProviderTextField};
 use super::generative_controls::render_generative_controls;
 use super::provider_inputs::render_provider_inputs;
 use crate::constants::*;
-use crate::core::generation::resolve_provider_inputs;
+use crate::core::generation::{
+    random_seed_i64, resolve_provider_inputs, resolve_seed_field, update_seed_inputs,
+};
 use crate::providers::comfyui;
 use crate::state::{
     asset_display_name,
     delete_generative_version_files,
+    input_value_as_i64,
     parse_version_index,
     GenerationJob,
     GenerationJobStatus,
     ProviderConnection,
     ProviderEntry,
+    ProviderInputType,
     ProviderOutputType,
+    SeedStrategy,
 };
+
+const MAX_BATCH_COUNT: u32 = 50;
 
 #[component]
 pub fn AttributesPanelContent(
@@ -166,6 +173,74 @@ pub fn AttributesPanelContent(
     let providers_path_label = crate::core::provider_store::global_providers_root()
         .display()
         .to_string();
+    let batch_settings = config_snapshot.batch.clone();
+    let batch_count = batch_settings.count.max(1).min(MAX_BATCH_COUNT);
+    let seed_strategy_value = batch_settings.seed_strategy.as_str();
+    let seed_field_value = batch_settings.seed_field.clone().unwrap_or_default();
+    let seed_field_options: Vec<(String, String)> = selected_provider
+        .as_ref()
+        .map(|provider| {
+            provider
+                .inputs
+                .iter()
+                .filter(|input| {
+                    matches!(
+                        input.input_type,
+                        ProviderInputType::Integer | ProviderInputType::Number
+                    )
+                })
+                .map(|input| {
+                    let label = if input.label.trim().is_empty() || input.label == input.name {
+                        input.name.clone()
+                    } else {
+                        format!("{} ({})", input.label, input.name)
+                    };
+                    (input.name.clone(), label)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let seed_field_missing = batch_settings
+        .seed_field
+        .as_ref()
+        .map(|field| !seed_field_options.iter().any(|(name, _)| name == field))
+        .unwrap_or(false);
+    let resolved_seed_field = selected_provider
+        .as_ref()
+        .and_then(|provider| resolve_seed_field(provider, batch_settings.seed_field.as_deref()));
+    let seed_hint = if seed_field_missing {
+        batch_settings
+            .seed_field
+            .as_ref()
+            .map(|field| format!("Seed field '{}' not found in provider inputs.", field))
+    } else if batch_settings.seed_field.is_none() && selected_provider.is_some() {
+        Some(match resolved_seed_field.as_ref() {
+            Some(field) => format!("Auto-detect: {}", field),
+            None => "Auto-detect: none".to_string(),
+        })
+    } else {
+        None
+    };
+    let batch_hint = if batch_count > 1 {
+        match batch_settings.seed_strategy {
+            SeedStrategy::Keep => Some(
+                "Identical inputs can be cached by ComfyUI; use Increment or Random."
+                    .to_string(),
+            ),
+            _ => {
+                if resolved_seed_field.is_none() {
+                    Some(
+                        "No numeric seed field detected. Pick one to offset seeds."
+                            .to_string(),
+                    )
+                } else {
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
     let selected_version_value = config_snapshot
         .active_version
         .clone()
@@ -365,6 +440,51 @@ pub fn AttributesPanelContent(
         }))
     };
 
+    let on_batch_count_change = {
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
+        Rc::new(RefCell::new(move |next: i64| {
+            let clamped = next.clamp(1, MAX_BATCH_COUNT as i64) as u32;
+            let mut project_write = project.write();
+            project_write.update_generative_config(asset_id, |config| {
+                config.batch.count = clamped;
+            });
+            let _ = project_write.save_generative_config(asset_id);
+        }))
+    };
+
+    let on_seed_strategy_change = {
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
+        Rc::new(RefCell::new(move |e: FormEvent| {
+            let next = SeedStrategy::from_str(&e.value());
+            let mut project_write = project.write();
+            project_write.update_generative_config(asset_id, |config| {
+                config.batch.seed_strategy = next;
+            });
+            let _ = project_write.save_generative_config(asset_id);
+        }))
+    };
+
+    let on_seed_field_change = {
+        let asset_id = clip.asset_id;
+        let mut project = project.clone();
+        Rc::new(RefCell::new(move |e: FormEvent| {
+            let value = e.value();
+            let trimmed = value.trim();
+            let next = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+            let mut project_write = project.write();
+            project_write.update_generative_config(asset_id, |config| {
+                config.batch.seed_field = next;
+            });
+            let _ = project_write.save_generative_config(asset_id);
+        }))
+    };
+
     let asset_label = asset_display.clone();
     let on_generate = {
         let gen_folder_path = gen_folder_path.clone();
@@ -410,8 +530,25 @@ pub fn AttributesPanelContent(
                 return;
             }
 
-            let input_snapshot = resolved.snapshot.clone();
-            let inputs = resolved.values.clone();
+            let batch_settings = config_snapshot.batch.clone();
+            let batch_count = batch_settings.count.max(1).min(MAX_BATCH_COUNT);
+            let seed_field =
+                resolve_seed_field(&provider, batch_settings.seed_field.as_deref());
+            let mut seed_base = seed_field
+                .as_ref()
+                .and_then(|field| resolved.values.get(field))
+                .and_then(input_value_as_i64);
+            let mut seed_base_randomized = false;
+            if seed_base.is_none()
+                && seed_field.is_some()
+                && batch_settings.seed_strategy == SeedStrategy::Increment
+            {
+                seed_base = Some(random_seed_i64());
+                seed_base_randomized = true;
+            }
+            let seed_strategy = batch_settings.seed_strategy;
+            let base_inputs = resolved.values.clone();
+            let base_snapshot = resolved.snapshot.clone();
             let job_asset_label = asset_label.clone();
 
             gen_status.set(Some("Checking provider...".to_string()));
@@ -429,27 +566,64 @@ pub fn AttributesPanelContent(
                     return;
                 }
 
-                let job = GenerationJob {
-                    id: uuid::Uuid::new_v4(),
-                    created_at: chrono::Utc::now(),
-                    status: GenerationJobStatus::Queued,
-                    progress: None,
-                    attempts: 0,
-                    next_attempt_at: None,
-                    provider: provider.clone(),
-                    output_type: provider.output_type,
-                    asset_id,
-                    clip_id,
-                    asset_label: job_asset_label,
-                    folder_path: folder_path.clone(),
-                    inputs,
-                    inputs_snapshot: input_snapshot,
-                    version: None,
-                    error: None,
-                };
+                let mut queued = 0u32;
+                for index in 0..batch_count {
+                    let (inputs, input_snapshot) = match (seed_strategy, seed_field.as_ref()) {
+                        (SeedStrategy::Keep, _) | (_, None) => {
+                            (base_inputs.clone(), base_snapshot.clone())
+                        }
+                        (SeedStrategy::Increment, Some(field)) => {
+                            let seed = seed_base.unwrap_or(0) + index as i64;
+                            update_seed_inputs(&base_inputs, &base_snapshot, field, seed)
+                        }
+                        (SeedStrategy::Random, Some(field)) => {
+                            let seed = random_seed_i64();
+                            update_seed_inputs(&base_inputs, &base_snapshot, field, seed)
+                        }
+                    };
+                    let label = if batch_count > 1 {
+                        format!("{} ({}/{})", job_asset_label, index + 1, batch_count)
+                    } else {
+                        job_asset_label.clone()
+                    };
+                    let job = GenerationJob {
+                        id: uuid::Uuid::new_v4(),
+                        created_at: chrono::Utc::now(),
+                        status: GenerationJobStatus::Queued,
+                        progress: None,
+                        attempts: 0,
+                        next_attempt_at: None,
+                        provider: provider.clone(),
+                        output_type: provider.output_type,
+                        asset_id,
+                        clip_id,
+                        asset_label: label,
+                        folder_path: folder_path.clone(),
+                        inputs,
+                        inputs_snapshot: input_snapshot,
+                        version: None,
+                        error: None,
+                    };
 
-                on_enqueue_generation.call(job);
-                gen_status.set(Some("Queued".to_string()));
+                    on_enqueue_generation.call(job);
+                    queued += 1;
+                }
+
+                let mut status = if queued > 1 {
+                    format!("Queued {} jobs", queued)
+                } else {
+                    "Queued".to_string()
+                };
+                if queued > 1 {
+                    if seed_strategy == SeedStrategy::Keep {
+                        status = format!("{} (identical inputs may be cached)", status);
+                    } else if seed_field.is_none() {
+                        status = format!("{} (no seed field detected)", status);
+                    } else if seed_base_randomized {
+                        status = format!("{} (seed missing, randomized base)", status);
+                    }
+                }
+                gen_status.set(Some(status));
             });
         }))
     };
@@ -457,7 +631,11 @@ pub fn AttributesPanelContent(
     let transform = clip.transform;
     let clip_id = clip.id;
     let clip_label = clip.label.clone().unwrap_or_default();
-    let generate_label = "Generate";
+    let generate_label = if batch_count > 1 {
+        format!("Generate x{}", batch_count)
+    } else {
+        "Generate".to_string()
+    };
     let generate_opacity = "1.0";
 
     rsx! {
@@ -600,8 +778,18 @@ pub fn AttributesPanelContent(
                     &providers_path_label,
                     on_generate,
                     gen_status,
-                    generate_label,
+                    generate_label.as_str(),
                     generate_opacity,
+                    batch_count,
+                    on_batch_count_change,
+                    seed_strategy_value,
+                    on_seed_strategy_change,
+                    seed_field_value.as_str(),
+                    &seed_field_options,
+                    on_seed_field_change,
+                    seed_hint.clone(),
+                    seed_field_missing,
+                    batch_hint.clone(),
                 )}
                 {render_provider_inputs(
                     selected_provider,

@@ -18,6 +18,64 @@ pub enum InputValue {
     Literal { value: serde_json::Value },
 }
 
+/// Strategy for adjusting seeds across batch generations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeedStrategy {
+    Keep,
+    Increment,
+    Random,
+}
+
+impl Default for SeedStrategy {
+    fn default() -> Self {
+        SeedStrategy::Increment
+    }
+}
+
+impl SeedStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SeedStrategy::Keep => "keep",
+            SeedStrategy::Increment => "increment",
+            SeedStrategy::Random => "random",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "keep" => SeedStrategy::Keep,
+            "random" => SeedStrategy::Random,
+            _ => SeedStrategy::Increment,
+        }
+    }
+}
+
+/// Batch generation settings stored per generative asset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BatchSettings {
+    #[serde(default = "default_batch_count")]
+    pub count: u32,
+    #[serde(default)]
+    pub seed_strategy: SeedStrategy,
+    #[serde(default)]
+    pub seed_field: Option<String>,
+}
+
+impl Default for BatchSettings {
+    fn default() -> Self {
+        Self {
+            count: default_batch_count(),
+            seed_strategy: SeedStrategy::default(),
+            seed_field: None,
+        }
+    }
+}
+
+fn default_batch_count() -> u32 {
+    1
+}
+
 /// A single generation record for a generative asset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerationRecord {
@@ -35,6 +93,8 @@ pub struct GenerativeConfig {
     #[serde(default)]
     pub inputs: HashMap<String, InputValue>,
     #[serde(default)]
+    pub batch: BatchSettings,
+    #[serde(default)]
     pub versions: Vec<GenerationRecord>,
     #[serde(default)]
     pub active_version: Option<String>,
@@ -45,6 +105,7 @@ impl Default for GenerativeConfig {
         Self {
             provider_id: None,
             inputs: HashMap::new(),
+            batch: BatchSettings::default(),
             versions: Vec::new(),
             active_version: None,
         }

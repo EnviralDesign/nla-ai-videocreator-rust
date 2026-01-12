@@ -688,6 +688,7 @@ This allows:
 | Generative Assets as Explicit Creation | Users explicitly create generative assets via UI; they start "hollow" and get populated through generation | ✅ Decided |
 | Generative Assets Have Versions | Each generation creates a new version; user picks active version; dependent assets use active version | ✅ Decided |
 | Timeline as Implicit Wiring | Overlapping assets auto-surface as input suggestions; no explicit linking required | ✅ Decided |
+| Audio stack v1 | Use ffmpeg-next for decode/resample, cpal for playback, and project-local peak cache for waveforms | ✅ Decided |
 | Providers Grouped by Output Type | Video/Image/Audio; input requirements vary per provider via dynamic schema | ✅ Decided |
 | Provider Bindings via Selectors | Bind workflow inputs by selector/tag instead of node IDs | ✅ Decided |
 | Provider Builder UI | Workflow picker + node browser for exposed inputs | ✅ Decided |
@@ -807,6 +808,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-12:** Added batch generation controls (count + seed strategy/field) with seed auto-detection and multi-job enqueueing.
+- **2026-01-12:** Improved ComfyUI missing-output messaging to point at cached results and seed offsets.
 - **2026-01-12:** Provider Builder V2 now resets to defaults on new-provider opens so stale edit state doesn't linger.
 - **2026-01-12:** Provider Builder V2 exposed inputs can now be reordered with Up/Down controls.
 - **2026-01-12:** Provider Builder V2 exposed inputs use stable IDs so reorder keeps field values aligned.
@@ -889,6 +892,7 @@ src/
 - **2026-01-08:** Split Generative controls into two cards: Generative (version/provider/generate) and Provider Inputs (dynamic fields)
 - **2026-01-08:** Asset context menus now clamp to the Assets panel width so they don't get hidden by the native preview overlay
 - **2026-01-08:** Attributes panel now remounts on clip selection to refresh fields when switching clips
+- **2026-01-12:** Added an audio timeline implementation plan (decoding, playback, waveforms, caching).
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version
 - **2026-01-08:** Generative assets now default to sequential names (Gen Image 1, Gen Video 2) and asset list titles include active version

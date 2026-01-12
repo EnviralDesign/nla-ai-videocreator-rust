@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
+use uuid::Uuid;
 
-use crate::state::{GenerativeConfig, InputValue, ProviderEntry};
+use crate::state::{
+    GenerativeConfig, InputValue, ProviderEntry, ProviderInputField, ProviderInputType,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedInputs {
@@ -67,4 +70,59 @@ fn parse_version_number(version: &str) -> Option<u32> {
     let trimmed = version.trim();
     let numeric = trimmed.strip_prefix('v').or_else(|| trimmed.strip_prefix('V'))?;
     numeric.parse::<u32>().ok()
+}
+
+/// Resolve which provider input should be treated as the seed for batching.
+pub fn resolve_seed_field(
+    provider: &ProviderEntry,
+    preferred: Option<&str>,
+) -> Option<String> {
+    if let Some(preferred) = preferred {
+        if provider
+            .inputs
+            .iter()
+            .any(|input| input.name == preferred && is_seed_candidate(input))
+        {
+            return Some(preferred.to_string());
+        }
+    }
+
+    provider
+        .inputs
+        .iter()
+        .find(|input| is_seed_candidate(input) && seed_like(&input.name, &input.label))
+        .map(|input| input.name.clone())
+}
+
+/// Clone inputs and snapshot, overriding the seed field with a new value.
+pub fn update_seed_inputs(
+    values: &HashMap<String, Value>,
+    snapshot: &HashMap<String, InputValue>,
+    seed_field: &str,
+    seed: i64,
+) -> (HashMap<String, Value>, HashMap<String, InputValue>) {
+    let mut values = values.clone();
+    let mut snapshot = snapshot.clone();
+    let seed_value = Value::Number(seed.into());
+    values.insert(seed_field.to_string(), seed_value.clone());
+    snapshot.insert(
+        seed_field.to_string(),
+        InputValue::Literal { value: seed_value },
+    );
+    (values, snapshot)
+}
+
+/// Generate a random seed suitable for numeric seed inputs.
+pub fn random_seed_i64() -> i64 {
+    let raw = Uuid::new_v4().as_u128();
+    (raw % i64::MAX as u128) as i64
+}
+
+fn seed_like(name: &str, label: &str) -> bool {
+    name.to_ascii_lowercase().contains("seed")
+        || label.to_ascii_lowercase().contains("seed")
+}
+
+fn is_seed_candidate(input: &ProviderInputField) -> bool {
+    matches!(input.input_type, ProviderInputType::Integer | ProviderInputType::Number)
 }

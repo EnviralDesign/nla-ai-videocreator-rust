@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 
+use crate::components::common::ProviderIntegerField;
 use crate::constants::*;
 use crate::state::ProviderEntry;
 
@@ -22,6 +23,16 @@ pub(super) fn render_generative_controls(
     gen_status: Signal<Option<String>>,
     generate_label: &str,
     generate_opacity: &str,
+    batch_count: u32,
+    on_batch_count_change: Rc<RefCell<dyn FnMut(i64)>>,
+    seed_strategy_value: &str,
+    on_seed_strategy_change: Rc<RefCell<dyn FnMut(FormEvent)>>,
+    seed_field_value: &str,
+    seed_field_options: &[(String, String)],
+    on_seed_field_change: Rc<RefCell<dyn FnMut(FormEvent)>>,
+    seed_hint: Option<String>,
+    seed_hint_is_warning: bool,
+    batch_hint: Option<String>,
 ) -> Element {
     rsx! {
         div {
@@ -157,6 +168,79 @@ pub(super) fn render_generative_controls(
                 }
                 if let Some(status) = gen_status() {
                     div { style: "font-size: 11px; color: {TEXT_DIM};", "{status}" }
+                }
+            }
+            div {
+                style: "
+                    display: flex; flex-direction: column; gap: 8px;
+                    padding: 8px; border: 1px dashed {BORDER_SUBTLE};
+                    border-radius: 6px; background-color: rgba(255, 255, 255, 0.02);
+                ",
+                div {
+                    style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                    "Batch"
+                }
+                ProviderIntegerField {
+                    label: "Count".to_string(),
+                    value: batch_count as i64,
+                    on_commit: {
+                        let on_batch_count_change = on_batch_count_change.clone();
+                        move |next| on_batch_count_change.borrow_mut()(next)
+                    }
+                }
+                div {
+                    style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;",
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 4px;",
+                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Seed Strategy" }
+                        select {
+                            value: "{seed_strategy_value}",
+                            style: "
+                                width: 100%; padding: 6px 8px; font-size: 12px;
+                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                outline: none;
+                            ",
+                            onchange: {
+                                let on_seed_strategy_change = on_seed_strategy_change.clone();
+                                move |e| on_seed_strategy_change.borrow_mut()(e)
+                            },
+                            option { value: "increment", "Increment" }
+                            option { value: "random", "Random" }
+                            option { value: "keep", "Keep" }
+                        }
+                    }
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 4px;",
+                        span { style: "font-size: 10px; color: {TEXT_MUTED};", "Seed Field" }
+                        select {
+                            value: "{seed_field_value}",
+                            style: "
+                                width: 100%; padding: 6px 8px; font-size: 12px;
+                                background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                outline: none;
+                            ",
+                            onchange: {
+                                let on_seed_field_change = on_seed_field_change.clone();
+                                move |e| on_seed_field_change.borrow_mut()(e)
+                            },
+                            option { value: "", "Auto-detect" }
+                            for (value, label) in seed_field_options.iter() {
+                                option { value: "{value}", "{label}" }
+                            }
+                        }
+                    }
+                }
+                if let Some(hint) = seed_hint.as_ref() {
+                    if seed_hint_is_warning {
+                        div { style: "font-size: 10px; color: #f97316;", "{hint}" }
+                    } else {
+                        div { style: "font-size: 10px; color: {TEXT_DIM};", "{hint}" }
+                    }
+                }
+                if let Some(hint) = batch_hint.as_ref() {
+                    div { style: "font-size: 10px; color: #f97316;", "{hint}" }
                 }
             }
         }
