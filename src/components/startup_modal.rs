@@ -320,37 +320,41 @@ pub fn StartupModal(
                                 // Custom resolution inputs
                                 div {
                                     style: "display: flex; gap: 8px; align-items: center;",
-                                    input {
-                                        style: "
-                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                    crate::components::common::StableNumberInput {
+                                        id: "width-input".to_string(),
+                                        value: width(),
+                                        placeholder: None,
+                                        style: Some(format!("
+                                            flex: 1; padding: 10px 12px; background: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                            color: {}; font-size: 13px; outline: none;
                                             text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
-                                        ",
-                                        r#type: "number",
-                                        min: "1",
-                                        step: "1",
-                                        value: "{width}",
-                                        oninput: move |e| width.set(e.value()),
+                                        ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                        min: Some("1".to_string()),
+                                        max: None,
+                                        step: Some("1".to_string()),
+                                        on_change: move |v: String| width.set(v),
                                     }
                                     span { 
                                         style: "color: {TEXT_DIM}; font-size: 12px; font-weight: 500;", 
                                         "×" 
                                     }
-                                    input {
-                                        style: "
-                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                    crate::components::common::StableNumberInput {
+                                        id: "height-input".to_string(),
+                                        value: height(),
+                                        placeholder: None,
+                                        style: Some(format!("
+                                            flex: 1; padding: 10px 12px; background: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                            color: {}; font-size: 13px; outline: none;
                                             text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
-                                        ",
-                                        r#type: "number",
-                                        min: "1",
-                                        step: "1",
-                                        value: "{height}",
-                                        oninput: move |e| height.set(e.value()),
+                                        ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                        min: Some("1".to_string()),
+                                        max: None,
+                                        step: Some("1".to_string()),
+                                        on_change: move |v: String| height.set(v),
                                     }
                                 }
                             }
@@ -395,37 +399,41 @@ pub fn StartupModal(
                                 }
                                 div {
                                     style: "display: flex; gap: 8px; align-items: center;",
-                                    input {
-                                        style: "
-                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                    crate::components::common::StableNumberInput {
+                                        id: "preview-max-width-input".to_string(),
+                                        value: preview_max_width(),
+                                        placeholder: None,
+                                        style: Some(format!("
+                                            flex: 1; padding: 10px 12px; background: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                            color: {}; font-size: 13px; outline: none;
                                             text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
-                                        ",
-                                        r#type: "number",
-                                        min: "1",
-                                        step: "1",
-                                        value: "{preview_max_width}",
-                                        oninput: move |e| preview_max_width.set(e.value()),
+                                        ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                        min: Some("1".to_string()),
+                                        max: None,
+                                        step: Some("1".to_string()),
+                                        on_change: move |v: String| preview_max_width.set(v),
                                     }
                                     span {
                                         style: "color: {TEXT_DIM}; font-size: 12px; font-weight: 500;",
                                         "×"
                                     }
-                                    input {
-                                        style: "
-                                            flex: 1; padding: 10px 12px; background: {BG_BASE};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                    crate::components::common::StableNumberInput {
+                                        id: "preview-max-height-input".to_string(),
+                                        value: preview_max_height(),
+                                        placeholder: None,
+                                        style: Some(format!("
+                                            flex: 1; padding: 10px 12px; background: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                            color: {}; font-size: 13px; outline: none;
                                             text-align: center; transition: border-color 0.15s ease;
                                             user-select: text;
-                                        ",
-                                        r#type: "number",
-                                        min: "1",
-                                        step: "1",
-                                        value: "{preview_max_height}",
-                                        oninput: move |e| preview_max_height.set(e.value()),
+                                        ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                        min: Some("1".to_string()),
+                                        max: None,
+                                        step: Some("1".to_string()),
+                                        on_change: move |v: String| preview_max_height.set(v),
                                     }
                                 }
                             }
@@ -445,19 +453,21 @@ pub fn StartupModal(
                                     }
                                     div {
                                         style: "position: relative; flex: 1;",
-                                        input {
-                                            style: "
-                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {BG_BASE};
-                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                        crate::components::common::StableNumberInput {
+                                            id: "fps-input".to_string(),
+                                            value: fps(),
+                                            placeholder: None,
+                                            style: Some(format!("
+                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {};
+                                                border: 1px solid {}; border-radius: 6px;
+                                                color: {}; font-size: 13px; outline: none;
                                                 transition: border-color 0.15s ease;
                                                 user-select: text;
-                                            ",
-                                            r#type: "number",
-                                            min: "1",
-                                            step: "1",
-                                            value: "{fps}",
-                                            oninput: move |e| fps.set(e.value()),
+                                            ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                            min: Some("1".to_string()),
+                                            max: None,
+                                            step: Some("1".to_string()),
+                                            on_change: move |v: String| fps.set(v),
                                         }
                                         span {
                                             style: "
@@ -480,19 +490,21 @@ pub fn StartupModal(
                                     }
                                     div {
                                         style: "position: relative; flex: 1;",
-                                        input {
-                                            style: "
-                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {BG_BASE};
-                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                color: {TEXT_PRIMARY}; font-size: 13px; outline: none;
+                                        crate::components::common::StableNumberInput {
+                                            id: "duration-input".to_string(),
+                                            value: duration(),
+                                            placeholder: None,
+                                            style: Some(format!("
+                                                width: 100%; padding: 10px 12px; padding-right: 40px; background: {};
+                                                border: 1px solid {}; border-radius: 6px;
+                                                color: {}; font-size: 13px; outline: none;
                                                 transition: border-color 0.15s ease;
                                                 user-select: text;
-                                            ",
-                                            r#type: "number",
-                                            min: "1",
-                                            step: "1",
-                                            value: "{duration}",
-                                            oninput: move |e| duration.set(e.value()),
+                                            ", BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                                            min: Some("1".to_string()),
+                                            max: None,
+                                            step: Some("1".to_string()),
+                                            on_change: move |v: String| duration.set(v),
                                         }
                                         span {
                                             style: "

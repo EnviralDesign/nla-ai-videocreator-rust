@@ -878,34 +878,36 @@ pub fn ProviderBuilderModalV2(
                                                             ",
                                                             div {
                                                                 style: "display: flex; gap: 6px;",
-                                                                input {
-                                                                    style: "
+                                                                crate::components::common::StableTextInput {
+                                                                    id: format!("input-name-{}", index),
+                                                                    value: input.name.clone(),
+                                                                    placeholder: Some("name".to_string()),
+                                                                    style: Some(format!("
                                                                         flex: 1; padding: 4px 6px; font-size: 11px;
-                                                                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                                                    ",
-                                                                    value: "{input.name}",
-                                                                    placeholder: "name",
-                                                                    oninput: move |e| {
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 4px;
+                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                    on_change: move |v: String| {
                                                                         let mut next = exposed_inputs_clone();
                                                                         if let Some(target) = next.get_mut(index) {
-                                                                            target.name = e.value();
+                                                                            target.name = v;
                                                                         }
                                                                         exposed_inputs_clone.set(next);
                                                                     },
                                                                 }
-                                                                input {
-                                                                    style: "
+                                                                crate::components::common::StableTextInput {
+                                                                    id: format!("input-label-{}", index),
+                                                                    value: input.label.clone(),
+                                                                    placeholder: Some("label".to_string()),
+                                                                    style: Some(format!("
                                                                         flex: 1; padding: 4px 6px; font-size: 11px;
-                                                                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                                                                    ",
-                                                                    value: "{input.label}",
-                                                                    placeholder: "label",
-                                                                    oninput: move |e| {
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 4px;
+                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                    on_change: move |v: String| {
                                                                         let mut next = exposed_inputs();
                                                                         if let Some(target) = next.get_mut(index) {
-                                                                            target.label = e.value();
+                                                                            target.label = v;
                                                                         }
                                                                         exposed_inputs.set(next);
                                                                     },
