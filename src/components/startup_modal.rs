@@ -201,19 +201,19 @@ pub fn StartupModal(
                                     ", 
                                     "Project Name" 
                                 }
-                                input {
-                                    style: "
+                                crate::components::common::StableTextInput {
+                                    id: "project-name-input".to_string(),
+                                    value: name(),
+                                    placeholder: Some("Enter project name...".to_string()),
+                                    style: Some(format!("
                                         width: 100%; padding: 10px 14px; 
                                         background: {name_input_bg}; border: 1px solid {BORDER_DEFAULT}; 
                                         border-radius: 6px; color: {TEXT_PRIMARY}; 
                                         font-size: 13px; outline: none;
                                         transition: border-color 0.15s ease;
                                         user-select: text;
-                                    ",
-                                    readonly: is_edit,
-                                    value: "{name}",
-                                    placeholder: "Enter project name...",
-                                    oninput: move |e| name.set(e.value()),
+                                    ")),
+                                    on_change: move |new_value: String| name.set(new_value),
                                 }
                             }
 

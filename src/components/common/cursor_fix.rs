@@ -1,15 +1,13 @@
 /// Cursor position preservation for Dioxus inputs
 /// 
-/// Dioxus controlled inputs reset cursor to end on every re-render.
-/// This module provides utilities to work around that using RefCell.
+/// Uses the "Uncontrolled" pattern: DON'T bind the value attribute at all.
+/// Browser manages the DOM value and cursor natively.
+/// We only force re-render via key change when external value changes.
 
 use dioxus::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 /// A text input that preserves cursor position during typing.
-/// Uses a RefCell to avoid triggering re-renders during input,
-/// only commits on blur or Enter key.
+/// Truly uncontrolled - no value binding, browser manages cursor.
 #[component]
 pub fn StableTextInput(
     id: String,
@@ -18,26 +16,21 @@ pub fn StableTextInput(
     style: Option<String>,
     on_change: EventHandler<String>,
 ) -> Element {
-    // Use RefCell to store draft without triggering re-renders
-    let draft = use_hook(|| Rc::new(RefCell::new(value.clone())));
+    // Track the last external value we received
     let mut last_external_value = use_signal(|| value.clone());
+    // Generation key - increment to force DOM element recreation
+    let mut key_gen = use_signal(|| 0u32);
+    // Internal text state (for tracking, not for binding)
+    let mut text = use_signal(|| value.clone());
     
-    // Sync external value changes (but not during editing)
-    let mut is_focused = use_signal(|| false);
-    {
-        let draft = draft.clone();
-        let value = value.clone();
-        use_effect(move || {
-            if !is_focused() && value != last_external_value() {
-                *draft.borrow_mut() = value.clone();
-                last_external_value.set(value.clone());
-            }
-        });
+    // Detect external value changes (not from typing)
+    let needs_recreation = value != last_external_value() && value != text();
+    if needs_recreation {
+        // External value changed - update state and force element recreation
+        text.set(value.clone());
+        last_external_value.set(value.clone());
+        key_gen.set(key_gen() + 1);
     }
-    
-    let draft_for_input = draft.clone();
-    let draft_for_blur = draft.clone();
-    let draft_for_key = draft.clone();
     
     let default_style = "
         width: 100%; box-sizing: border-box;
@@ -49,29 +42,33 @@ pub fn StableTextInput(
     
     let final_style = style.unwrap_or_else(|| default_style.to_string());
     let placeholder_text = placeholder.unwrap_or_default();
-    
+    let current_key = key_gen();
+    let initial_value = text();
+    let id_for_mount = id.clone();
+
     rsx! {
         input {
+            // Key forces element recreation when external value changes
+            key: "{current_key}",
             id: "{id}",
             r#type: "text",
-            value: "{draft.borrow().clone()}",
+            // NO value binding - browser manages this
             placeholder: "{placeholder_text}",
             style: "{final_style}",
-            onfocus: move |_| is_focused.set(true),
+            // Set initial value via JS when mounted
+            onmounted: move |_| {
+                let js = format!(
+                    r#"document.getElementById('{}').value = '{}';"#,
+                    id_for_mount,
+                    initial_value.replace("'", "\\'").replace("\n", "\\n")
+                );
+                let _ = document::eval(&js);
+            },
             oninput: move |e| {
-                // Update RefCell directly - no re-render
-                *draft_for_input.borrow_mut() = e.value();
-            },
-            onblur: move |_| {
-                is_focused.set(false);
-                let final_value = draft_for_blur.borrow().clone();
-                on_change.call(final_value);
-            },
-            onkeydown: move |e: KeyboardEvent| {
-                if e.key() == Key::Enter {
-                    let final_value = draft_for_key.borrow().clone();
-                    on_change.call(final_value);
-                }
+                let new_val = e.value();
+                text.set(new_val.clone());
+                last_external_value.set(new_val.clone());
+                on_change.call(new_val);
             },
         }
     }
@@ -86,23 +83,17 @@ pub fn StableTextArea(
     style: Option<String>,
     on_change: EventHandler<String>,
 ) -> Element {
-    let draft = use_hook(|| Rc::new(RefCell::new(value.clone())));
     let mut last_external_value = use_signal(|| value.clone());
-    let mut is_focused = use_signal(|| false);
+    let mut key_gen = use_signal(|| 0u32);
+    let mut text = use_signal(|| value.clone());
     
-    {
-        let draft = draft.clone();
-        let value = value.clone();
-        use_effect(move || {
-            if !is_focused() && value != last_external_value() {
-                *draft.borrow_mut() = value.clone();
-                last_external_value.set(value.clone());
-            }
-        });
+    // Detect external value changes
+    let needs_recreation = value != last_external_value() && value != text();
+    if needs_recreation {
+        text.set(value.clone());
+        last_external_value.set(value.clone());
+        key_gen.set(key_gen() + 1);
     }
-    
-    let draft_for_input = draft.clone();
-    let draft_for_blur = draft.clone();
     
     let default_style = "
         width: 100%; box-sizing: border-box;
@@ -115,21 +106,31 @@ pub fn StableTextArea(
     
     let final_style = style.unwrap_or_else(|| default_style.to_string());
     let placeholder_text = placeholder.unwrap_or_default();
-    
+    let current_key = key_gen();
+    let initial_value = text();
+    let id_for_mount = id.clone();
+
     rsx! {
         textarea {
+            key: "{current_key}",
             id: "{id}",
-            value: "{draft.borrow().clone()}",
+            // NO value binding - browser manages this
             placeholder: "{placeholder_text}",
             style: "{final_style}",
-            onfocus: move |_| is_focused.set(true),
-            oninput: move |e| {
-                *draft_for_input.borrow_mut() = e.value();
+            // Set initial value via JS when mounted
+            onmounted: move |_| {
+                let js = format!(
+                    r#"document.getElementById('{}').value = {};"#,
+                    id_for_mount,
+                    serde_json::to_string(&initial_value).unwrap_or_else(|_| "''".to_string())
+                );
+                let _ = document::eval(&js);
             },
-            onblur: move |_| {
-                is_focused.set(false);
-                let final_value = draft_for_blur.borrow().clone();
-                on_change.call(final_value);
+            oninput: move |e| {
+                let new_val = e.value();
+                text.set(new_val.clone());
+                last_external_value.set(new_val.clone());
+                on_change.call(new_val);
             },
         }
     }
