@@ -902,7 +902,8 @@ src/
 - **2026-01-08:** Split Generative controls into two cards: Generative (version/provider/generate) and Provider Inputs (dynamic fields)
 - **2026-01-08:** Asset context menus now clamp to the Assets panel width so they don't get hidden by the native preview overlay
 - **2026-01-08:** Attributes panel now remounts on clip selection to refresh fields when switching clips
-- **2026-01-12:** Added an audio timeline implementation plan (decoding, playback, waveforms, caching).
+- **2026-01-12:** Locked the audio timeline plan (cpal playback, ffmpeg decode, project-local peaks, background cache rebuild).
+- **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version
 - **2026-01-08:** Generative assets now default to sequential names (Gen Image 1, Gen Video 2) and asset list titles include active version

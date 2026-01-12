@@ -47,7 +47,19 @@
 - Cache format (project-local): `.cache/audio/peaks/<asset_id>.peaks`
   - Header includes: version, file size, mtime, sample rate, channels, block sizes.
   - Invalidate on size/mtime/version mismatch.
-- Build peaks on import and on-demand (lazy + background).
+- Build peaks in the background (non-blocking on import/open).
+  - Prioritize a coarse level first, then fill finer levels.
+
+### Waveform Resolution Selection (Variable Zoom)
+- Zoom is continuous (pixels-per-second), so select the nearest mip level at draw time.
+- Compute `samples_per_pixel` from zoom and sample rate.
+- Choose the smallest block size that is >= `samples_per_pixel`.
+- This keeps redraw fast and avoids re-decoding on zoom changes.
+
+### Cache Refresh (User Action)
+- Right-click “Refresh” should rebuild media caches per asset:
+  - Visual assets: thumbnails.
+  - Audio assets: waveform peaks.
 
 ### Timeline Rendering
 - For audio clips, render a waveform overlay in `ClipElement`.
@@ -65,12 +77,24 @@
 4. Export mixdown path (offline render).
 5. Optional: beat detection markers.
 
-## Decisions (Proposed)
+## Implementation Order (Atomic Steps + Inspection Breaks)
+1. Add audio core scaffolding (`src/core/audio/*`) and wire module exports.
+2. Implement ffmpeg decode + resample to f32 stereo (no UI yet).
+3. Add cpal output + mixer + audio clock.
+4. Inspection Break: verify play/pause/seek audio output and playhead sync.
+5. Implement peak cache format + background builder (project-local).
+6. Inspection Break: verify cache files are created and rebuild on refresh.
+7. Render waveforms in timeline (canvas overlay per audio clip).
+8. Inspection Break: verify waveform visibility across zoom levels.
+9. Implement scrubbing audio buffer during drag (short buffer).
+10. Inspection Break: verify scrubbing audio responsiveness.
+11. Run `cargo check` after each step that changes Rust code.
+
+## Decisions (Confirmed)
 - Decode/resample: `ffmpeg-next` (extend existing dependency).
 - Playback: `cpal` (low-latency callback control).
 - Waveform cache: project-local peak files with multi-res blocks.
 
 ## Open Questions / Risks
-- Cache location consistency: project-local vs app cache (docs say project-local).
 - AAC licensing risk if we decode via FFmpeg (same as current video decode).
-- Performance on very long audio files: peak build should be backgrounded.
+- Performance on very long audio files: peak build should stay backgrounded with a coarse-first strategy.

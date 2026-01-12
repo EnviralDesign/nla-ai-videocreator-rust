@@ -922,7 +922,6 @@ pub fn App() -> Element {
         let mut show_providers_v2 = show_providers_v2.clone();
         let mut provider_files_v2 = provider_files_v2.clone();
         move || {
-            println!("[DEBUG] Opening providers V2 modal");
             provider_files_v2.set(list_global_provider_files());
             show_providers_v2.set(true);
         }
@@ -1652,26 +1651,21 @@ pub fn App() -> Element {
                 show: show_providers_v2,
                 provider_files: provider_files_v2,
                 on_new: move |_| {
-                    println!("[DEBUG] New provider clicked");
                     edit_provider_path.set(None);
                     show_builder_v2.set(true);
                 },
                 on_reload: move |_| {
-                    println!("[DEBUG] Reload clicked");
                     provider_files_v2.set(list_global_provider_files());
                 },
                 on_delete: move |path| {
-                    println!("[DEBUG] Delete provider: {:?}", path);
                     let _ = std::fs::remove_file(&path);
                     provider_files_v2.set(list_global_provider_files());
                 },
                 on_edit_builder: move |path| {
-                    println!("[DEBUG] Edit in builder: {:?}", path);
                     edit_provider_path.set(Some(path));
                     show_builder_v2.set(true);
                 },
                 on_edit_json: move |path| {
-                    println!("[DEBUG] Edit as JSON: {:?}", path);
                     edit_provider_path.set(Some(path));
                     show_json_editor.set(true);
                 },
@@ -1681,7 +1675,6 @@ pub fn App() -> Element {
                 show: show_json_editor,
                 provider_path: edit_provider_path,
                 on_saved: move |_| {
-                    println!("[DEBUG] JSON editor saved");
                     show_json_editor.set(false);
                     provider_files_v2.set(list_global_provider_files());
                     provider_entries.set(load_global_provider_entries_or_empty());
@@ -1692,7 +1685,6 @@ pub fn App() -> Element {
                 show: show_builder_v2,
                 provider_path: edit_provider_path,
                 on_saved: move |_| {
-                    println!("[DEBUG] Builder saved");
                     show_builder_v2.set(false);
                     provider_files_v2.set(list_global_provider_files());
                     provider_entries.set(load_global_provider_entries_or_empty());

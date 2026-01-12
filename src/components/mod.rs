@@ -8,7 +8,6 @@ mod title_bar;
 mod side_panel;
 mod status_bar;
 mod preview_panel;
-mod providers_modal;
 mod providers_modal_v2;
 mod provider_json_editor_modal;
 mod provider_builder_modal_v2;

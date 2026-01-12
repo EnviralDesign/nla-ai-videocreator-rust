@@ -86,8 +86,6 @@ pub fn ProviderBuilderModalV2(
         };
         
         if need_load {
-            println!("[DEBUG] ProviderBuilderV2: Loading from: {:?}", current_path);
-            
             // Reset to defaults first
             provider_name.set("New Provider".to_string());
             provider_id.set(Uuid::new_v4());
@@ -107,8 +105,6 @@ pub fn ProviderBuilderModalV2(
                 // Load and parse provider JSON
                 if let Some(json) = read_provider_file(path) {
                     if let Ok(entry) = serde_json::from_str::<ProviderEntry>(&json) {
-                        println!("[DEBUG] Loaded provider: {}", entry.name);
-                        
                         // PRESERVE EXISTING UUID!
                         provider_id.set(entry.id);
                         provider_name.set(entry.name.clone());
@@ -126,7 +122,6 @@ pub fn ProviderBuilderModalV2(
                                 let wf_path = PathBuf::from(wf_path_str);
                                 match crate::core::comfyui_workflow::load_workflow_nodes(&wf_path) {
                                     Ok(nodes) => {
-                                        println!("[DEBUG] Loaded {} workflow nodes", nodes.len());
                                         workflow_path.set(Some(wf_path));
                                         workflow_nodes.set(nodes);
                                     }
@@ -144,8 +139,6 @@ pub fn ProviderBuilderModalV2(
                                 if let Ok(man_json) = std::fs::read_to_string(&man_path_buf) {
                                     if let Ok(manifest) = serde_json::from_str::<ProviderManifest>(&man_json) {
                                         if let ProviderManifest::ComfyUi { inputs, output, .. } = manifest {
-                                            println!("[DEBUG] Loaded manifest with {} inputs", inputs.len());
-                                            
                                             // Populate inputs from manifest
                                             let mut next_inputs = Vec::new();
                                             for input in inputs {
@@ -188,7 +181,6 @@ pub fn ProviderBuilderModalV2(
                             }
                         }
                         
-                        println!("[DEBUG] Provider load complete");
                     } else {
                         builder_error.set(Some("Failed to parse provider JSON".to_string()));
                     }
@@ -242,8 +234,6 @@ pub fn ProviderBuilderModalV2(
     // then render the rest of the UI...
     
     let save_provider = move |_| {
-        println!("[DEBUG] Save provider clicked");
-        
         let Some(wf_path) = workflow_path() else {
             builder_error.set(Some("Select a workflow first".to_string()));
             return;
@@ -397,7 +387,6 @@ pub fn ProviderBuilderModalV2(
             return;
         }
         
-        println!("[DEBUG] Provider saved successfully to: {:?}", save_path);
         manifest_path.set(Some(manifest_path_value));
         on_saved.call(save_path);
     };

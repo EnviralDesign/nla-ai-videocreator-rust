@@ -31,7 +31,6 @@ pub fn ProviderJsonEditorModal(
         
         if need_load {
             if let Some(path) = &current_path {
-                println!("[DEBUG] JSON Editor loading file: {:?}", path);
                 if let Some(contents) = read_provider_file(path) {
                     json_text.set(contents);
                     error.set(None);
