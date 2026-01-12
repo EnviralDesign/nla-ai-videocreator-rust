@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
-use crate::constants::{ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
+use crate::constants::{ACCENT_AUDIO, ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
+use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path, PeakCache, PeakLevel};
+use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
 
 use super::{MAX_THUMB_TILES, MIN_CLIP_WIDTH_FLOOR_PX, MIN_CLIP_WIDTH_PX, MIN_CLIP_WIDTH_SCALE, THUMB_TILE_WIDTH_PX};
 
@@ -13,6 +15,8 @@ pub(crate) fn ClipElement(
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
     clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
+    project_root: Option<std::path::PathBuf>,
+    audio_waveform_cache_buster: Signal<u64>,
     zoom: f64,
     clip_color: &'static str,
     on_delete: EventHandler<uuid::Uuid>,
@@ -63,6 +67,7 @@ pub(crate) fn ClipElement(
     };
     let is_generative = asset.map(|a| a.is_generative()).unwrap_or(false);
     let is_visual = asset.map(|a| a.is_visual()).unwrap_or(false);
+    let is_audio = asset.map(|a| a.is_audio()).unwrap_or(false);
     let trim_in_seconds = clip.trim_in_seconds.max(0.0);
     let max_duration = asset.and_then(|a| {
         if a.is_video() || a.is_audio() {
@@ -121,6 +126,136 @@ pub(crate) fn ClipElement(
         "none".to_string()
     };
 
+    let mut waveform_cache = use_signal(|| None::<PeakCache>);
+    let waveform_building = use_signal(|| false);
+    let waveform_cache_buster = audio_waveform_cache_buster;
+    let project_root_for_wave = project_root.clone();
+    let asset_for_wave = asset.cloned();
+    let asset_id_for_wave = clip.asset_id;
+
+    use_effect(move || {
+        let _ = waveform_cache_buster();
+        println!(
+            "[AUDIO DEBUG] Waveform effect: clip_id={} asset_id={} is_audio={} project_root_set={}",
+            clip_id,
+            clip.asset_id,
+            is_audio,
+            project_root_for_wave.is_some()
+        );
+        if !is_audio {
+            waveform_cache.set(None);
+            return;
+        }
+        let Some(project_root) = project_root_for_wave.clone() else {
+            println!(
+                "[AUDIO DEBUG] Waveform: missing project root for asset {}",
+                clip.asset_id
+            );
+            waveform_cache.set(None);
+            return;
+        };
+        let Some(asset) = asset_for_wave.clone() else {
+            println!(
+                "[AUDIO DEBUG] Waveform: missing asset for clip {}",
+                clip_id
+            );
+            waveform_cache.set(None);
+            return;
+        };
+
+        let Some(source_path) = resolve_audio_source(&project_root, &asset) else {
+            println!(
+                "[AUDIO DEBUG] Waveform: no source path for asset {}",
+                asset.id
+            );
+            waveform_cache.set(None);
+            return;
+        };
+        let cache_path = peak_cache_path(&project_root, asset.id);
+        if waveform_building() {
+            return;
+        }
+
+        let mut waveform_cache = waveform_cache.clone();
+        let mut waveform_building = waveform_building.clone();
+        spawn(async move {
+            let cached = match tokio::task::spawn_blocking({
+                let cache_path = cache_path.clone();
+                let source_path = source_path.clone();
+                move || {
+                    if !cache_path.exists() {
+                        return Ok::<Option<PeakCache>, String>(None);
+                    }
+                    let cache = load_peak_cache(&cache_path)?;
+                    if cache_matches_source(&cache, &source_path)? {
+                        Ok(Some(cache))
+                    } else {
+                        Ok(None)
+                    }
+                }
+            })
+            .await
+            {
+                Ok(Ok(cache)) => cache,
+                _ => None,
+            };
+
+            if let Some(cache) = cached {
+                println!(
+                    "[AUDIO DEBUG] Waveform: cache hit asset={} path={:?}",
+                    asset.id, cache_path
+                );
+                waveform_cache.set(Some(cache));
+                return;
+            }
+
+            println!(
+                "[AUDIO DEBUG] Waveform: cache miss asset={} building...",
+                asset.id
+            );
+            waveform_building.set(true);
+            let build_source_path = source_path.clone();
+            let build_result = tokio::task::spawn_blocking(move || {
+                build_and_store_peak_cache(
+                    &project_root,
+                    asset_id_for_wave,
+                    &build_source_path,
+                    PeakBuildConfig::default(),
+                )
+            })
+            .await
+            .ok()
+            .and_then(|res| res.ok());
+
+            waveform_building.set(false);
+            if let Some(cache_path) = build_result {
+                let load_path = cache_path.clone();
+                if let Ok(cache) =
+                    tokio::task::spawn_blocking(move || load_peak_cache(&load_path))
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| Err("Waveform cache load failed".to_string()))
+                {
+                    println!(
+                        "[AUDIO DEBUG] Waveform: cache loaded asset={} path={:?}",
+                        asset.id, cache_path
+                    );
+                    waveform_cache.set(Some(cache));
+                } else {
+                    println!(
+                        "[AUDIO DEBUG] Waveform: cache load failed asset={} path={:?}",
+                        asset.id, cache_path
+                    );
+                }
+            } else {
+                println!(
+                    "[AUDIO DEBUG] Waveform: build failed asset={} source={:?}",
+                    asset.id, source_path
+                );
+            }
+        });
+    });
+
     let current_start = clip.start_time;
     let current_duration = clip.duration;
     let current_end = current_start + current_duration;
@@ -176,6 +311,52 @@ pub(crate) fn ClipElement(
                             style: "height: 100%; width: {tile_width}px; object-fit: cover; flex: 0 0 {tile_width}px;",
                             draggable: "false",
                         }
+                    }
+                }
+            }
+
+            if is_audio {
+                {
+                    let waveform_points = waveform_cache()
+                        .as_ref()
+                        .map(|cache| {
+                            waveform_points_for_clip(
+                                cache,
+                                clip.start_time,
+                                clip.duration,
+                                trim_in_seconds,
+                                clip_width.max(1) as usize,
+                                zoom,
+                            )
+                        })
+                        .unwrap_or_default();
+
+                    if !waveform_points.is_empty() {
+                        rsx! {
+                            svg {
+                                style: "
+                                    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+                                    width: 100%; height: 100%;
+                                    pointer-events: none; z-index: 0;
+                                ",
+                                view_box: "0 0 {clip_width.max(1)} 32",
+                                preserve_aspect_ratio: "none",
+                                for (idx, point) in waveform_points.iter().enumerate() {
+                                    line {
+                                        key: "wave-{clip_id}-{idx}",
+                                        x1: "{point.x}",
+                                        y1: "{point.y_top}",
+                                        x2: "{point.x}",
+                                        y2: "{point.y_bottom}",
+                                        stroke: "{ACCENT_AUDIO}",
+                                        stroke_width: "1",
+                                        stroke_opacity: "0.55",
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        rsx! {}
                     }
                 }
             }
@@ -455,5 +636,80 @@ pub(crate) fn ClipElement(
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct WavePoint {
+    x: f32,
+    y_top: f32,
+    y_bottom: f32,
+}
+
+fn waveform_points_for_clip(
+    cache: &PeakCache,
+    _clip_start_time: f64,
+    clip_duration: f64,
+    trim_in_seconds: f64,
+    width_px: usize,
+    zoom: f64,
+) -> Vec<WavePoint> {
+    let levels = &cache.levels;
+    if levels.is_empty() || width_px == 0 {
+        return Vec::new();
+    }
+
+    let sample_rate = cache.sample_rate as f64;
+    let samples_per_pixel = sample_rate / zoom.max(1.0);
+    let level = select_peak_level(levels, samples_per_pixel);
+
+    let clip_duration = clip_duration.max(0.0);
+    let trim_in_seconds = trim_in_seconds.max(0.0);
+    let start_frame = (trim_in_seconds * sample_rate).floor() as usize;
+    let end_frame = ((trim_in_seconds + clip_duration) * sample_rate).ceil() as usize;
+    if level.block_size == 0 {
+        return Vec::new();
+    }
+    let start_index = start_frame / level.block_size;
+    let end_index = (end_frame / level.block_size).min(level.peaks.len());
+    if start_index >= end_index {
+        return Vec::new();
+    }
+
+    let slice = &level.peaks[start_index..end_index];
+    let width = width_px.max(1);
+    let step = slice.len() as f64 / width as f64;
+    let height = 32.0_f32;
+    let center = height / 2.0;
+    let amp = (height - 6.0) / 2.0;
+
+    let mut points = Vec::with_capacity(width);
+    for x in 0..width {
+        let idx = (x as f64 * step).floor() as usize;
+        if idx >= slice.len() {
+            continue;
+        }
+        let peak = slice[idx];
+        let min = peak.min_l.min(peak.min_r) as f32 / i16::MAX as f32;
+        let max = peak.max_l.max(peak.max_r) as f32 / i16::MAX as f32;
+        points.push(WavePoint {
+            x: x as f32 + 0.5,
+            y_top: center - max * amp,
+            y_bottom: center - min * amp,
+        });
+    }
+
+    points
+}
+
+fn select_peak_level<'a>(levels: &'a [PeakLevel], samples_per_pixel: f64) -> &'a PeakLevel {
+    let mut selected = &levels[0];
+    for level in levels.iter() {
+        if level.block_size as f64 >= samples_per_pixel {
+            selected = level;
+            break;
+        }
+        selected = level;
+    }
+    selected
 }
 

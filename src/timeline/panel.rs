@@ -29,6 +29,8 @@ pub fn TimelinePanel(
     thumbnail_cache_buster: u64,
     thumbnail_refresh_tick: u64,
     clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
+    project_root: Option<std::path::PathBuf>,
+    audio_waveform_cache_buster: Signal<u64>,
     // Timeline state
     current_time: f64,
     duration: f64,
@@ -436,6 +438,8 @@ pub fn TimelinePanel(
                                         thumbnailer: thumbnailer.clone(),
                                         thumbnail_cache_buster: thumbnail_cache_buster,
                                         clip_cache_buckets: clip_cache_buckets.clone(),
+                                        project_root: project_root.clone(),
+                                        audio_waveform_cache_buster: audio_waveform_cache_buster,
                                         zoom: zoom,
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),

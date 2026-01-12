@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::core::generation::next_version_label;
+use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path};
+use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
 use crate::core::media::{resolve_asset_duration_seconds, spawn_asset_duration_probe, spawn_missing_duration_probes};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::core::provider_store::{
@@ -171,6 +173,7 @@ pub fn App() -> Element {
     });
     let thumbnail_refresh_tick = use_signal(|| 0_u64);
     let thumbnail_cache_buster = use_signal(|| 0_u64);
+    let mut audio_waveform_cache_buster = use_signal(|| 0_u64);
     let mut previewer = use_signal(move || {
         std::sync::Arc::new(crate::core::preview::PreviewRenderer::new_with_limits(
             default_cache_root_for_preview,
@@ -1314,6 +1317,8 @@ pub fn App() -> Element {
                             if let Some(asset) = project.read().find_asset(asset_id).cloned() {
                                 let thumbs = thumbnailer.read().clone();
                                 let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+                                let mut audio_waveform_cache_buster = audio_waveform_cache_buster.clone();
+                                let project_root = project.read().project_path.clone();
                                 spawn(async move {
                                      // Force regeneration logic could require a flag in future,
                                      // but our `generate` function currently checks existence.
@@ -1333,8 +1338,40 @@ pub fn App() -> Element {
                                      // If `generate` returns early on existing folder, this won't do anything if folder exists.
                                      // We should probably modify `Thumbnailer::generate` to accept a `force` boolean.
                                      // I will do that in the next step. For now, let's wire up the UI.
-                                     thumbs.generate(&asset, true).await;
-                                     thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                                     if asset.is_visual() {
+                                         thumbs.generate(&asset, true).await;
+                                         thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                                     }
+                                    if asset.is_audio() {
+                                        if let Some(project_root) = project_root {
+                                            if let Some(source_path) = crate::core::audio::waveform::resolve_audio_source(
+                                                &project_root,
+                                                &asset,
+                                            ) {
+                                                println!(
+                                                    "[AUDIO DEBUG] Refresh cache: asset_id={} source={:?}",
+                                                    asset.id, source_path
+                                                );
+                                                let _ = tokio::task::spawn_blocking(move || {
+                                                    crate::core::audio::waveform::build_and_store_peak_cache(
+                                                        &project_root,
+                                                        asset.id,
+                                                        &source_path,
+                                                        crate::core::audio::waveform::PeakBuildConfig::default(),
+                                                    )
+                                                })
+                                                .await;
+                                            }
+                                            else {
+                                                println!(
+                                                    "[AUDIO DEBUG] Refresh cache: no source path for asset {}",
+                                                    asset.id
+                                                );
+                                            }
+                                        }
+                                        audio_waveform_cache_buster
+                                            .set(audio_waveform_cache_buster() + 1);
+                                    }
                                 });
                             }
                         },
@@ -1349,6 +1386,46 @@ pub fn App() -> Element {
                                 .unwrap_or(DEFAULT_CLIP_DURATION_SECONDS);
                             project.write().add_clip_from_asset(asset_id, time, duration);
                             preview_dirty.set(true);
+                            if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                                if asset.is_audio() {
+                                    if let Some(project_root) = project.read().project_path.clone() {
+                                        if let Some(source_path) = resolve_audio_source(&project_root, &asset) {
+                                            let mut audio_waveform_cache_buster = audio_waveform_cache_buster.clone();
+                                            spawn(async move {
+                                                let needs_build = tokio::task::spawn_blocking({
+                                                    let cache_path = peak_cache_path(&project_root, asset_id);
+                                                    let source_path = source_path.clone();
+                                                    move || {
+                                                            if !cache_path.exists() {
+                                                                return Ok::<bool, String>(true);
+                                                            }
+                                                        let cache = load_peak_cache(&cache_path)?;
+                                                        Ok(!cache_matches_source(&cache, &source_path)?)
+                                                    }
+                                                })
+                                                .await
+                                                .ok()
+                                                .unwrap_or(Ok(true))
+                                                .unwrap_or(true);
+
+                                                if needs_build {
+                                                    let _ = tokio::task::spawn_blocking(move || {
+                                                        build_and_store_peak_cache(
+                                                            &project_root,
+                                                            asset.id,
+                                                            &source_path,
+                                                            PeakBuildConfig::default(),
+                                                        )
+                                                    })
+                                                    .await;
+                                                    audio_waveform_cache_buster
+                                                        .set(audio_waveform_cache_buster() + 1);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                         },
                         on_drag_start: move |id| dragged_asset.set(Some(id)),
                     }
@@ -1398,6 +1475,8 @@ pub fn App() -> Element {
                             thumbnail_cache_buster: thumbnail_cache_buster(),
                             thumbnail_refresh_tick: thumbnail_refresh_tick(),
                             clip_cache_buckets: clip_cache_buckets(),
+                            project_root: project.read().project_path.clone(),
+                            audio_waveform_cache_buster: audio_waveform_cache_buster,
                             // Timeline state
                             current_time: current_time(),
                             duration: duration,
@@ -1482,6 +1561,46 @@ pub fn App() -> Element {
                                 let clip = crate::state::Clip::new(asset_id, track_id, time, duration);
                                 project.write().add_clip(clip);
                                 preview_dirty.set(true);
+                                if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                                    if asset.is_audio() {
+                                        if let Some(project_root) = project.read().project_path.clone() {
+                                            if let Some(source_path) = resolve_audio_source(&project_root, &asset) {
+                                                let mut audio_waveform_cache_buster = audio_waveform_cache_buster.clone();
+                                                spawn(async move {
+                                                    let needs_build = tokio::task::spawn_blocking({
+                                                        let cache_path = peak_cache_path(&project_root, asset_id);
+                                                        let source_path = source_path.clone();
+                                                        move || {
+                                                            if !cache_path.exists() {
+                                                                return Ok::<bool, String>(true);
+                                                            }
+                                                            let cache = load_peak_cache(&cache_path)?;
+                                                            Ok(!cache_matches_source(&cache, &source_path)?)
+                                                        }
+                                                    })
+                                                    .await
+                                                    .ok()
+                                                    .unwrap_or(Ok(true))
+                                                    .unwrap_or(true);
+
+                                                    if needs_build {
+                                                        let _ = tokio::task::spawn_blocking(move || {
+                                                            build_and_store_peak_cache(
+                                                                &project_root,
+                                                                asset.id,
+                                                                &source_path,
+                                                                PeakBuildConfig::default(),
+                                                            )
+                                                        })
+                                                        .await;
+                                                        audio_waveform_cache_buster
+                                                            .set(audio_waveform_cache_buster() + 1);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
                             },
                             // Selection
                             on_deselect_all: move |_| {
@@ -1566,6 +1685,7 @@ pub fn App() -> Element {
                                 provider_entries.set(load_global_provider_entries_or_empty());
                                 project.set(new_proj);
                                 preview_dirty.set(true);
+                                audio_waveform_cache_buster.set(audio_waveform_cache_buster() + 1);
                                 spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },
@@ -1592,6 +1712,7 @@ pub fn App() -> Element {
                                 provider_entries.set(load_global_provider_entries_or_empty());
                                 project.set(loaded_proj);
                                 preview_dirty.set(true);
+                                audio_waveform_cache_buster.set(audio_waveform_cache_buster() + 1);
                                 spawn_missing_duration_probes(project);
                                 startup_done.set(true);
                             },

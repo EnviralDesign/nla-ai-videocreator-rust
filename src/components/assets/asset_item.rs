@@ -240,7 +240,7 @@ pub fn AssetItem(
                                     on_regenerate_thumbnails.call(asset_id);
                                     show_menu.set(false);
                                 },
-                                "🔄 Refresh Thumbnails"
+                                "🔄 Refresh Media Cache"
                             }
                             // Divider
                             div {

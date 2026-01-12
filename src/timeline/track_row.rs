@@ -17,6 +17,8 @@ pub fn TrackRow(
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
     clip_cache_buckets: std::sync::Arc<HashMap<uuid::Uuid, Vec<bool>>>,
+    project_root: Option<std::path::PathBuf>,
+    audio_waveform_cache_buster: Signal<u64>,
     zoom: f64,  // pixels per second
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
@@ -93,6 +95,8 @@ pub fn TrackRow(
                     thumbnailer: thumbnailer.clone(),
                     thumbnail_cache_buster: thumbnail_cache_buster,
                     clip_cache_buckets: clip_cache_buckets.clone(),
+                    project_root: project_root.clone(),
+                    audio_waveform_cache_buster: audio_waveform_cache_buster,
                     zoom: zoom,
                     clip_color: clip_color,
                     on_delete: move |id| on_clip_delete.call(id),

@@ -903,6 +903,11 @@ src/
 - **2026-01-08:** Asset context menus now clamp to the Assets panel width so they don't get hidden by the native preview overlay
 - **2026-01-08:** Attributes panel now remounts on clip selection to refresh fields when switching clips
 - **2026-01-12:** Locked the audio timeline plan (cpal playback, ffmpeg decode, project-local peaks, background cache rebuild).
+- **2026-01-12:** Added audio core scaffolding under `src/core/audio/` and exported the module.
+- **2026-01-12:** Added ffmpeg-based audio decode + resample helpers (f32 stereo output).
+- **2026-01-12:** Added cpal-based playback engine scaffolding with a basic mixer + audio clock.
+- **2026-01-12:** Added waveform peak cache format + background builder for audio (project-local).
+- **2026-01-12:** Added timeline waveform rendering for audio clips with on-demand cache build + refresh.
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version

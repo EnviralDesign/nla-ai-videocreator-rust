@@ -20,11 +20,12 @@ mime_guess = "2.0.5"
 percent-encoding = "2.3.2"
 image = "0.25"
 imageproc = "0.26"
-ffmpeg-next = { version = "8.0.0", default-features = false, features = ["codec", "format", "software-scaling"] }
+ffmpeg-next = { version = "8.0.0", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"] }
 wgpu = "0.20"
 pollster = "0.3"
 bytemuck = { version = "1.15", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json"] }
+cpal = "0.15"
 tokio-tungstenite = "0.23"
 futures-util = "0.3"
 
