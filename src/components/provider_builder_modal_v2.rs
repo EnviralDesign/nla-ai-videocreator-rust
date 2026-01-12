@@ -646,16 +646,17 @@ pub fn ProviderBuilderModalV2(
                                     background-color: {BG_BASE};
                                     display: flex; flex-direction: column; gap: 8px;
                                 ",
-                                input {
-                                    style: "
+                                crate::components::common::StableTextInput {
+                                    id: "workflow-search-input".to_string(),
+                                    value: workflow_search(),
+                                    placeholder: Some("Search nodes or inputs...".to_string()),
+                                    style: Some(format!("
                                         width: 100%; padding: 6px 8px; font-size: 11px;
-                                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                                        background-color: {}; color: {};
+                                        border: 1px solid {}; border-radius: 6px;
                                         outline: none;
-                                    ",
-                                    value: "{workflow_search()}",
-                                    placeholder: "Search nodes or inputs...",
-                                    oninput: move |e| workflow_search.set(e.value()),
+                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                    on_change: move |v: String| workflow_search.set(v),
                                 }
                                 div {
                                     style: "
@@ -814,15 +815,16 @@ pub fn ProviderBuilderModalV2(
                                     div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Provider Settings" }
                                     div {
                                         style: "display: flex; gap: 8px;",
-                                        input {
-                                            style: "
+                                        crate::components::common::StableTextInput {
+                                            id: "provider-name-input".to_string(),
+                                            value: provider_name(),
+                                            placeholder: Some("Provider name".to_string()),
+                                            style: Some(format!("
                                                 flex: 1; padding: 6px 8px; font-size: 11px;
-                                                background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                            ",
-                                            value: "{provider_name()}",
-                                            placeholder: "Provider name",
-                                            oninput: move |e| provider_name.set(e.value()),
+                                                background-color: {}; color: {};
+                                                border: 1px solid {}; border-radius: 6px;
+                                            ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                            on_change: move |v: String| provider_name.set(v),
                                         }
                                         select {
                                             value: "{output_type_key(output_type())}",
@@ -837,15 +839,16 @@ pub fn ProviderBuilderModalV2(
                                             option { value: "audio", "Audio" }
                                         }
                                     }
-                                    input {
-                                        style: "
+                                    crate::components::common::StableTextInput {
+                                        id: "base-url-input".to_string(),
+                                        value: base_url(),
+                                        placeholder: Some("ComfyUI URL (http://127.0.0.1:8188)".to_string()),
+                                        style: Some(format!("
                                             width: 100%; padding: 6px 8px; font-size: 11px;
-                                            background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                        ",
-                                        value: "{base_url()}",
-                                        placeholder: "ComfyUI URL (http://127.0.0.1:8188)",
-                                        oninput: move |e| base_url.set(e.value()),
+                                            background-color: {}; color: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                        ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                        on_change: move |v: String| base_url.set(v),
                                     }
                                 }
 
@@ -943,15 +946,16 @@ pub fn ProviderBuilderModalV2(
                                         div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Output Configuration" }
                                         if let Some(out) = output_node() {
                                             div { style: "font-size: 11px; color: {TEXT_PRIMARY};", "Node: {out.title.clone().unwrap_or_else(|| out.class_type.clone())}" }
-                                            input {
-                                                style: "
+                                            crate::components::common::StableTextInput {
+                                                id: "output-key-input".to_string(),
+                                                value: output_key(),
+                                                placeholder: Some("Output key (images, videos, etc)".to_string()),
+                                                style: Some(format!("
                                                     width: 100%; padding: 6px 8px; font-size: 11px;
-                                                    background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                ",
-                                                value: "{output_key()}",
-                                                placeholder: "Output key (images, videos, etc)",
-                                                oninput: move |e| output_key.set(e.value()),
+                                                    background-color: {}; color: {};
+                                                    border: 1px solid {}; border-radius: 6px;
+                                                ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                on_change: move |v: String| output_key.set(v),
                                             }
                                         } else {
                                             div { style: "font-size: 11px; color: {TEXT_DIM};", "Select a node and click 'Use as Output'." }

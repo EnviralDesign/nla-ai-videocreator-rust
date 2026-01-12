@@ -176,22 +176,23 @@ pub fn ProviderJsonEditorModal(
                     // Editor
                     div {
                         style: "flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px;",
-                        textarea {
-                            id: "json-editor-textarea",
-                            style: "
-                                flex: 1; width: 100%;
-                                background-color: {BG_SURFACE};
-                                border: 1px solid {BORDER_DEFAULT};
+                        crate::components::common::StableTextArea {
+                            id: "json-editor-textarea".to_string(),
+                            value: json_text(),
+                            placeholder: None,
+                            style: Some(format!("
+                                flex: 1; width: 100%; height: 100%;
+                                background-color: {};
+                                border: 1px solid {};
                                 border-radius: 6px;
-                                color: {TEXT_PRIMARY};
+                                color: {};
                                 font-family: 'SF Mono', Consolas, monospace;
                                 font-size: 11px; line-height: 1.5;
                                 padding: 10px; resize: none;
                                 white-space: pre;
                                 user-select: text;
-                            ",
-                            value: "{json_text()}",
-                            // No oninput binding - save reads directly from DOM
+                            ", BG_SURFACE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                            on_change: move |v: String| json_text.set(v),
                         }
                         
                         // Save button
