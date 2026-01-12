@@ -32,6 +32,7 @@ struct OutputNodeDraft {
 
 #[derive(Clone)]
 struct BuilderInput {
+    id: Uuid,
     name: String,
     label: String,
     input_type_key: String,
@@ -151,6 +152,7 @@ pub fn ProviderBuilderModalV2(
                                                 let (input_type_key, enum_options) = input_type_to_key(&input.input_type);
                                                 let default_text = default_value_to_text(input.default.as_ref());
                                                 next_inputs.push(BuilderInput {
+                                                    id: Uuid::new_v4(),
                                                     name: input.name,
                                                     label: input.label,
                                                     input_type_key,
@@ -460,6 +462,7 @@ pub fn ProviderBuilderModalV2(
                 title: node.title.clone(),
             };
             let input = BuilderInput {
+                id: Uuid::new_v4(),
                 name: input_key.to_string(),
                 label: friendly_label(input_key),
                 input_type_key: "text".to_string(),
@@ -861,11 +864,17 @@ pub fn ProviderBuilderModalV2(
                                         } else {
                                             for (index, input) in exposed_inputs().iter().enumerate() {
                                                 {
+                                                    let can_move_up = index > 0;
+                                                    let can_move_down = index + 1 < exposed_inputs().len();
+                                                    let up_cursor = if can_move_up { "pointer" } else { "not-allowed" };
+                                                    let down_cursor = if can_move_down { "pointer" } else { "not-allowed" };
+                                                    let up_opacity = if can_move_up { "1" } else { "0.4" };
+                                                    let down_opacity = if can_move_down { "1" } else { "0.4" };
                                                     let mut exposed_inputs = exposed_inputs.clone();
                                                     let input_clone = input.clone();
                                                     rsx! {
                                                         div {
-                                                            key: "input-{index}",
+                                                            key: "input-{input.id}",
                                                             style: "
                                                                 display: flex; flex-direction: column; gap: 6px;
                                                                 padding: 8px; border: 1px solid {BORDER_DEFAULT};
@@ -874,7 +883,7 @@ pub fn ProviderBuilderModalV2(
                                                             div {
                                                                 style: "display: flex; gap: 6px;",
                                                                 crate::components::common::StableTextInput {
-                                                                    id: format!("input-name-{}", index),
+                                                                    id: format!("input-name-{}", input.id),
                                                                     value: input.name.clone(),
                                                                     placeholder: Some("name".to_string()),
                                                                 style: Some(format!("
@@ -894,7 +903,7 @@ pub fn ProviderBuilderModalV2(
                                                                 autofocus: false,
                                                             }
                                                                 crate::components::common::StableTextInput {
-                                                                    id: format!("input-label-{}", index),
+                                                                    id: format!("input-label-{}", input.id),
                                                                     value: input.label.clone(),
                                                                     placeholder: Some("label".to_string()),
                                                                 style: Some(format!("
@@ -913,6 +922,47 @@ pub fn ProviderBuilderModalV2(
                                                                 on_keydown: move |_| {},
                                                                 autofocus: false,
                                                             }
+                                                                div {
+                                                                    style: "display: flex; flex-direction: column; gap: 4px;",
+                                                                    button {
+                                                                        class: "collapse-btn",
+                                                                        disabled: !can_move_up,
+                                                                        style: format!("
+                                                                            padding: 2px 6px; font-size: 9px;
+                                                                            background-color: transparent;
+                                                                            border: 1px solid {};
+                                                                            border-radius: 4px; color: {};
+                                                                            cursor: {}; opacity: {};
+                                                                        ", BORDER_DEFAULT, TEXT_PRIMARY, up_cursor, up_opacity),
+                                                                        onclick: move |_| {
+                                                                            let mut next = exposed_inputs();
+                                                                            if index > 0 && index < next.len() {
+                                                                                next.swap(index - 1, index);
+                                                                                exposed_inputs.set(next);
+                                                                            }
+                                                                        },
+                                                                        "Up"
+                                                                    }
+                                                                    button {
+                                                                        class: "collapse-btn",
+                                                                        disabled: !can_move_down,
+                                                                        style: format!("
+                                                                            padding: 2px 6px; font-size: 9px;
+                                                                            background-color: transparent;
+                                                                            border: 1px solid {};
+                                                                            border-radius: 4px; color: {};
+                                                                            cursor: {}; opacity: {};
+                                                                        ", BORDER_DEFAULT, TEXT_PRIMARY, down_cursor, down_opacity),
+                                                                        onclick: move |_| {
+                                                                            let mut next = exposed_inputs();
+                                                                            if index + 1 < next.len() {
+                                                                                next.swap(index, index + 1);
+                                                                                exposed_inputs.set(next);
+                                                                            }
+                                                                        },
+                                                                        "Down"
+                                                                    }
+                                                                }
                                                                 button {
                                                                     class: "collapse-btn",
                                                                     style: "
@@ -962,7 +1012,7 @@ pub fn ProviderBuilderModalV2(
                                                                     option { value: "audio", "Audio" }
                                                                 }
                                                                 crate::components::common::StableTextInput {
-                                                                    id: format!("input-default-{}", index),
+                                                                    id: format!("input-default-{}", input.id),
                                                                     value: input.default_text.clone(),
                                                                     placeholder: Some("default (optional)".to_string()),
                                                                     style: Some(format!("
@@ -1016,7 +1066,7 @@ pub fn ProviderBuilderModalV2(
                                                             }
                                                             if input.input_type_key == "enum" {
                                                                 crate::components::common::StableTextInput {
-                                                                    id: format!("input-enum-{}", index),
+                                                                    id: format!("input-enum-{}", input.id),
                                                                     value: input.enum_options.clone(),
                                                                     placeholder: Some("Enum options (comma-separated)".to_string()),
                                                                     style: Some(format!("
