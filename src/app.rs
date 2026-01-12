@@ -47,13 +47,6 @@ enum GenerationFailure {
     Error(String),
 }
 
-fn derive_manifest_path_string(path: &str) -> Option<String> {
-    let workflow_path = std::path::Path::new(path);
-    let stem = workflow_path.file_stem()?.to_str()?;
-    let file_name = format!("{}_manifest.json", stem);
-    Some(workflow_path.with_file_name(file_name).to_string_lossy().to_string())
-}
-
 async fn execute_generation_job(
     job: GenerationJob,
     mut project: Signal<crate::state::Project>,
