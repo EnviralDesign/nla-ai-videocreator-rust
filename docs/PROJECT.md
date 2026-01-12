@@ -807,6 +807,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-12:** Provider Builder V2 now resets to defaults on new-provider opens so stale edit state doesn't linger.
 - **2026-01-11:** Updated AI guidelines to run `cargo check` (not `cargo test`) before yielding back.
 - **2026-01-11:** Provider Builder V2 restores input type, default, required, multiline, and enum option controls for exposed inputs.
 - **2026-01-11:** Removed unused v1 provider builder module wiring and an unused manifest helper to keep builds warning-free.

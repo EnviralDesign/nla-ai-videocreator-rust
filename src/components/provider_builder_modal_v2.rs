@@ -69,6 +69,7 @@ pub fn ProviderBuilderModalV2(
     let mut builder_error = use_signal(|| None::<String>);
     let mut manifest_path = use_signal(|| None::<PathBuf>);
     let mut loaded_path = use_signal(|| None::<PathBuf>); // Track what we loaded
+    let mut loaded_new = use_signal(|| false);
 
     // Load provider DIRECTLY when modal opens - no use_effect!
     if show() {
@@ -80,7 +81,7 @@ pub fn ProviderBuilderModalV2(
             (Some(curr), Some(loaded)) => curr != loaded,
             (Some(_), None) => true,
             (None, Some(_)) => true, // Reset if path removed (New clicked)
-            (None, None) => false,
+            (None, None) => !loaded_new(),
         };
         
         if need_load {
@@ -193,15 +194,18 @@ pub fn ProviderBuilderModalV2(
                     builder_error.set(Some(format!("Failed to read: {}", path.display())));
                 }
                 loaded_path.set(Some(path.clone()));
+                loaded_new.set(false);
             } else {
                 // New provider - already reset above
                 loaded_path.set(None);
+                loaded_new.set(true);
             }
         }
     } else {
         // When hidden, reset loaded_path so we reload next time
-        if loaded_path().is_some() {
+        if loaded_path().is_some() || loaded_new() {
             loaded_path.set(None);
+            loaded_new.set(false);
         }
     }
 
