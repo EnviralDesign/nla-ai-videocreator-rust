@@ -947,6 +947,8 @@ src/
 - **2026-01-06:** Added in-process FFmpeg decode worker for preview frame extraction
 - **2026-01-06:** Removed ffmpeg scale filter from preview decode to avoid empty frames; scaling happens in Rust after decode
 - **2026-01-06:** Fixed preview latest-wins gating so in-flight renders don't get discarded when the render gate is busy
+- **2026-01-09:** Started Provider UI V2 rebuild to fix persistent state management issues—created clean modals with no draft buffers, no effects for init, direct file I/O
+- **2026-01-09:** Fixed Provider Builder not re-initializing on subsequent opens—`initialized` flag was preventing seed processing after first modal open
 - **2026-01-06:** Added preview frame cache (2GB budget), latest-wins scheduling, and prefetch window for smoother scrubbing
 - **2026-01-06:** Clip context menu now supports moving clips up/down to compatible tracks
 - **2026-01-06:** Attribute editor numeric fields commit on blur/Enter to avoid input jitter

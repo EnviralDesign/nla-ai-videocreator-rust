@@ -37,14 +37,19 @@ pub fn ProvidersModal(
         let mut provider_editor_error = provider_editor_error.clone();
         let mut provider_editor_dirty = provider_editor_dirty.clone();
         Rc::new(RefCell::new(move |next_path: Option<std::path::PathBuf>, next_text: String| {
+            println!("[DEBUG] select_provider called");
+            println!("[DEBUG]   next_path: {:?}", next_path);
+            println!("[DEBUG]   next_text length: {}", next_text.len());
             editor_focused.set(false);
             provider_editor_path.set(next_path.clone());
             provider_editor_text.set(next_text.clone());
+            println!("[DEBUG]   Set provider_editor_path and provider_editor_text signals");
             provider_editor_error.set(None);
             provider_editor_dirty.set(false);
             *editor_draft.borrow_mut() = next_text;
             editor_dirty.set(false);
             last_editor_path.set(next_path);
+            println!("[DEBUG]   select_provider completed");
         }))
     };
 
@@ -75,7 +80,6 @@ pub fn ProvidersModal(
             }
         });
     }
-    let select_provider_for_clear = select_provider.clone();
     let select_provider_for_items = select_provider.clone();
     let on_provider_build_click = {
         let editor_draft = editor_draft.clone();
@@ -84,13 +88,22 @@ pub fn ProvidersModal(
         let mut provider_editor_dirty = provider_editor_dirty.clone();
         let mut provider_editor_error = provider_editor_error.clone();
         let on_provider_build = on_provider_build.clone();
+        let provider_editor_path = provider_editor_path.clone();
         move |evt: MouseEvent| {
-            provider_editor_text.set(editor_draft.borrow().clone());
+            println!("[DEBUG] on_provider_build_click called");
+            let draft_text = editor_draft.borrow().clone();
+            println!("[DEBUG]   draft_text length: {}", draft_text.len());
+            println!("[DEBUG]   editor_dirty: {}", editor_dirty.get());
+            println!("[DEBUG]   provider_editor_path before sync: {:?}", provider_editor_path());
+            provider_editor_text.set(draft_text);
+            println!("[DEBUG]   Set provider_editor_text from draft");
             if editor_dirty.get() {
                 provider_editor_dirty.set(true);
             }
             provider_editor_error.set(None);
+            println!("[DEBUG]   Calling parent on_provider_build handler");
             on_provider_build.call(evt);
+            println!("[DEBUG]   on_provider_build_click completed");
         }
     };
     rsx! {
@@ -204,12 +217,6 @@ pub fn ProvidersModal(
                                 background-color: {BG_ELEVATED};
                                 padding: 6px;
                             ",
-                            onclick: {
-                                let select_provider = select_provider_for_clear.clone();
-                                move |_| {
-                                    select_provider.borrow_mut()(None, String::new());
-                                }
-                            },
                             if provider_files().is_empty() {
                                 div {
                                     style: "

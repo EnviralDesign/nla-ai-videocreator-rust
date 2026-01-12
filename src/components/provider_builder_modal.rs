@@ -87,7 +87,6 @@ pub fn ProviderBuilderModal(
     let editing_provider_path = use_signal(|| None::<PathBuf>);
     let editing_manifest_path = use_signal(|| None::<PathBuf>);
     let initial_workflow_path = use_signal(|| None::<PathBuf>);
-    let initialized = use_signal(|| false);
 
     let show_effect = show.clone();
     let seed_effect = seed.clone();
@@ -109,17 +108,24 @@ pub fn ProviderBuilderModal(
     let mut editing_provider_path_effect = editing_provider_path.clone();
     let mut editing_manifest_path_effect = editing_manifest_path.clone();
     let mut initial_workflow_path_effect = initial_workflow_path.clone();
-    let mut initialized_effect = initialized.clone();
 
+    // BRUTE FORCE: Just re-initialize every time modal opens or seed changes
+    // No clever caching, no edge cases, just simple and it works
     use_effect(move || {
-        if !show_effect() {
-            initialized_effect.set(false);
-            return;
-        }
-        if initialized_effect() {
+        let is_open = show_effect();
+        let current_seed = seed_effect();
+        
+        println!("[DEBUG] ProviderBuilderModal: effect triggered");
+        println!("[DEBUG]   show: {}", is_open);
+        
+        if !is_open {
+            println!("[DEBUG]   Modal closed, nothing to do");
             return;
         }
 
+        println!("[DEBUG]   Modal is open, FORCE re-initializing from seed...");
+        
+        // Reset everything to defaults
         workflow_path_effect.set(None);
         workflow_nodes_effect.set(Vec::new());
         workflow_error_effect.set(None);
@@ -139,7 +145,16 @@ pub fn ProviderBuilderModal(
         editing_manifest_path_effect.set(None);
         initial_workflow_path_effect.set(None);
 
-        match seed_effect() {
+        match &current_seed {
+            ProviderBuilderSeed::New => {
+                println!("[DEBUG]   Seed is New, using defaults");
+            }
+            ProviderBuilderSeed::Edit { provider_path, .. } => {
+                println!("[DEBUG]   Seed is Edit with path: {:?}", provider_path);
+            }
+        }
+
+        match current_seed {
             ProviderBuilderSeed::New => {}
             ProviderBuilderSeed::Edit {
                 provider_path,
@@ -148,13 +163,15 @@ pub fn ProviderBuilderModal(
                 manifest,
                 error,
             } => {
+                println!("[DEBUG]   Processing Edit seed...");
                 if let Some(error) = error {
                     builder_error_effect.set(Some(error));
                 }
 
                 editing_provider_id_effect.set(Some(provider_entry.id));
-                editing_provider_path_effect.set(Some(provider_path));
+                editing_provider_path_effect.set(Some(provider_path.clone()));
                 editing_manifest_path_effect.set(manifest_path);
+                println!("[DEBUG]   Set editing_provider_path: {:?}", provider_path);
 
                 let (base_url, workflow_path_from_connection) = match &provider_entry.connection {
                     ProviderConnection::ComfyUi {
@@ -166,7 +183,6 @@ pub fn ProviderBuilderModal(
                         builder_error_effect.set(Some(
                             "Provider Builder only supports ComfyUI providers.".to_string(),
                         ));
-                        initialized_effect.set(true);
                         return;
                     }
                 };
@@ -188,6 +204,7 @@ pub fn ProviderBuilderModal(
                     ..
                 }) = manifest
                 {
+                    println!("[DEBUG]   Processing manifest...");
                     if let Some(name) = name {
                         provider_name_effect.set(name);
                     }
@@ -236,14 +253,17 @@ pub fn ProviderBuilderModal(
                 }
 
                 if let Some(path) = workflow_path_value.clone() {
+                    println!("[DEBUG]   Loading workflow from: {:?}", path);
                     initial_workflow_path_effect.set(Some(path.clone()));
                     match crate::core::comfyui_workflow::load_workflow_nodes(&path) {
                         Ok(nodes) => {
+                            println!("[DEBUG]   Loaded {} nodes from workflow", nodes.len());
                             workflow_path_effect.set(Some(path.clone()));
                             workflow_nodes_effect.set(nodes);
                             workflow_error_effect.set(None);
                         }
                         Err(err) => {
+                            println!("[DEBUG]   Failed to load workflow: {}", err);
                             workflow_path_effect.set(Some(path));
                             workflow_nodes_effect.set(Vec::new());
                             workflow_error_effect.set(Some(err));
@@ -253,7 +273,7 @@ pub fn ProviderBuilderModal(
             }
         }
 
-        initialized_effect.set(true);
+        println!("[DEBUG]   Initialization completed");
     });
 
     let mut editing_manifest_path_for_pick = editing_manifest_path.clone();

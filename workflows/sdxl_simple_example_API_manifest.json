@@ -1,7 +1,7 @@
 {
   "adapter_type": "comfy_ui",
   "schema_version": 1,
-  "name": "New Provider",
+  "name": "New Providerrr",
   "output_type": "image",
   "workflow": {
     "workflow_path": "C:\\repos\\nla-ai-videocreator-rust\\workflows\\sdxl_simple_example_API.json"
@@ -11,15 +11,29 @@
       "name": "noise_seed",
       "label": "Noise Seed",
       "input_type": {
-        "type": "integer"
+        "type": "text"
       },
-      "required": true,
-      "default": 42,
+      "required": false,
       "bind": {
         "selector": {
           "class_type": "KSamplerAdvanced",
           "input_key": "noise_seed",
           "title": "KSampler (Advanced) - BASE"
+        }
+      }
+    },
+    {
+      "name": "text",
+      "label": "Text",
+      "input_type": {
+        "type": "text"
+      },
+      "required": false,
+      "bind": {
+        "selector": {
+          "class_type": "CLIPTextEncode",
+          "input_key": "text",
+          "title": "Clip Positive Prompt"
         }
       }
     }

@@ -15,15 +15,11 @@ use crate::core::generation::next_version_label;
 use crate::core::media::{resolve_asset_duration_seconds, spawn_asset_duration_probe, spawn_missing_duration_probes};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::core::provider_store::{
-    default_provider_entry,
     list_global_provider_files,
     load_global_provider_entries_or_empty,
-    provider_path_for_entry,
-    read_provider_file,
-    write_provider_file,
 };
 use crate::state::{
-    GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry, ProviderManifest,
+    GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry,
     ProviderOutputType,
 };
 use crate::providers::comfyui;
@@ -31,9 +27,9 @@ use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
 use crate::constants::*;
 use crate::components::{
-    GenerationQueuePanel, NewProjectModal, PreviewPanel, ProviderBuilderModal,
-    ProviderBuilderSaved, ProviderBuilderSeed, ProvidersModal, SidePanel, StartupModal, StatusBar,
-    StartupModalMode, TitleBar, TrackContextMenu,
+    GenerationQueuePanel, NewProjectModal, PreviewPanel,
+    ProviderBuilderModalV2, ProviderJsonEditorModal, ProvidersModalV2,
+    SidePanel, StartupModal, StatusBar, StartupModalMode, TitleBar, TrackContextMenu,
 };
 use crate::components::assets::AssetsPanelContent;
 use crate::components::attributes::AttributesPanelContent;
@@ -889,287 +885,37 @@ pub fn App() -> Element {
         }
     });
 
-    // Dialog state
+    //  Dialog state
     let mut show_new_project_dialog = use_signal(|| false); // Kept for "File > New" inside app
     let mut show_project_settings_dialog = use_signal(|| false);
-    let show_providers_dialog = use_signal(|| false);
-    let show_provider_builder = use_signal(|| false);
-    let builder_seed = use_signal(|| ProviderBuilderSeed::New);
+    
+    // V2 Provider modals
+    let mut show_providers_v2 = use_signal(|| false);
+    let mut show_json_editor = use_signal(|| false);
+    let mut show_builder_v2 = use_signal(|| false);
+    let mut edit_provider_path = use_signal(|| None::<std::path::PathBuf>);
+    let mut provider_files_v2 = use_signal(Vec::<std::path::PathBuf>::new);
+    
     let mut menu_open = use_signal(|| false); // Track if any dropdown menu is open
-    let provider_editor_path = use_signal(|| None::<std::path::PathBuf>);
-    let provider_editor_text = use_signal(String::new);
-    let provider_editor_error = use_signal(|| None::<String>);
-    let provider_editor_dirty = use_signal(|| false);
-    let provider_files = use_signal(|| Vec::<std::path::PathBuf>::new());
 
+    // Simple handler to open V2 providers modal
     let mut open_providers_dialog = {
-        let mut show_providers_dialog = show_providers_dialog.clone();
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
+        let mut show_providers_v2 = show_providers_v2.clone();
+        let mut provider_files_v2 = provider_files_v2.clone();
         move || {
-            provider_entries.set(load_global_provider_entries_or_empty());
-            let files = list_global_provider_files();
-            provider_files.set(files.clone());
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            provider_editor_path.set(None);
-            provider_editor_text.set(String::new());
-            show_providers_dialog.set(true);
+            println!("[DEBUG] Opening providers V2 modal");
+            provider_files_v2.set(list_global_provider_files());
+            show_providers_v2.set(true);
         }
     };
 
-    let on_provider_reload = {
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
-        move |_: MouseEvent| {
-            let files = list_global_provider_files();
-            provider_files.set(files.clone());
-            provider_entries.set(load_global_provider_entries_or_empty());
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            provider_editor_path.set(None);
-            provider_editor_text.set(String::new());
-        }
-    };
-
-    let on_provider_new = {
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
-        move |_: MouseEvent| {
-            let entry = default_provider_entry();
-            let json = serde_json::to_string_pretty(&entry).unwrap_or_else(|_| "{}".to_string());
-            let path = provider_path_for_entry(&entry);
-            if let Err(err) = write_provider_file(&path, &json) {
-                provider_editor_error.set(Some(format!("Failed to create provider: {}", err)));
-                return;
-            }
-            provider_editor_path.set(Some(path));
-            provider_editor_text.set(json);
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            provider_entries.set(load_global_provider_entries_or_empty());
-            provider_files.set(list_global_provider_files());
-        }
-    };
-
-    let on_provider_build = {
-        let mut show_provider_builder = show_provider_builder.clone();
-        let mut builder_seed = builder_seed.clone();
-        let provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let provider_editor_dirty = provider_editor_dirty.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        move |_: MouseEvent| {
-            let mut text = provider_editor_text();
-            let provider_path = provider_editor_path();
-            if !provider_editor_dirty() {
-                if let Some(path) = provider_path.as_ref() {
-                    match read_provider_file(path) {
-                        Some(contents) => {
-                            text = contents;
-                            provider_editor_text.set(text.clone());
-                        }
-                        None => {
-                            provider_editor_error.set(Some(format!(
-                                "Failed to read provider file: {}",
-                                path.display()
-                            )));
-                            return;
-                        }
-                    }
-                }
-            }
-
-            let entry: ProviderEntry = match serde_json::from_str(&text) {
-                Ok(entry) => entry,
-                Err(err) => {
-                    if provider_path.is_some() || !text.trim().is_empty() {
-                        provider_editor_error.set(Some(format!("Invalid JSON: {}", err)));
-                        return;
-                    }
-                    ProviderEntry::new(
-                        "New Provider",
-                        ProviderOutputType::Image,
-                        ProviderConnection::ComfyUi {
-                            base_url: "http://127.0.0.1:8188".to_string(),
-                            workflow_path: None,
-                            manifest_path: None,
-                        },
-                    )
-                }
-            };
-
-            let seed = if provider_path.is_some() || !text.trim().is_empty() {
-                let provider_path = provider_path.unwrap_or_else(|| provider_path_for_entry(&entry));
-
-                let (manifest_path, manifest, error) = match &entry.connection {
-                    ProviderConnection::ComfyUi {
-                        manifest_path,
-                        workflow_path,
-                        ..
-                    } => {
-                        let resolved_manifest_path = manifest_path
-                            .clone()
-                            .or_else(|| workflow_path.as_ref().and_then(|path| {
-                                derive_manifest_path_string(path)
-                            }));
-                        let manifest_path_buf = resolved_manifest_path
-                            .as_ref()
-                            .map(|path| std::path::PathBuf::from(path));
-                        let mut manifest_error = None;
-                        let mut manifest_value = None;
-                        if let Some(path) = resolved_manifest_path.as_deref() {
-                            let resolved = comfyui::resolve_manifest_path(Some(path));
-                            let resolved = match resolved {
-                                Some(path) => path,
-                                None => {
-                                    manifest_error =
-                                        Some("Unable to resolve manifest path.".to_string());
-                                    std::path::PathBuf::from(path)
-                                }
-                            };
-                            match std::fs::read_to_string(&resolved) {
-                                Ok(json) => match serde_json::from_str::<ProviderManifest>(&json)
-                                {
-                                    Ok(value) => {
-                                        manifest_value = Some(value);
-                                    }
-                                    Err(err) => {
-                                        manifest_error = Some(format!(
-                                            "Failed to parse manifest JSON: {}",
-                                            err
-                                        ));
-                                    }
-                                },
-                                Err(err) => {
-                                    manifest_error =
-                                        Some(format!("Failed to read manifest: {}", err));
-                                }
-                            }
-                        }
-                        (manifest_path_buf, manifest_value, manifest_error)
-                    }
-                    _ => {
-                        provider_editor_error.set(Some(
-                            "Provider Builder only supports ComfyUI providers.".to_string(),
-                        ));
-                        return;
-                    }
-                };
-
-                ProviderBuilderSeed::Edit {
-                    provider_path,
-                    provider_entry: entry,
-                    manifest_path,
-                    manifest,
-                    error,
-                }
-            } else {
-                ProviderBuilderSeed::New
-            };
-
-            builder_seed.set(seed);
-            show_provider_builder.set(true);
-        }
-    };
-
-    let on_provider_save = {
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
-        let provider_editor_text = provider_editor_text.clone();
-        move |_: MouseEvent| {
-            let text = provider_editor_text();
-            let entry: ProviderEntry = match serde_json::from_str(&text) {
-                Ok(entry) => entry,
-                Err(err) => {
-                    provider_editor_error.set(Some(format!("Invalid JSON: {}", err)));
-                    return;
-                }
-            };
-            let path = provider_editor_path().unwrap_or_else(|| provider_path_for_entry(&entry));
-            if let Err(err) = write_provider_file(&path, &text) {
-                provider_editor_error.set(Some(format!("Failed to save provider: {}", err)));
-                return;
-            }
-            provider_editor_path.set(Some(path));
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            provider_entries.set(load_global_provider_entries_or_empty());
-            provider_files.set(list_global_provider_files());
-        }
-    };
-
-    let on_provider_delete = {
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
-        move |_: MouseEvent| {
-            let Some(path) = provider_editor_path() else {
-                provider_editor_error.set(Some("No provider selected.".to_string()));
-                return;
-            };
-            if let Err(err) = std::fs::remove_file(&path) {
-                provider_editor_error.set(Some(format!("Failed to delete provider: {}", err)));
-                return;
-            }
-            provider_entries.set(load_global_provider_entries_or_empty());
-            let files = list_global_provider_files();
-            provider_files.set(files.clone());
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            if let Some(first) = files.first() {
-                provider_editor_path.set(Some(first.clone()));
-                provider_editor_text.set(read_provider_file(first).unwrap_or_default());
-            } else {
-                provider_editor_path.set(None);
-                provider_editor_text.set(String::new());
-            }
-        }
-    };
-
-    let on_builder_saved = {
-        let mut provider_entries = provider_entries.clone();
-        let mut provider_files = provider_files.clone();
-        let mut provider_editor_path = provider_editor_path.clone();
-        let mut provider_editor_text = provider_editor_text.clone();
-        let mut provider_editor_error = provider_editor_error.clone();
-        let mut provider_editor_dirty = provider_editor_dirty.clone();
-        let mut show_providers_dialog = show_providers_dialog.clone();
-        move |payload: ProviderBuilderSaved| {
-            provider_entries.set(load_global_provider_entries_or_empty());
-            let files = list_global_provider_files();
-            provider_files.set(files.clone());
-            provider_editor_path.set(Some(payload.provider_path.clone()));
-            provider_editor_text.set(read_provider_file(&payload.provider_path).unwrap_or_default());
-            provider_editor_error.set(None);
-            provider_editor_dirty.set(false);
-            show_providers_dialog.set(true);
-        }
-    };
-
+    // V2 Provider modal effects
     let desktop_for_modal_redraw = desktop.clone();
     let preview_gpu_for_modal = preview_gpu.clone();
     use_effect(move || {
-        let suspended = show_providers_dialog()
-            || show_provider_builder()
+        let suspended = show_providers_v2()
+            || show_json_editor()
+            || show_builder_v2()
             || show_new_project_dialog()
             || show_project_settings_dialog()
             || menu_open()
@@ -1198,20 +944,6 @@ pub fn App() -> Element {
     // We'll use specific "show_startup_modal" derived state
     
     let show_startup = project.read().project_path.is_none() && !startup_done();
-    let providers_root_label = crate::core::provider_store::global_providers_root()
-        .display()
-        .to_string();
-    let provider_save_label = if provider_editor_dirty() { "Save *" } else { "Save" };
-    let provider_build_label = if provider_editor_path().is_some() {
-        "Edit Build"
-    } else {
-        "New Build"
-    };
-    let provider_selected_label = provider_editor_path()
-        .as_ref()
-        .and_then(|path| path.file_name().and_then(|name| name.to_str()))
-        .unwrap_or("No provider")
-        .to_string();
 
     // Read current values
     let left_w = if left_collapsed() { PANEL_COLLAPSED_WIDTH } else { left_width() };
@@ -1884,28 +1616,56 @@ pub fn App() -> Element {
                 }
             }
 
-            ProvidersModal {
-                show: show_providers_dialog,
-                provider_files: provider_files,
-                provider_editor_path: provider_editor_path,
-                provider_editor_text: provider_editor_text,
-                provider_editor_error: provider_editor_error,
-                provider_editor_dirty: provider_editor_dirty,
-                providers_root_label: providers_root_label.clone(),
-                provider_save_label: provider_save_label.to_string(),
-                provider_build_label: provider_build_label.to_string(),
-                provider_selected_label: provider_selected_label.to_string(),
-                on_provider_new: on_provider_new,
-                on_provider_reload: on_provider_reload,
-                on_provider_build: on_provider_build,
-                on_provider_save: on_provider_save,
-                on_provider_delete: on_provider_delete,
+            // V2 Provider Modals
+            ProvidersModalV2 {
+                show: show_providers_v2,
+                provider_files: provider_files_v2,
+                on_new: move |_| {
+                    println!("[DEBUG] New provider clicked");
+                    edit_provider_path.set(None);
+                    show_builder_v2.set(true);
+                },
+                on_reload: move |_| {
+                    println!("[DEBUG] Reload clicked");
+                    provider_files_v2.set(list_global_provider_files());
+                },
+                on_delete: move |path| {
+                    println!("[DEBUG] Delete provider: {:?}", path);
+                    let _ = std::fs::remove_file(&path);
+                    provider_files_v2.set(list_global_provider_files());
+                },
+                on_edit_builder: move |path| {
+                    println!("[DEBUG] Edit in builder: {:?}", path);
+                    edit_provider_path.set(Some(path));
+                    show_builder_v2.set(true);
+                },
+                on_edit_json: move |path| {
+                    println!("[DEBUG] Edit as JSON: {:?}", path);
+                    edit_provider_path.set(Some(path));
+                    show_json_editor.set(true);
+                },
             }
 
-            ProviderBuilderModal {
-                show: show_provider_builder,
-                seed: builder_seed,
-                on_saved: on_builder_saved,
+            ProviderJsonEditorModal {
+                show: show_json_editor,
+                provider_path: edit_provider_path,
+                on_saved: move |_| {
+                    println!("[DEBUG] JSON editor saved");
+                    show_json_editor.set(false);
+                    provider_files_v2.set(list_global_provider_files());
+                    provider_entries.set(load_global_provider_entries_or_empty());
+                },
+            }
+
+            ProviderBuilderModalV2 {
+                show: show_builder_v2,
+                provider_path: edit_provider_path,
+                on_saved: move |_| {
+                    println!("[DEBUG] Builder saved");
+                    show_builder_v2.set(false);
+                    provider_files_v2.set(list_global_provider_files());
+                    provider_entries.set(load_global_provider_entries_or_empty());
+                },
             }
         }
     }

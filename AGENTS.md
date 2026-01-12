@@ -56,6 +56,68 @@ src/
 - Don't make sweeping changes without check-ins
 - When making UI changes, describe what was changed so user knows what to look for when they build
 
+## Debugging Strategy
+
+### When to Pivot to Log-Driven Debugging
+
+**Rule of thumb:** If you hit the same wall 2-3 times on a persistent bug, immediately pivot to a log-driven approach.
+
+#### The Problem with Pure Code Analysis
+When debugging complex state flows or asynchronous behavior, static code analysis often fails because:
+- Signal/state updates may have timing issues
+- Event propagation can be non-obvious
+- Initialization order matters in ways not visible in code
+- Effects may run (or not run) in unexpected ways
+
+#### The Log-Driven Approach
+
+1. **Add Comprehensive Logging**
+   - Instrument every step of the suspected flow with `println!` debug statements
+   - Log at entry/exit of functions, closures, and effect hooks
+   - Log all relevant signal values (before and after updates)
+   - Log decision points (if/else branches, match arms)
+   - Be generous with logging—wall-of-text is fine
+
+2. **Use the Human as the Executor**
+   - Explicitly ask the user to:
+     1. Run the app
+     2. Execute the specific repro steps
+     3. Copy the ENTIRE console output
+     4. Paste it back to you
+   - This leverages the human's ability to actually execute code in the real environment
+
+3. **Analyze the Logs**
+   - The logs will reveal:
+     - Which code paths actually executed
+     - What order things happened in
+     - What the actual signal values were at each step
+     - Where the flow diverged from expectations
+   - This often leads to immediate "aha!" moments
+
+4. **Example Pattern**
+   ```rust
+   println!("[DEBUG] FunctionName called");
+   println!("[DEBUG]   param1: {:?}", param1);
+   println!("[DEBUG]   signal_value: {:?}", my_signal());
+   
+   if condition {
+       println!("[DEBUG]   Taking branch A");
+       // ...
+   } else {
+       println!("[DEBUG]   Taking branch B");
+       // ...
+   }
+   
+   println!("[DEBUG]   FunctionName completed");
+   ```
+
+5. **Clean Up After**
+   - Once bug is fixed and verified, remove or comment out debug logs
+   - Or leave strategic ones if they might help future debugging
+   - Update PROJECT.md with the root cause and fix
+
+**This approach saved hours on the Provider Builder re-initialization bug—logs immediately revealed that the `initialized` flag was blocking seed processing on the second modal open.**
+
 ## Documentation
 
 **IMPORTANT: Always update PROJECT.md after making changes/progress.** This includes:
