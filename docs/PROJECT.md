@@ -676,6 +676,7 @@ This allows:
 | UI fluidity is non-negotiable | Hover effects, smooth transitions, polished feel from day one | ✅ Decided |
 | Dioxus 0.7 (latest) | Hot-patching support, better signals, performance improvements | ✅ Decided |
 | Transitions disabled during drag | Instant resize feedback; transitions only for collapse/expand | ✅ Decided |
+| Stable uncontrolled inputs for text/number/textarea | Prevent Dioxus Desktop cursor jumps by avoiding value binding | ✅ Decided |
 | App-local Timeline State (Temp) | Kept state simple in app.rs until data model requirements mature | ✅ Decided |
 | Scroll-synced Track Labels | CSS sticky positioning for rock-solid sync vs JS event listeners | ✅ Decided |
 | Draggable Playhead | Real-time updating during drag for immediate feedback | ✅ Decided |
@@ -806,6 +807,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-11:** Fixed StableTextArea handler type inference and cleaned up unused v1 component re-exports/variables after the cursor-safe input refactor.
+- **2026-01-11:** Refactored remaining text/number/textarea inputs to use Stable* cursor-safe components and extended Stable* inputs with blur/focus/keydown hooks plus optional rows/autofocus.
 - **2026-01-09:** Provider Build now flushes the JSON editor draft into app state before opening the builder (prevents empty/new mode when text is visible).
 - **2026-01-09:** Provider Builder uses editor JSON as a fallback to enter edit mode when selection path is missing.
 - **2026-01-09:** Provider Builder now reads the selected provider file from disk when opening (avoids stale/empty editor state).
@@ -998,5 +1001,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-09*
+*Last updated: 2026-01-11*
 

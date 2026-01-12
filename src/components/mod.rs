@@ -22,8 +22,6 @@ pub use title_bar::TitleBar;
 pub use side_panel::SidePanel;
 pub use status_bar::StatusBar;
 pub use preview_panel::PreviewPanel;
-pub use providers_modal::ProvidersModal;
-pub use provider_builder_modal::{ProviderBuilderModal, ProviderBuilderSaved, ProviderBuilderSeed};
 pub use providers_modal_v2::ProvidersModalV2;
 pub use provider_json_editor_modal::ProviderJsonEditorModal;
 pub use provider_builder_modal_v2::ProviderBuilderModalV2;

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use crate::components::common::{StableNumberInput, StableTextArea, StableTextInput};
 use crate::constants::*;
 use crate::utils::{parse_f32_input, parse_f64_input, parse_i64_input};
 
@@ -56,26 +57,34 @@ pub fn NumericField(
     };
 
     let text_value = text();
+    let input_id = format!("numeric-field-{}", label.replace(' ', "-"));
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            input {
-                r#type: "number",
-                step: "{step}",
-                value: "{text_value}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    user-select: text;
-                ",
-                oninput: move |e| text.set(e.value()),
-                onblur: on_blur,
-                onkeydown: on_keydown,
+            StableNumberInput {
+                id: input_id,
+                value: text_value,
+                placeholder: None,
+                style: Some(input_style),
+                min: clamp_min.map(|v| v.to_string()),
+                max: clamp_max.map(|v| v.to_string()),
+                step: Some(step.to_string()),
+                on_change: move |v| text.set(v),
+                on_blur: on_blur,
+                on_keydown: on_keydown,
             }
         }
     }
@@ -111,29 +120,37 @@ pub fn ProviderTextField(
 
     let mut commit_on_blur = make_commit();
     let mut commit_on_key = make_commit();
+    let input_id = format!("provider-text-field-{}", label.replace(' ', "-").to_lowercase());
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
+    let text_value = text();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            input {
-                r#type: "text",
-                value: "{text()}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    user-select: text;
-                ",
-                oninput: move |e| text.set(e.value()),
-                onblur: move |_| commit_on_blur(),
-                onkeydown: move |e: KeyboardEvent| {
+            StableTextInput {
+                id: input_id,
+                value: text_value,
+                placeholder: None,
+                style: Some(input_style),
+                on_change: move |v| text.set(v),
+                on_blur: move |_| commit_on_blur(),
+                on_keydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Enter {
                         commit_on_key();
                     }
                 },
+                autofocus: false,
             }
         }
     }
@@ -171,29 +188,37 @@ pub fn ProviderTextAreaField(
     let draft_oninput = draft.clone();
     let draft_onblur = draft.clone();
     let draft_dirty_oninput = draft_dirty.clone();
+    let input_id = format!("provider-text-area-field-{}", label.replace(' ', "-").to_lowercase());
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px; line-height: 1.4;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            resize: vertical;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
+    let draft_value = draft.borrow().clone();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            textarea {
-                rows: "{rows}",
-                value: "{draft.borrow().clone()}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px; line-height: 1.4;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    resize: vertical;
-                    user-select: text;
-                ",
-                oninput: move |e| {
-                    *draft_oninput.borrow_mut() = e.value();
+            StableTextArea {
+                id: input_id,
+                value: draft_value,
+                placeholder: None,
+                style: Some(input_style),
+                rows: Some(rows),
+                on_change: move |v| {
+                    *draft_oninput.borrow_mut() = v;
                     draft_dirty_oninput.set(true);
                 },
-                onfocus: move |_| is_focused.set(true),
-                onblur: move |_| {
+                on_focus: move |_| is_focused.set(true),
+                on_blur: move |_| {
                     is_focused.set(false);
                     on_commit.call(draft_onblur.borrow().clone());
                 },
@@ -234,26 +259,35 @@ pub fn ProviderFloatField(
 
     let mut commit_on_blur = make_commit();
     let mut commit_on_key = make_commit();
+    let input_id = format!("provider-float-field-{}", label.replace(' ', "-").to_lowercase());
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
+    let text_value = text();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            input {
-                r#type: "number",
-                step: "{step}",
-                value: "{text()}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    user-select: text;
-                ",
-                oninput: move |e| text.set(e.value()),
-                onblur: move |_| commit_on_blur(),
-                onkeydown: move |e: KeyboardEvent| {
+            StableNumberInput {
+                id: input_id,
+                value: text_value,
+                placeholder: None,
+                style: Some(input_style),
+                min: None,
+                max: None,
+                step: Some(step.to_string()),
+                on_change: move |v| text.set(v),
+                on_blur: move |_| commit_on_blur(),
+                on_keydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Enter {
                         commit_on_key();
                     }
@@ -294,26 +328,35 @@ pub fn ProviderIntegerField(
 
     let mut commit_on_blur = make_commit();
     let mut commit_on_key = make_commit();
+    let input_id = format!("provider-integer-field-{}", label.replace(' ', "-").to_lowercase());
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
+    let text_value = text();
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
             span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
-            input {
-                r#type: "number",
-                step: "1",
-                value: "{text()}",
-                style: "
-                    width: 100%; min-width: 0; box-sizing: border-box;
-                    padding: 6px 8px; font-size: 12px;
-                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                    border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
-                    outline: none;
-                    user-select: text;
-                ",
-                oninput: move |e| text.set(e.value()),
-                onblur: move |_| commit_on_blur(),
-                onkeydown: move |e: KeyboardEvent| {
+            StableNumberInput {
+                id: input_id,
+                value: text_value,
+                placeholder: None,
+                style: Some(input_style),
+                min: None,
+                max: None,
+                step: Some("1".to_string()),
+                on_change: move |v| text.set(v),
+                on_blur: move |_| commit_on_blur(),
+                on_keydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Enter {
                         commit_on_key();
                     }

@@ -426,25 +426,6 @@ pub fn ProviderBuilderModalV2(
             .find(|node| node.id == id)
     });
 
-    let file_name = provider_path()
-        .and_then(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| "new_provider.json".to_string());
-    
-    let mode_label = if provider_path().is_some() {
-        "Mode: Edit"
-    } else {
-        "Mode: New"
-    };
-    
-    let workflow_label = workflow_path()
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "No workflow selected".to_string());
-
     // UI helper values
     let inputs_active = builder_mode() == BuilderMode::Inputs;
     let input_tab_bg = if inputs_active { BG_HOVER } else { BG_SURFACE };
@@ -657,6 +638,9 @@ pub fn ProviderBuilderModalV2(
                                         outline: none;
                                     ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
                                     on_change: move |v: String| workflow_search.set(v),
+                                    on_blur: move |_| {},
+                                    on_keydown: move |_| {},
+                                    autofocus: false,
                                 }
                                 div {
                                     style: "
@@ -825,6 +809,9 @@ pub fn ProviderBuilderModalV2(
                                                 border: 1px solid {}; border-radius: 6px;
                                             ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
                                             on_change: move |v: String| provider_name.set(v),
+                                            on_blur: move |_| {},
+                                            on_keydown: move |_| {},
+                                            autofocus: false,
                                         }
                                         select {
                                             value: "{output_type_key(output_type())}",
@@ -849,6 +836,9 @@ pub fn ProviderBuilderModalV2(
                                             border: 1px solid {}; border-radius: 6px;
                                         ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
                                         on_change: move |v: String| base_url.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
+                                        autofocus: false,
                                     }
                                 }
 
@@ -882,36 +872,42 @@ pub fn ProviderBuilderModalV2(
                                                                     id: format!("input-name-{}", index),
                                                                     value: input.name.clone(),
                                                                     placeholder: Some("name".to_string()),
-                                                                    style: Some(format!("
-                                                                        flex: 1; padding: 4px 6px; font-size: 11px;
-                                                                        background-color: {}; color: {};
-                                                                        border: 1px solid {}; border-radius: 4px;
-                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
-                                                                    on_change: move |v: String| {
-                                                                        let mut next = exposed_inputs_clone();
-                                                                        if let Some(target) = next.get_mut(index) {
-                                                                            target.name = v;
-                                                                        }
-                                                                        exposed_inputs_clone.set(next);
-                                                                    },
-                                                                }
+                                                                style: Some(format!("
+                                                                    flex: 1; padding: 4px 6px; font-size: 11px;
+                                                                    background-color: {}; color: {};
+                                                                    border: 1px solid {}; border-radius: 4px;
+                                                                ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                on_change: move |v: String| {
+                                                                    let mut next = exposed_inputs_clone();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.name = v;
+                                                                    }
+                                                                    exposed_inputs_clone.set(next);
+                                                                },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
+                                                            }
                                                                 crate::components::common::StableTextInput {
                                                                     id: format!("input-label-{}", index),
                                                                     value: input.label.clone(),
                                                                     placeholder: Some("label".to_string()),
-                                                                    style: Some(format!("
-                                                                        flex: 1; padding: 4px 6px; font-size: 11px;
-                                                                        background-color: {}; color: {};
-                                                                        border: 1px solid {}; border-radius: 4px;
-                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
-                                                                    on_change: move |v: String| {
-                                                                        let mut next = exposed_inputs();
-                                                                        if let Some(target) = next.get_mut(index) {
-                                                                            target.label = v;
-                                                                        }
-                                                                        exposed_inputs.set(next);
-                                                                    },
-                                                                }
+                                                                style: Some(format!("
+                                                                    flex: 1; padding: 4px 6px; font-size: 11px;
+                                                                    background-color: {}; color: {};
+                                                                    border: 1px solid {}; border-radius: 4px;
+                                                                ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                on_change: move |v: String| {
+                                                                    let mut next = exposed_inputs();
+                                                                    if let Some(target) = next.get_mut(index) {
+                                                                        target.label = v;
+                                                                    }
+                                                                    exposed_inputs.set(next);
+                                                                },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
+                                                            }
                                                                 button {
                                                                     class: "collapse-btn",
                                                                     style: "
@@ -958,6 +954,9 @@ pub fn ProviderBuilderModalV2(
                                                     border: 1px solid {}; border-radius: 6px;
                                                 ", BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT)),
                                                 on_change: move |v: String| output_key.set(v),
+                                                on_blur: move |_| {},
+                                                on_keydown: move |_| {},
+                                                autofocus: false,
                                             }
                                         } else {
                                             div { style: "font-size: 11px; color: {TEXT_DIM};", "Select a node and click 'Use as Output'." }

@@ -890,7 +890,7 @@ pub fn App() -> Element {
     let mut show_project_settings_dialog = use_signal(|| false);
     
     // V2 Provider modals
-    let mut show_providers_v2 = use_signal(|| false);
+    let show_providers_v2 = use_signal(|| false);
     let mut show_json_editor = use_signal(|| false);
     let mut show_builder_v2 = use_signal(|| false);
     let mut edit_provider_path = use_signal(|| None::<std::path::PathBuf>);

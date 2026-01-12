@@ -15,21 +15,25 @@ pub fn StableTextInput(
     placeholder: Option<String>,
     style: Option<String>,
     on_change: EventHandler<String>,
+    on_blur: EventHandler<FocusEvent>,
+    on_keydown: EventHandler<KeyboardEvent>,
+    autofocus: bool,
 ) -> Element {
-    // Track the last external value we received
-    let mut last_external_value = use_signal(|| value.clone());
+    // Track the last prop value we received
+    let mut last_prop_value = use_signal(|| value.clone());
     // Generation key - increment to force DOM element recreation
     let mut key_gen = use_signal(|| 0u32);
     // Internal text state (for tracking, not for binding)
     let mut text = use_signal(|| value.clone());
     
     // Detect external value changes (not from typing)
-    let needs_recreation = value != last_external_value() && value != text();
-    if needs_recreation {
-        // External value changed - update state and force element recreation
-        text.set(value.clone());
-        last_external_value.set(value.clone());
-        key_gen.set(key_gen() + 1);
+    if value != last_prop_value() {
+        if value != text() {
+            // External value changed - update state and force element recreation
+            text.set(value.clone());
+            key_gen.set(key_gen() + 1);
+        }
+        last_prop_value.set(value.clone());
     }
     
     let default_style = "
@@ -45,6 +49,7 @@ pub fn StableTextInput(
     let current_key = key_gen();
     let initial_value = text();
     let id_for_mount = id.clone();
+    let focus_on_mount = autofocus;
 
     rsx! {
         input {
@@ -57,19 +62,26 @@ pub fn StableTextInput(
             style: "{final_style}",
             // Set initial value via JS when mounted
             onmounted: move |_| {
-                let js = format!(
+                let mut js = format!(
                     r#"document.getElementById('{}').value = '{}';"#,
                     id_for_mount,
                     initial_value.replace("'", "\\'").replace("\n", "\\n")
                 );
+                if focus_on_mount {
+                    js.push_str(&format!(
+                        r#"document.getElementById('{}').focus();"#,
+                        id_for_mount
+                    ));
+                }
                 let _ = document::eval(&js);
             },
             oninput: move |e| {
                 let new_val = e.value();
                 text.set(new_val.clone());
-                last_external_value.set(new_val.clone());
                 on_change.call(new_val);
             },
+            onblur: move |e| on_blur.call(e),
+            onkeydown: move |e| on_keydown.call(e),
         }
     }
 }
@@ -81,18 +93,22 @@ pub fn StableTextArea(
     value: String,
     placeholder: Option<String>,
     style: Option<String>,
+    rows: Option<u32>,
     on_change: EventHandler<String>,
+    on_focus: EventHandler<FocusEvent>,
+    on_blur: EventHandler<FocusEvent>,
 ) -> Element {
-    let mut last_external_value = use_signal(|| value.clone());
+    let mut last_prop_value = use_signal(|| value.clone());
     let mut key_gen = use_signal(|| 0u32);
     let mut text = use_signal(|| value.clone());
     
     // Detect external value changes
-    let needs_recreation = value != last_external_value() && value != text();
-    if needs_recreation {
-        text.set(value.clone());
-        last_external_value.set(value.clone());
-        key_gen.set(key_gen() + 1);
+    if value != last_prop_value() {
+        if value != text() {
+            text.set(value.clone());
+            key_gen.set(key_gen() + 1);
+        }
+        last_prop_value.set(value.clone());
     }
     
     let default_style = "
@@ -110,28 +126,58 @@ pub fn StableTextArea(
     let initial_value = text();
     let id_for_mount = id.clone();
 
-    rsx! {
-        textarea {
-            key: "{current_key}",
-            id: "{id}",
-            // NO value binding - browser manages this
-            placeholder: "{placeholder_text}",
-            style: "{final_style}",
-            // Set initial value via JS when mounted
-            onmounted: move |_| {
-                let js = format!(
-                    r#"document.getElementById('{}').value = {};"#,
-                    id_for_mount,
-                    serde_json::to_string(&initial_value).unwrap_or_else(|_| "''".to_string())
-                );
-                let _ = document::eval(&js);
-            },
-            oninput: move |e| {
-                let new_val = e.value();
-                text.set(new_val.clone());
-                last_external_value.set(new_val.clone());
-                on_change.call(new_val);
-            },
+    if let Some(rows_value) = rows {
+        rsx! {
+            textarea {
+                key: "{current_key}",
+                id: "{id}",
+                rows: "{rows_value}",
+                // NO value binding - browser manages this
+                placeholder: "{placeholder_text}",
+                style: "{final_style}",
+                // Set initial value via JS when mounted
+                onmounted: move |_| {
+                    let js = format!(
+                        r#"document.getElementById('{}').value = {};"#,
+                        id_for_mount,
+                        serde_json::to_string(&initial_value).unwrap_or_else(|_| "''".to_string())
+                    );
+                    let _ = document::eval(&js);
+                },
+                oninput: move |e| {
+                    let new_val = e.value();
+                    text.set(new_val.clone());
+                    on_change.call(new_val);
+                },
+                onfocus: move |e| on_focus.call(e),
+                onblur: move |e| on_blur.call(e),
+            }
+        }
+    } else {
+        rsx! {
+            textarea {
+                key: "{current_key}",
+                id: "{id}",
+                // NO value binding - browser manages this
+                placeholder: "{placeholder_text}",
+                style: "{final_style}",
+                // Set initial value via JS when mounted
+                onmounted: move |_| {
+                    let js = format!(
+                        r#"document.getElementById('{}').value = {};"#,
+                        id_for_mount,
+                        serde_json::to_string(&initial_value).unwrap_or_else(|_| "''".to_string())
+                    );
+                    let _ = document::eval(&js);
+                },
+                oninput: move |e| {
+                    let new_val = e.value();
+                    text.set(new_val.clone());
+                    on_change.call(new_val);
+                },
+                onfocus: move |e| on_focus.call(e),
+                onblur: move |e| on_blur.call(e),
+            }
         }
     }
 }
@@ -148,17 +194,20 @@ pub fn StableNumberInput(
     max: Option<String>,
     step: Option<String>,
     on_change: EventHandler<String>,
+    on_blur: EventHandler<FocusEvent>,
+    on_keydown: EventHandler<KeyboardEvent>,
 ) -> Element {
-    let mut last_external_value = use_signal(|| value.clone());
+    let mut last_prop_value = use_signal(|| value.clone());
     let mut key_gen = use_signal(|| 0u32);
     let mut text = use_signal(|| value.clone());
     
     // Detect external value changes (not from typing)
-    let needs_recreation = value != last_external_value() && value != text();
-    if needs_recreation {
-        text.set(value.clone());
-        last_external_value.set(value.clone());
-        key_gen.set(key_gen() + 1);
+    if value != last_prop_value() {
+        if value != text() {
+            text.set(value.clone());
+            key_gen.set(key_gen() + 1);
+        }
+        last_prop_value.set(value.clone());
     }
     
     let default_style = "
@@ -201,9 +250,10 @@ pub fn StableNumberInput(
             oninput: move |e| {
                 let new_val = e.value();
                 text.set(new_val.clone());
-                last_external_value.set(new_val.clone());
                 on_change.call(new_val);
             },
+            onblur: move |e| on_blur.call(e),
+            onkeydown: move |e| on_keydown.call(e),
         }
     }
 }

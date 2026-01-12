@@ -14,11 +14,10 @@ pub fn ProviderJsonEditorModal(
     let mut json_text = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut loaded_path = use_signal(|| None::<PathBuf>); // Track what we loaded
-    let mut initial_load_done = use_signal(|| false); // Track if we did initial load
     
     // Load from file DIRECTLY - no use_effect!
     // When modal opens with a path different from what we loaded, load it now.
-    let should_set_initial = if show() {
+    if show() {
         let current_path = provider_path();
         let already_loaded = loaded_path();
         
@@ -40,30 +39,19 @@ pub fn ProviderJsonEditorModal(
                     error.set(Some(format!("Failed to read: {}", path.display())));
                 }
                 loaded_path.set(Some(path.clone()));
-                initial_load_done.set(true);
-                true // We just loaded, need to set initial value
             } else {
                 // No path = clear for new
                 json_text.set(String::new());
                 error.set(None);
                 loaded_path.set(None);
-                initial_load_done.set(true);
-                true
             }
-        } else {
-            false
         }
     } else {
         // When hidden, reset so we reload next time
         if loaded_path().is_some() {
             loaded_path.set(None);
-            initial_load_done.set(false);
         }
-        false
-    };
-    
-    // Use different value binding depending on whether we just loaded
-    let current_value = json_text();
+    }
     
     let save_handler = move |_| async move {
         let Some(path) = provider_path() else {
@@ -192,7 +180,10 @@ pub fn ProviderJsonEditorModal(
                                 white-space: pre;
                                 user-select: text;
                             ", BG_SURFACE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                            rows: None,
                             on_change: move |v: String| json_text.set(v),
+                            on_focus: move |_| {},
+                            on_blur: move |_| {},
                         }
                         
                         // Save button

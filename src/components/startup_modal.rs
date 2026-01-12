@@ -214,6 +214,9 @@ pub fn StartupModal(
                                         user-select: text;
                                     ")),
                                     on_change: move |new_value: String| name.set(new_value),
+                                    on_blur: move |_| {},
+                                    on_keydown: move |_| {},
+                                    autofocus: false,
                                 }
                             }
 
@@ -335,6 +338,8 @@ pub fn StartupModal(
                                         max: None,
                                         step: Some("1".to_string()),
                                         on_change: move |v: String| width.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
                                     }
                                     span { 
                                         style: "color: {TEXT_DIM}; font-size: 12px; font-weight: 500;", 
@@ -355,6 +360,8 @@ pub fn StartupModal(
                                         max: None,
                                         step: Some("1".to_string()),
                                         on_change: move |v: String| height.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
                                     }
                                 }
                             }
@@ -414,6 +421,8 @@ pub fn StartupModal(
                                         max: None,
                                         step: Some("1".to_string()),
                                         on_change: move |v: String| preview_max_width.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
                                     }
                                     span {
                                         style: "color: {TEXT_DIM}; font-size: 12px; font-weight: 500;",
@@ -434,6 +443,8 @@ pub fn StartupModal(
                                         max: None,
                                         step: Some("1".to_string()),
                                         on_change: move |v: String| preview_max_height.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
                                     }
                                 }
                             }
@@ -468,6 +479,8 @@ pub fn StartupModal(
                                             max: None,
                                             step: Some("1".to_string()),
                                             on_change: move |v: String| fps.set(v),
+                                            on_blur: move |_| {},
+                                            on_keydown: move |_| {},
                                         }
                                         span {
                                             style: "
@@ -505,6 +518,8 @@ pub fn StartupModal(
                                             max: None,
                                             step: Some("1".to_string()),
                                             on_change: move |v: String| duration.set(v),
+                                            on_blur: move |_| {},
+                                            on_keydown: move |_| {},
                                         }
                                         span {
                                             style: "

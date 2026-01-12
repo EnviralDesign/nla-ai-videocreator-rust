@@ -288,30 +288,32 @@ pub fn ProvidersModal(
                             let editor_dirty = editor_dirty.clone();
                             let editor_draft_oninput = editor_draft.clone();
                             rsx! {
-                        textarea {
-                            style: "
+                        crate::components::common::StableTextArea {
+                            id: "providers-modal-editor".to_string(),
+                            value: editor_draft.borrow().clone(),
+                            placeholder: None,
+                            style: Some(format!("
                                 flex: 1; width: 100%;
-                                background-color: {BG_SURFACE};
-                                border: 1px solid {BORDER_DEFAULT};
+                                background-color: {};
+                                border: 1px solid {};
                                 border-radius: 6px;
-                                color: {TEXT_PRIMARY};
+                                color: {};
                                 font-family: 'SF Mono', Consolas, monospace;
                                 font-size: 11px; line-height: 1.5;
                                 padding: 10px; resize: none;
                                 white-space: pre;
                                 user-select: text;
-                            ",
-                            value: "{editor_draft.borrow().clone()}",
-                            oninput: move |e| {
-                                let next = e.value();
-                                *editor_draft_oninput.borrow_mut() = next.clone();
+                            ", BG_SURFACE, BORDER_DEFAULT, TEXT_PRIMARY)),
+                            rows: None,
+                            on_change: move |v: String| {
+                                *editor_draft_oninput.borrow_mut() = v.clone();
                                 editor_dirty.set(true);
-                                provider_editor_text.set(next);
+                                provider_editor_text.set(v);
                                 provider_editor_dirty.set(true);
                                 provider_editor_error.set(None);
                             },
-                            onfocus: move |_| editor_focused.set(true),
-                            onblur: move |_| editor_focused.set(false),
+                            on_focus: move |_| editor_focused.set(true),
+                            on_blur: move |_| editor_focused.set(false),
                         }
                             }
                         }

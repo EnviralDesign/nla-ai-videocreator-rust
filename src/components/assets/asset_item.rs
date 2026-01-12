@@ -122,43 +122,30 @@ pub fn AssetItem(
                 }
                 // Name
                 if is_editing() {
-                    input {
-                        r#type: "text",
-                        value: "{draft_name()}",
-                        autofocus: "true",
-                        style: "
-                            flex: 1; min-width: 0;
-                            font-size: 12px; color: {TEXT_PRIMARY};
-                            background-color: {BG_BASE};
-                            border: 1px solid {BORDER_DEFAULT};
-                            border-radius: 4px;
-                            padding: 4px 6px;
-                        ",
-                        oninput: move |e| draft_name.set(e.value()),
-                        onblur: {
-                            let asset_name = asset_name.clone();
-                            let on_rename = on_rename.clone();
-                            let asset_id = asset_id;
-                            let mut is_editing = is_editing.clone();
-                            let mut draft_name = draft_name.clone();
-                            move |_| {
-                                let next = draft_name().trim().to_string();
-                                is_editing.set(false);
-                                if !next.is_empty() && next != asset_name {
-                                    on_rename.call((asset_id, next));
-                                } else {
-                                    draft_name.set(asset_name.clone());
-                                }
-                            }
-                        },
-                        onkeydown: {
-                            let asset_name = asset_name.clone();
-                            let on_rename = on_rename.clone();
-                            let asset_id = asset_id;
-                            let mut is_editing = is_editing.clone();
-                            let mut draft_name = draft_name.clone();
-                            move |e: KeyboardEvent| {
-                                if e.key() == Key::Enter {
+                    div {
+                        style: "flex: 1; min-width: 0;",
+                        onmousedown: move |e| e.stop_propagation(),
+                        oncontextmenu: move |e| e.stop_propagation(),
+                        crate::components::common::StableTextInput {
+                            id: format!("asset-rename-{}", asset_id),
+                            value: draft_name(),
+                            placeholder: None,
+                            style: Some(format!("
+                                width: 100%;
+                                font-size: 12px; color: {};
+                                background-color: {};
+                                border: 1px solid {};
+                                border-radius: 4px;
+                                padding: 4px 6px;
+                            ", TEXT_PRIMARY, BG_BASE, BORDER_DEFAULT)),
+                            on_change: move |v| draft_name.set(v),
+                            on_blur: {
+                                let asset_name = asset_name.clone();
+                                let on_rename = on_rename.clone();
+                                let asset_id = asset_id;
+                                let mut is_editing = is_editing.clone();
+                                let mut draft_name = draft_name.clone();
+                                move |_| {
                                     let next = draft_name().trim().to_string();
                                     is_editing.set(false);
                                     if !next.is_empty() && next != asset_name {
@@ -166,14 +153,31 @@ pub fn AssetItem(
                                     } else {
                                         draft_name.set(asset_name.clone());
                                     }
-                                } else if e.key() == Key::Escape {
-                                    is_editing.set(false);
-                                    draft_name.set(asset_name.clone());
                                 }
-                            }
-                        },
-                        onmousedown: move |e| e.stop_propagation(),
-                        oncontextmenu: move |e| e.stop_propagation(),
+                            },
+                            on_keydown: {
+                                let asset_name = asset_name.clone();
+                                let on_rename = on_rename.clone();
+                                let asset_id = asset_id;
+                                let mut is_editing = is_editing.clone();
+                                let mut draft_name = draft_name.clone();
+                                move |e: KeyboardEvent| {
+                                    if e.key() == Key::Enter {
+                                        let next = draft_name().trim().to_string();
+                                        is_editing.set(false);
+                                        if !next.is_empty() && next != asset_name {
+                                            on_rename.call((asset_id, next));
+                                        } else {
+                                            draft_name.set(asset_name.clone());
+                                        }
+                                    } else if e.key() == Key::Escape {
+                                        is_editing.set(false);
+                                        draft_name.set(asset_name.clone());
+                                    }
+                                }
+                            },
+                            autofocus: true,
+                        }
                     }
                 } else {
                     span { 

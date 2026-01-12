@@ -753,16 +753,23 @@ pub fn ProviderBuilderModal(
                                 background-color: {BG_BASE};
                                 display: flex; flex-direction: column; gap: 8px;
                             ",
-                            input {
-                                style: "
-                                    width: 100%; padding: 6px 8px; font-size: 11px;
-                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                    outline: none;
-                                ",
-                                value: "{workflow_search()}",
-                                placeholder: "Search nodes or inputs...",
-                                oninput: move |e| workflow_search.set(e.value()),
+                            crate::components::common::StableTextInput {
+                                id: "provider-builder-workflow-search".to_string(),
+                                value: workflow_search(),
+                                placeholder: Some("Search nodes or inputs...".to_string()),
+                                style: Some(format!(
+                                    "
+                                        width: 100%; padding: 6px 8px; font-size: 11px;
+                                        background-color: {}; color: {};
+                                        border: 1px solid {}; border-radius: 6px;
+                                        outline: none;
+                                    ",
+                                    BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+                                )),
+                                on_change: move |v| workflow_search.set(v),
+                                on_blur: move |_| {},
+                                on_keydown: move |_| {},
+                                autofocus: false,
                             }
                             div {
                                 style: "
@@ -921,15 +928,22 @@ pub fn ProviderBuilderModal(
                                 div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Provider Settings" }
                                 div {
                                     style: "display: flex; gap: 8px;",
-                                    input {
-                                        style: "
-                                            flex: 1; padding: 6px 8px; font-size: 11px;
-                                            background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                        ",
-                                        value: "{provider_name()}",
-                                        placeholder: "Provider name",
-                                        oninput: move |e| provider_name.set(e.value()),
+                                    crate::components::common::StableTextInput {
+                                        id: "provider-builder-provider-name".to_string(),
+                                        value: provider_name(),
+                                        placeholder: Some("Provider name".to_string()),
+                                        style: Some(format!(
+                                            "
+                                                flex: 1; padding: 6px 8px; font-size: 11px;
+                                                background-color: {}; color: {};
+                                                border: 1px solid {}; border-radius: 6px;
+                                            ",
+                                            BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT
+                                        )),
+                                        on_change: move |v| provider_name.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
+                                        autofocus: false,
                                     }
                                     select {
                                         value: "{output_type_key(output_type())}",
@@ -944,15 +958,22 @@ pub fn ProviderBuilderModal(
                                         option { value: "audio", "Audio" }
                                     }
                                 }
-                                input {
-                                    style: "
-                                        width: 100%; padding: 6px 8px; font-size: 11px;
-                                        background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                    ",
-                                    value: "{base_url()}",
-                                    placeholder: "ComfyUI base URL (http://127.0.0.1:8188)",
-                                    oninput: move |e| base_url.set(e.value()),
+                                crate::components::common::StableTextInput {
+                                    id: "provider-builder-base-url".to_string(),
+                                    value: base_url(),
+                                    placeholder: Some("ComfyUI base URL (http://127.0.0.1:8188)".to_string()),
+                                    style: Some(format!(
+                                        "
+                                            width: 100%; padding: 6px 8px; font-size: 11px;
+                                            background-color: {}; color: {};
+                                            border: 1px solid {}; border-radius: 6px;
+                                        ",
+                                        BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT
+                                    )),
+                                    on_change: move |v| base_url.set(v),
+                                    on_blur: move |_| {},
+                                    on_keydown: move |_| {},
+                                    autofocus: false,
                                 }
                             }
 
@@ -981,37 +1002,51 @@ pub fn ProviderBuilderModal(
                                                         ",
                                                         div {
                                                             style: "display: flex; gap: 6px;",
-                                                            input {
-                                                                style: "
-                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                                ",
-                                                                value: "{input.name}",
-                                                                placeholder: "name",
-                                                                oninput: move |e| {
+                                                            crate::components::common::StableTextInput {
+                                                                id: format!("provider-builder-input-name-{}", index),
+                                                                value: input.name.clone(),
+                                                                placeholder: Some("name".to_string()),
+                                                                style: Some(format!(
+                                                                    "
+                                                                        flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 6px;
+                                                                    ",
+                                                                    BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+                                                                )),
+                                                                on_change: move |v| {
                                                                     let mut next = exposed_inputs();
                                                                     if let Some(target) = next.get_mut(index) {
-                                                                        target.name = e.value();
+                                                                        target.name = v;
                                                                     }
                                                                     exposed_inputs.set(next);
                                                                 },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
                                                             }
-                                                            input {
-                                                                style: "
-                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                                ",
-                                                                value: "{input.label}",
-                                                                placeholder: "label",
-                                                                oninput: move |e| {
+                                                            crate::components::common::StableTextInput {
+                                                                id: format!("provider-builder-input-label-{}", index),
+                                                                value: input.label.clone(),
+                                                                placeholder: Some("label".to_string()),
+                                                                style: Some(format!(
+                                                                    "
+                                                                        flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 6px;
+                                                                    ",
+                                                                    BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+                                                                )),
+                                                                on_change: move |v| {
                                                                     let mut next = exposed_inputs();
                                                                     if let Some(target) = next.get_mut(index) {
-                                                                        target.label = e.value();
+                                                                        target.label = v;
                                                                     }
                                                                     exposed_inputs.set(next);
                                                                 },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
                                                             }
                                                             button {
                                                                 class: "collapse-btn",
@@ -1061,21 +1096,28 @@ pub fn ProviderBuilderModal(
                                                                 option { value: "video", "Video" }
                                                                 option { value: "audio", "Audio" }
                                                             }
-                                                            input {
-                                                                style: "
-                                                                    flex: 1; padding: 6px 8px; font-size: 11px;
-                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                                ",
-                                                                value: "{input.default_text}",
-                                                                placeholder: "default (optional)",
-                                                                oninput: move |e| {
+                                                            crate::components::common::StableTextInput {
+                                                                id: format!("provider-builder-input-default-{}", index),
+                                                                value: input.default_text.clone(),
+                                                                placeholder: Some("default (optional)".to_string()),
+                                                                style: Some(format!(
+                                                                    "
+                                                                        flex: 1; padding: 6px 8px; font-size: 11px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 6px;
+                                                                    ",
+                                                                    BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+                                                                )),
+                                                                on_change: move |v| {
                                                                     let mut next = exposed_inputs();
                                                                     if let Some(target) = next.get_mut(index) {
-                                                                        target.default_text = e.value();
+                                                                        target.default_text = v;
                                                                     }
                                                                     exposed_inputs.set(next);
                                                                 },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
                                                             }
                                                         label {
                                                             style: "font-size: 10px; color: {TEXT_DIM}; display: flex; gap: 6px; align-items: center;",
@@ -1111,21 +1153,28 @@ pub fn ProviderBuilderModal(
                                                         }
                                                     }
                                                         if input.input_type_key == "enum" {
-                                                            input {
-                                                                style: "
-                                                                    width: 100%; padding: 6px 8px; font-size: 11px;
-                                                                    background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                                                                    border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                                                ",
-                                                                value: "{input.enum_options}",
-                                                                placeholder: "Enum options (comma-separated)",
-                                                                oninput: move |e| {
+                                                            crate::components::common::StableTextInput {
+                                                                id: format!("provider-builder-input-enum-{}", index),
+                                                                value: input.enum_options.clone(),
+                                                                placeholder: Some("Enum options (comma-separated)".to_string()),
+                                                                style: Some(format!(
+                                                                    "
+                                                                        width: 100%; padding: 6px 8px; font-size: 11px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 6px;
+                                                                    ",
+                                                                    BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+                                                                )),
+                                                                on_change: move |v| {
                                                                     let mut next = exposed_inputs();
                                                                     if let Some(target) = next.get_mut(index) {
-                                                                        target.enum_options = e.value();
+                                                                        target.enum_options = v;
                                                                     }
                                                                     exposed_inputs.set(next);
                                                                 },
+                                                                on_blur: move |_| {},
+                                                                on_keydown: move |_| {},
+                                                                autofocus: false,
                                                             }
                                                         }
                                                         div {
@@ -1146,15 +1195,22 @@ pub fn ProviderBuilderModal(
                                         display: flex; flex-direction: column; gap: 8px;
                                     ",
                                     div { style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;", "Output Settings" }
-                                    input {
-                                        style: "
-                                            width: 100%; padding: 6px 8px; font-size: 11px;
-                                            background-color: {BG_ELEVATED}; color: {TEXT_PRIMARY};
-                                            border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
-                                        ",
-                                        value: "{output_key()}",
-                                        placeholder: "{output_key_placeholder}",
-                                        oninput: move |e| output_key.set(e.value()),
+                                    crate::components::common::StableTextInput {
+                                        id: "provider-builder-output-key".to_string(),
+                                        value: output_key(),
+                                        placeholder: Some(output_key_placeholder.to_string()),
+                                        style: Some(format!(
+                                            "
+                                                width: 100%; padding: 6px 8px; font-size: 11px;
+                                                background-color: {}; color: {};
+                                                border: 1px solid {}; border-radius: 6px;
+                                            ",
+                                            BG_ELEVATED, TEXT_PRIMARY, BORDER_DEFAULT
+                                        )),
+                                        on_change: move |v| output_key.set(v),
+                                        on_blur: move |_| {},
+                                        on_keydown: move |_| {},
+                                        autofocus: false,
                                     }
                                     div { style: "font-size: 10px; color: {TEXT_DIM};", "{output_key_hint}" }
                                     div {
