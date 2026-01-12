@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -208,6 +208,32 @@ pub fn delete_generative_version_files(folder: &Path, version: &str) -> Result<(
     Ok(())
 }
 
+/// Delete files for all provided generation versions in the folder.
+pub fn delete_all_generative_version_files(
+    folder: &Path,
+    versions: &[String],
+) -> Result<(), String> {
+    if versions.is_empty() {
+        return Ok(());
+    }
+    let targets: HashSet<&str> = versions.iter().map(|version| version.as_str()).collect();
+    let entries = fs::read_dir(folder).map_err(|err| err.to_string())?;
+    for entry in entries {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if targets.contains(stem) {
+            fs::remove_file(&path).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 pub fn next_generative_index(
     assets: &[Asset],
     prefix: &str,
@@ -241,7 +267,8 @@ pub struct GenerationJob {
     pub id: Uuid,
     pub created_at: DateTime<Utc>,
     pub status: GenerationJobStatus,
-    pub progress: Option<f32>,
+    pub progress_overall: Option<f32>,
+    pub progress_node: Option<f32>,
     pub attempts: u8,
     pub next_attempt_at: Option<DateTime<Utc>>,
     pub provider: ProviderEntry,

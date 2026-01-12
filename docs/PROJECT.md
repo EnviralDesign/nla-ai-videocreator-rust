@@ -808,6 +808,9 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-12:** Added a Manage Versions menu with delete current/others/all actions and confirmations.
+- **2026-01-12:** Added a Clear All action in the generation queue to purge queued/completed jobs quickly.
+- **2026-01-12:** Wired ComfyUI WebSocket progress events into the generation queue with workflow + node progress bars.
 - **2026-01-12:** Added batch generation controls (count + seed strategy/field) with seed auto-detection and multi-job enqueueing.
 - **2026-01-12:** Improved ComfyUI missing-output messaging to point at cached results and seed offsets.
 - **2026-01-12:** Provider Builder V2 now resets to defaults on new-provider opens so stale edit state doesn't linger.

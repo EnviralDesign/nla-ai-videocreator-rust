@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use uuid::Uuid;
 
 use crate::core::paths;
 use crate::state::{
@@ -17,6 +18,28 @@ const DEFAULT_OUTPUT_KEY: &str = "images";
 pub struct ComfyUiImage {
     pub bytes: Vec<u8>,
     pub extension: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ComfyUiProgress {
+    pub overall: Option<f32>,
+    pub node: Option<f32>,
+}
+
+impl ComfyUiProgress {
+    fn overall(value: f32) -> Self {
+        Self {
+            overall: Some(value),
+            node: None,
+        }
+    }
+
+    fn node(value: f32) -> Self {
+        Self {
+            overall: None,
+            node: Some(value),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,8 +162,10 @@ pub async fn generate_image(
     workflow_path: &Path,
     inputs: &HashMap<String, Value>,
     manifest_path: Option<&Path>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<ComfyUiProgress>>,
 ) -> Result<ComfyUiImage, String> {
     let mut workflow = load_workflow(workflow_path)?;
+    let total_nodes = workflow.as_object().map(|map| map.len()).unwrap_or(0);
     let (output_node_id, output_key, output_index) = if let Some(path) = manifest_path {
         let manifest = load_manifest(path)?;
         let (manifest_inputs, output_selector) = match manifest {
@@ -170,7 +195,18 @@ pub async fn generate_image(
 
     let client = reqwest::Client::new();
     let prompt_id = submit_prompt(&client, base_url, &workflow).await?;
+    let ws_task = progress_tx.map(|tx| {
+        let base_url = base_url.to_string();
+        let prompt_id = prompt_id.clone();
+        let total_nodes = total_nodes;
+        tokio::spawn(async move {
+            let _ = listen_progress_ws(&base_url, &prompt_id, total_nodes, tx).await;
+        })
+    });
     let outputs = poll_history(&client, base_url, &prompt_id).await?;
+    if let Some(task) = ws_task {
+        task.abort();
+    }
     let image_ref = find_image_output(
         &outputs,
         output_node_id.as_deref(),
@@ -515,6 +551,147 @@ async fn poll_history(
     }
 
     Err("Timed out waiting for ComfyUI output.".to_string())
+}
+
+fn build_ws_url(base_url: &str, client_id: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let (scheme, rest) = if trimmed.starts_with("https://") {
+        ("wss://", &trimmed["https://".len()..])
+    } else if trimmed.starts_with("http://") {
+        ("ws://", &trimmed["http://".len()..])
+    } else if trimmed.starts_with("wss://") || trimmed.starts_with("ws://") {
+        ("", trimmed)
+    } else {
+        ("ws://", trimmed)
+    };
+    let base = format!("{}{}", scheme, rest);
+    format!("{}/ws?clientId={}", base, urlencoding::encode(client_id))
+}
+
+async fn listen_progress_ws(
+    base_url: &str,
+    prompt_id: &str,
+    total_nodes: usize,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<ComfyUiProgress>,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let client_id = Uuid::new_v4().to_string();
+    let ws_url = build_ws_url(base_url, &client_id);
+    let (stream, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .map_err(|err| format!("WS connect failed: {}", err))?;
+    let (_write, mut read) = stream.split();
+    let mut last_node = None::<f32>;
+    let mut last_overall = None::<f32>;
+
+    while let Some(message) = read.next().await {
+        let message = message.map_err(|err| format!("WS read failed: {}", err))?;
+        match message {
+            Message::Text(text) => {
+                let Ok(value) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
+                let message_type = value
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let Some(data) = value.get("data") else {
+                    continue;
+                };
+                let Some(message_prompt_id) = data
+                    .get("prompt_id")
+                    .and_then(|value| value.as_str()) else {
+                    continue;
+                };
+                if message_prompt_id != prompt_id {
+                    continue;
+                }
+                if message_type == "progress" {
+                    let Some(max) = data.get("max").and_then(json_number_as_f64) else {
+                        continue;
+                    };
+                    if max <= 0.0 {
+                        continue;
+                    }
+                    let Some(value) = data.get("value").and_then(json_number_as_f64) else {
+                        continue;
+                    };
+                    let ratio = (value / max).clamp(0.0, 1.0) as f32;
+                    if let Some(last) = last_node {
+                        if (ratio - last).abs() < 0.001 {
+                            continue;
+                        }
+                    }
+                    if progress_tx.send(ComfyUiProgress::node(ratio)).is_err() {
+                        break;
+                    }
+                    last_node = Some(ratio);
+                } else if message_type == "progress_state" {
+                    let Some(ratio) = overall_ratio_from_state(data, total_nodes) else {
+                        continue;
+                    };
+                    if let Some(last) = last_overall {
+                        if (ratio - last).abs() < 0.001 {
+                            continue;
+                        }
+                    }
+                    if progress_tx.send(ComfyUiProgress::overall(ratio)).is_err() {
+                        break;
+                    }
+                    last_overall = Some(ratio);
+                }
+            }
+            Message::Close(_) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn json_number_as_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|value| value as f64))
+        .or_else(|| value.as_u64().map(|value| value as f64))
+}
+
+fn overall_ratio_from_state(data: &Value, total_nodes: usize) -> Option<f32> {
+    if total_nodes == 0 {
+        return None;
+    }
+    let nodes = data.get("nodes")?.as_object()?;
+    let mut total = 0.0f64;
+    for node in nodes.values() {
+        let state = node
+            .get("state")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        match state {
+            "finished" => {
+                total += 1.0;
+            }
+            "running" => {
+                let max = node
+                    .get("max")
+                    .and_then(json_number_as_f64)
+                    .unwrap_or(0.0);
+                if max > 0.0 {
+                    let value = node
+                        .get("value")
+                        .and_then(json_number_as_f64)
+                        .unwrap_or(0.0);
+                    total += (value / max).clamp(0.0, 1.0);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((total / total_nodes as f64).clamp(0.0, 1.0) as f32)
 }
 
 fn extract_outputs<'a>(payload: &'a Value, prompt_id: &str) -> Option<&'a Value> {

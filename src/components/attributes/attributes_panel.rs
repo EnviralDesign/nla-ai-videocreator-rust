@@ -13,6 +13,7 @@ use crate::core::generation::{
 use crate::providers::comfyui;
 use crate::state::{
     asset_display_name,
+    delete_all_generative_version_files,
     delete_generative_version_files,
     input_value_as_i64,
     parse_version_index,
@@ -262,7 +263,10 @@ pub fn AttributesPanelContent(
         (None, None) => b.cmp(a),
     });
     version_options.dedup();
-    let confirm_delete_version = use_signal(|| false);
+    let manage_versions_open = use_signal(|| false);
+    let confirm_delete_current = use_signal(|| false);
+    let confirm_delete_others = use_signal(|| false);
+    let confirm_delete_all = use_signal(|| false);
     let can_delete_version = !selected_version_value.trim().is_empty();
     let on_provider_change = {
         let asset_id = clip.asset_id;
@@ -284,7 +288,10 @@ pub fn AttributesPanelContent(
         let mut preview_dirty = preview_dirty.clone();
         let thumbnailer = thumbnailer.clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
-        let mut confirm_delete_version = confirm_delete_version.clone();
+        let mut manage_versions_open = manage_versions_open.clone();
+        let mut confirm_delete_current = confirm_delete_current.clone();
+        let mut confirm_delete_others = confirm_delete_others.clone();
+        let mut confirm_delete_all = confirm_delete_all.clone();
         Rc::new(RefCell::new(move |e: FormEvent| {
             let value = e.value();
             let trimmed = value.trim();
@@ -319,7 +326,10 @@ pub fn AttributesPanelContent(
                     thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
                 });
             }
-            confirm_delete_version.set(false);
+            manage_versions_open.set(false);
+            confirm_delete_current.set(false);
+            confirm_delete_others.set(false);
+            confirm_delete_all.set(false);
         }))
     };
     let on_delete_version = {
@@ -331,7 +341,10 @@ pub fn AttributesPanelContent(
         let thumbnailer = thumbnailer.clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
         let gen_status = gen_status.clone();
-        let confirm_delete_version = confirm_delete_version.clone();
+        let manage_versions_open = manage_versions_open.clone();
+        let confirm_delete_current = confirm_delete_current.clone();
+        let confirm_delete_others = confirm_delete_others.clone();
+        let confirm_delete_all = confirm_delete_all.clone();
         let version_options = version_options.clone();
         let selected_version_value = selected_version_value.clone();
         Rc::new(RefCell::new(move || {
@@ -342,7 +355,10 @@ pub fn AttributesPanelContent(
             let thumbnailer = thumbnailer.clone();
             let thumbnail_cache_buster = thumbnail_cache_buster.clone();
             let mut gen_status = gen_status.clone();
-            let mut confirm_delete_version = confirm_delete_version.clone();
+            let mut manage_versions_open = manage_versions_open.clone();
+            let mut confirm_delete_current = confirm_delete_current.clone();
+            let mut confirm_delete_others = confirm_delete_others.clone();
+            let mut confirm_delete_all = confirm_delete_all.clone();
             let version_options = version_options.clone();
             let selected_version_value = selected_version_value.clone();
 
@@ -384,7 +400,10 @@ pub fn AttributesPanelContent(
 
                 if let Err(err) = deletion {
                     gen_status.set(Some(format!("Delete failed: {}", err)));
-                    confirm_delete_version.set(false);
+                    manage_versions_open.set(false);
+                    confirm_delete_current.set(false);
+                    confirm_delete_others.set(false);
+                    confirm_delete_all.set(false);
                     return;
                 }
                 previewer.read().invalidate_folder(&folder_path);
@@ -419,8 +438,199 @@ pub fn AttributesPanelContent(
                     });
                 }
 
-                confirm_delete_version.set(false);
+                manage_versions_open.set(false);
+                confirm_delete_current.set(false);
+                confirm_delete_others.set(false);
+                confirm_delete_all.set(false);
                 gen_status.set(Some(format!("Deleted {}", version)));
+            });
+        }))
+    };
+    let on_delete_all_versions = {
+        let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let project = project.clone();
+        let preview_dirty = preview_dirty.clone();
+        let previewer = previewer.clone();
+        let thumbnailer = thumbnailer.clone();
+        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        let gen_status = gen_status.clone();
+        let manage_versions_open = manage_versions_open.clone();
+        let confirm_delete_current = confirm_delete_current.clone();
+        let confirm_delete_others = confirm_delete_others.clone();
+        let confirm_delete_all = confirm_delete_all.clone();
+        let versions_to_delete: Vec<String> = config_snapshot
+            .versions
+            .iter()
+            .map(|record| record.version.clone())
+            .collect();
+        Rc::new(RefCell::new(move || {
+            let gen_folder_path = gen_folder_path.clone();
+            let mut project = project.clone();
+            let mut preview_dirty = preview_dirty.clone();
+            let previewer = previewer.clone();
+            let thumbnailer = thumbnailer.clone();
+            let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+            let mut gen_status = gen_status.clone();
+            let mut manage_versions_open = manage_versions_open.clone();
+            let mut confirm_delete_current = confirm_delete_current.clone();
+            let mut confirm_delete_others = confirm_delete_others.clone();
+            let mut confirm_delete_all = confirm_delete_all.clone();
+            let versions_to_delete = versions_to_delete.clone();
+
+            if versions_to_delete.is_empty() {
+                gen_status.set(Some("No versions to delete.".to_string()));
+                return;
+            }
+            let Some(folder_path) = gen_folder_path.as_ref() else {
+                gen_status.set(Some("Missing generative folder.".to_string()));
+                return;
+            };
+
+            let folder_path = folder_path.clone();
+            let delete_folder = folder_path.clone();
+            spawn(async move {
+                let deletion = tokio::task::spawn_blocking(move || {
+                    delete_all_generative_version_files(&delete_folder, &versions_to_delete)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("Failed to delete version files.".to_string()));
+
+                if let Err(err) = deletion {
+                    gen_status.set(Some(format!("Delete failed: {}", err)));
+                    manage_versions_open.set(false);
+                    confirm_delete_current.set(false);
+                    confirm_delete_others.set(false);
+                    confirm_delete_all.set(false);
+                    return;
+                }
+                previewer.read().invalidate_folder(&folder_path);
+
+                {
+                    let mut project_write = project.write();
+                    project_write.update_generative_config(asset_id, |config| {
+                        config.versions.clear();
+                        config.active_version = None;
+                    });
+                    let _ = project_write.save_generative_config(asset_id);
+                }
+
+                preview_dirty.set(true);
+
+                if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                    let thumbs = thumbnailer.clone();
+                    let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+                    spawn(async move {
+                        thumbs.generate(&asset, true).await;
+                        thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                    });
+                }
+
+                manage_versions_open.set(false);
+                confirm_delete_current.set(false);
+                confirm_delete_others.set(false);
+                confirm_delete_all.set(false);
+                gen_status.set(Some("Deleted all versions".to_string()));
+            });
+        }))
+    };
+    let on_delete_other_versions = {
+        let gen_folder_path = gen_folder_path.clone();
+        let asset_id = clip.asset_id;
+        let project = project.clone();
+        let preview_dirty = preview_dirty.clone();
+        let previewer = previewer.clone();
+        let thumbnailer = thumbnailer.clone();
+        let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        let gen_status = gen_status.clone();
+        let manage_versions_open = manage_versions_open.clone();
+        let confirm_delete_current = confirm_delete_current.clone();
+        let confirm_delete_others = confirm_delete_others.clone();
+        let confirm_delete_all = confirm_delete_all.clone();
+        let version_options = version_options.clone();
+        let selected_version_value = selected_version_value.clone();
+        Rc::new(RefCell::new(move || {
+            let gen_folder_path = gen_folder_path.clone();
+            let mut project = project.clone();
+            let mut preview_dirty = preview_dirty.clone();
+            let previewer = previewer.clone();
+            let thumbnailer = thumbnailer.clone();
+            let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+            let mut gen_status = gen_status.clone();
+            let mut manage_versions_open = manage_versions_open.clone();
+            let mut confirm_delete_current = confirm_delete_current.clone();
+            let mut confirm_delete_others = confirm_delete_others.clone();
+            let mut confirm_delete_all = confirm_delete_all.clone();
+            let version_options = version_options.clone();
+            let selected_version_value = selected_version_value.clone();
+
+            let current_version = selected_version_value.trim().to_string();
+            if current_version.is_empty() {
+                gen_status.set(Some("No active version selected.".to_string()));
+                return;
+            }
+            let versions_to_delete: Vec<String> = version_options
+                .iter()
+                .filter(|version| *version != &current_version)
+                .cloned()
+                .collect();
+            if versions_to_delete.is_empty() {
+                gen_status.set(Some("No other versions to delete.".to_string()));
+                return;
+            }
+            let Some(folder_path) = gen_folder_path.as_ref() else {
+                gen_status.set(Some("Missing generative folder.".to_string()));
+                return;
+            };
+
+            let folder_path = folder_path.clone();
+            let delete_folder = folder_path.clone();
+            spawn(async move {
+                let deletion = tokio::task::spawn_blocking(move || {
+                    delete_all_generative_version_files(&delete_folder, &versions_to_delete)
+                })
+                .await
+                .ok()
+                .unwrap_or_else(|| Err("Failed to delete version files.".to_string()));
+
+                if let Err(err) = deletion {
+                    gen_status.set(Some(format!("Delete failed: {}", err)));
+                    manage_versions_open.set(false);
+                    confirm_delete_current.set(false);
+                    confirm_delete_others.set(false);
+                    confirm_delete_all.set(false);
+                    return;
+                }
+                previewer.read().invalidate_folder(&folder_path);
+
+                {
+                    let mut project_write = project.write();
+                    project_write.update_generative_config(asset_id, |config| {
+                        config
+                            .versions
+                            .retain(|record| record.version == current_version);
+                        config.active_version = Some(current_version.clone());
+                    });
+                    let _ = project_write.save_generative_config(asset_id);
+                }
+
+                preview_dirty.set(true);
+
+                if let Some(asset) = project.read().find_asset(asset_id).cloned() {
+                    let thumbs = thumbnailer.clone();
+                    let mut thumbnail_cache_buster = thumbnail_cache_buster.clone();
+                    spawn(async move {
+                        thumbs.generate(&asset, true).await;
+                        thumbnail_cache_buster.set(thumbnail_cache_buster() + 1);
+                    });
+                }
+
+                manage_versions_open.set(false);
+                confirm_delete_current.set(false);
+                confirm_delete_others.set(false);
+                confirm_delete_all.set(false);
+                gen_status.set(Some("Deleted other versions".to_string()));
             });
         }))
     };
@@ -590,7 +800,8 @@ pub fn AttributesPanelContent(
                         id: uuid::Uuid::new_v4(),
                         created_at: chrono::Utc::now(),
                         status: GenerationJobStatus::Queued,
-                        progress: None,
+                        progress_overall: None,
+                        progress_node: None,
                         attempts: 0,
                         next_attempt_at: None,
                         provider: provider.clone(),
@@ -767,10 +978,14 @@ pub fn AttributesPanelContent(
                 {render_generative_controls(
                     &version_options,
                     &selected_version_value,
-                    confirm_delete_version,
+                    manage_versions_open,
+                    confirm_delete_current,
+                    confirm_delete_others,
                     can_delete_version,
                     on_version_change,
                     on_delete_version.clone(),
+                    on_delete_other_versions.clone(),
+                    on_delete_all_versions.clone(),
                     &selected_provider_value,
                     &compatible_providers,
                     on_provider_change,
@@ -790,6 +1005,7 @@ pub fn AttributesPanelContent(
                     seed_hint.clone(),
                     seed_field_missing,
                     batch_hint.clone(),
+                    confirm_delete_all,
                 )}
                 {render_provider_inputs(
                     selected_provider,

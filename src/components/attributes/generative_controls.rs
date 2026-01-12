@@ -10,10 +10,14 @@ use crate::state::ProviderEntry;
 pub(super) fn render_generative_controls(
     version_options: &[String],
     selected_version_value: &str,
-    mut confirm_delete_version: Signal<bool>,
+    mut manage_versions_open: Signal<bool>,
+    mut confirm_delete_current: Signal<bool>,
+    mut confirm_delete_others: Signal<bool>,
     can_delete_version: bool,
     on_version_change: Rc<RefCell<dyn FnMut(FormEvent)>>,
     on_delete_version: Rc<RefCell<dyn FnMut()>>,
+    on_delete_other_versions: Rc<RefCell<dyn FnMut()>>,
+    on_delete_all_versions: Rc<RefCell<dyn FnMut()>>,
     selected_provider_value: &str,
     compatible_providers: &[ProviderEntry],
     on_provider_change: Rc<RefCell<dyn FnMut(FormEvent)>>,
@@ -33,7 +37,19 @@ pub(super) fn render_generative_controls(
     seed_hint: Option<String>,
     seed_hint_is_warning: bool,
     batch_hint: Option<String>,
+    mut confirm_delete_all: Signal<bool>,
 ) -> Element {
+    let has_versions = !version_options.is_empty();
+    let has_other_versions = can_delete_version
+        && version_options
+            .iter()
+            .any(|version| version != selected_version_value);
+    let can_delete_current = can_delete_version;
+    let can_delete_all = has_versions;
+    let manage_opacity = if has_versions { "0.8" } else { "0.4" };
+    let current_opacity = if can_delete_current { "1.0" } else { "0.4" };
+    let others_opacity = if has_other_versions { "1.0" } else { "0.4" };
+    let all_opacity = if can_delete_all { "1.0" } else { "0.4" };
     rsx! {
         div {
             style: "
@@ -47,7 +63,32 @@ pub(super) fn render_generative_controls(
             }
             div {
                 style: "display: flex; flex-direction: column; gap: 6px;",
-                span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between;",
+                    span { style: "font-size: 10px; color: {TEXT_MUTED};", "Version" }
+                    button {
+                        class: "collapse-btn",
+                        style: "
+                            padding: 4px 8px; border-radius: 6px;
+                            border: 1px solid {BORDER_DEFAULT};
+                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                            font-size: 11px; cursor: pointer;
+                            opacity: {manage_opacity};
+                        ",
+                        disabled: !has_versions,
+                        onclick: move |_| {
+                            if manage_versions_open() {
+                                manage_versions_open.set(false);
+                                confirm_delete_current.set(false);
+                                confirm_delete_others.set(false);
+                                confirm_delete_all.set(false);
+                            } else {
+                                manage_versions_open.set(true);
+                            }
+                        },
+                        "Manage"
+                    }
+                }
                 select {
                     value: "{selected_version_value}",
                     disabled: version_options.is_empty(),
@@ -70,35 +111,42 @@ pub(super) fn render_generative_controls(
                     }
                 }
             }
-            if !version_options.is_empty() && can_delete_version {
+            if manage_versions_open() {
                 div {
-                    style: "display: flex; gap: 8px; align-items: center;",
-                    if confirm_delete_version() {
-                        button {
-                            style: "
-                                flex: 1; padding: 6px 8px;
-                                background-color: #b91c1c;
-                                border: 1px solid #991b1b;
-                                border-radius: 6px; color: white; font-size: 11px;
-                                cursor: pointer;
-                            ",
-                            onclick: {
-                                let on_delete_version = on_delete_version.clone();
-                                move |_| on_delete_version.borrow_mut()()
-                            },
-                            "Confirm Delete"
-                        }
-                        button {
-                            class: "collapse-btn",
-                            style: "
-                                padding: 6px 10px;
-                                background-color: {BG_SURFACE};
-                                border: 1px solid {BORDER_DEFAULT};
-                                border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
-                                cursor: pointer;
-                            ",
-                            onclick: move |_| confirm_delete_version.set(false),
-                            "Cancel"
+                    style: "
+                        display: flex; flex-direction: column; gap: 8px;
+                        padding: 8px; border: 1px solid {BORDER_DEFAULT};
+                        border-radius: 8px; background-color: {BG_ELEVATED};
+                    ",
+                    if confirm_delete_current() {
+                        div {
+                            style: "display: flex; gap: 8px; align-items: center;",
+                            button {
+                                style: "
+                                    flex: 1; padding: 6px 8px;
+                                    background-color: #b91c1c;
+                                    border: 1px solid #991b1b;
+                                    border-radius: 6px; color: white; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: {
+                                    let on_delete_version = on_delete_version.clone();
+                                    move |_| on_delete_version.borrow_mut()()
+                                },
+                                "Confirm Delete Current"
+                            }
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    padding: 6px 10px;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: move |_| confirm_delete_current.set(false),
+                                "Cancel"
+                            }
                         }
                     } else {
                         button {
@@ -109,9 +157,121 @@ pub(super) fn render_generative_controls(
                                 border: 1px solid #7f1d1d;
                                 border-radius: 6px; color: #fecaca; font-size: 11px;
                                 cursor: pointer;
+                                opacity: {current_opacity};
                             ",
-                            onclick: move |_| confirm_delete_version.set(true),
-                            "Delete Version"
+                            disabled: !can_delete_current,
+                            onclick: move |_| {
+                                if can_delete_current {
+                                    confirm_delete_current.set(true);
+                                    confirm_delete_others.set(false);
+                                    confirm_delete_all.set(false);
+                                }
+                            },
+                            "Delete Current"
+                        }
+                    }
+                    if confirm_delete_others() {
+                        div {
+                            style: "display: flex; gap: 8px; align-items: center;",
+                            button {
+                                style: "
+                                    flex: 1; padding: 6px 8px;
+                                    background-color: #b91c1c;
+                                    border: 1px solid #991b1b;
+                                    border-radius: 6px; color: white; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: {
+                                    let on_delete_other_versions = on_delete_other_versions.clone();
+                                    move |_| on_delete_other_versions.borrow_mut()()
+                                },
+                                "Confirm Delete Others"
+                            }
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    padding: 6px 10px;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: move |_| confirm_delete_others.set(false),
+                                "Cancel"
+                            }
+                        }
+                    } else {
+                        button {
+                            class: "collapse-btn",
+                            style: "
+                                padding: 6px 10px;
+                                background-color: {BG_SURFACE};
+                                border: 1px solid #7f1d1d;
+                                border-radius: 6px; color: #fecaca; font-size: 11px;
+                                cursor: pointer;
+                                opacity: {others_opacity};
+                            ",
+                            disabled: !has_other_versions,
+                            onclick: move |_| {
+                                if has_other_versions {
+                                    confirm_delete_others.set(true);
+                                    confirm_delete_current.set(false);
+                                    confirm_delete_all.set(false);
+                                }
+                            },
+                            "Delete Others"
+                        }
+                    }
+                    if confirm_delete_all() {
+                        div {
+                            style: "display: flex; gap: 8px; align-items: center;",
+                            button {
+                                style: "
+                                    flex: 1; padding: 6px 8px;
+                                    background-color: #b91c1c;
+                                    border: 1px solid #991b1b;
+                                    border-radius: 6px; color: white; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: {
+                                    let on_delete_all_versions = on_delete_all_versions.clone();
+                                    move |_| on_delete_all_versions.borrow_mut()()
+                                },
+                                "Confirm Delete All"
+                            }
+                            button {
+                                class: "collapse-btn",
+                                style: "
+                                    padding: 6px 10px;
+                                    background-color: {BG_SURFACE};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    border-radius: 6px; color: {TEXT_PRIMARY}; font-size: 11px;
+                                    cursor: pointer;
+                                ",
+                                onclick: move |_| confirm_delete_all.set(false),
+                                "Cancel"
+                            }
+                        }
+                    } else {
+                        button {
+                            class: "collapse-btn",
+                            style: "
+                                padding: 6px 10px;
+                                background-color: {BG_SURFACE};
+                                border: 1px solid #7f1d1d;
+                                border-radius: 6px; color: #fecaca; font-size: 11px;
+                                cursor: pointer;
+                                opacity: {all_opacity};
+                            ",
+                            disabled: !can_delete_all,
+                            onclick: move |_| {
+                                if can_delete_all {
+                                    confirm_delete_all.set(true);
+                                    confirm_delete_current.set(false);
+                                    confirm_delete_others.set(false);
+                                }
+                            },
+                            "Delete All"
                         }
                     }
                 }

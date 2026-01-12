@@ -8,6 +8,7 @@ pub fn GenerationQueuePanel(
     open: bool,
     jobs: Vec<GenerationJob>,
     on_close: EventHandler<MouseEvent>,
+    on_clear_queue: EventHandler<MouseEvent>,
     on_delete_job: EventHandler<uuid::Uuid>,
     paused: bool,
     pause_reason: Option<String>,
@@ -23,6 +24,10 @@ pub fn GenerationQueuePanel(
     } else {
         format!("{}", jobs.len())
     };
+    let has_clearable = jobs
+        .iter()
+        .any(|job| job.status != GenerationJobStatus::Running);
+    let clear_opacity = if has_clearable { "0.9" } else { "0.4" };
 
     rsx! {
         div {
@@ -40,18 +45,34 @@ pub fn GenerationQueuePanel(
                 div {
                     style: "display: flex; flex-direction: column; gap: 2px;",
                     span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "Generation Queue" }
-                    span { style: "font-size: 10px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.4px;", "{count_label}" }
-                }
-                button {
-                    class: "collapse-btn",
-                    style: "
-                        padding: 4px 8px; border-radius: 6px;
-                        border: 1px solid {BORDER_DEFAULT};
-                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
-                        font-size: 11px; cursor: pointer;
-                    ",
-                    onclick: move |e| on_close.call(e),
-                    "Close"
+                span { style: "font-size: 10px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.4px;", "{count_label}" }
+            }
+                div {
+                    style: "display: flex; align-items: center; gap: 6px;",
+                    button {
+                        class: "collapse-btn",
+                        style: "
+                            padding: 4px 8px; border-radius: 6px;
+                            border: 1px solid {BORDER_DEFAULT};
+                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                            font-size: 11px; cursor: pointer;
+                            opacity: {clear_opacity};
+                        ",
+                        disabled: !has_clearable,
+                        onclick: move |e| on_clear_queue.call(e),
+                        "Clear All"
+                    }
+                    button {
+                        class: "collapse-btn",
+                        style: "
+                            padding: 4px 8px; border-radius: 6px;
+                            border: 1px solid {BORDER_DEFAULT};
+                            background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                            font-size: 11px; cursor: pointer;
+                        ",
+                        onclick: move |e| on_close.call(e),
+                        "Close"
+                    }
                 }
             }
 
@@ -106,8 +127,12 @@ pub fn GenerationQueuePanel(
                                 ProviderOutputType::Video => "Video",
                                 ProviderOutputType::Audio => "Audio",
                             };
-                            let progress_percent = job
-                                .progress
+                            let overall_percent = job
+                                .progress_overall
+                                .map(|progress| (progress.clamp(0.0, 1.0) * 100.0).round() as u32)
+                                .unwrap_or(0);
+                            let node_percent = job
+                                .progress_node
                                 .map(|progress| (progress.clamp(0.0, 1.0) * 100.0).round() as u32)
                                 .unwrap_or(0);
                             let job_id = job.id;
@@ -148,11 +173,35 @@ pub fn GenerationQueuePanel(
                                     if job.status == GenerationJobStatus::Running {
                                         div {
                                             style: "
-                                                height: 6px; border-radius: 999px;
-                                                background-color: {BG_BASE}; overflow: hidden;
+                                                display: flex; flex-direction: column; gap: 4px;
                                             ",
                                             div {
-                                                style: "height: 100%; width: {progress_percent}%; background-color: {ACCENT_MARKER};",
+                                                style: "display: flex; align-items: center; justify-content: space-between;",
+                                                span { style: "font-size: 9px; color: {TEXT_DIM};", "Workflow" }
+                                                span { style: "font-size: 9px; color: {TEXT_DIM};", "{overall_percent}%" }
+                                            }
+                                            div {
+                                                style: "
+                                                    height: 6px; border-radius: 999px;
+                                                    background-color: {BG_BASE}; overflow: hidden;
+                                                ",
+                                                div {
+                                                    style: "height: 100%; width: {overall_percent}%; background-color: {ACCENT_VIDEO};",
+                                                }
+                                            }
+                                            div {
+                                                style: "display: flex; align-items: center; justify-content: space-between;",
+                                                span { style: "font-size: 9px; color: {TEXT_DIM};", "Node" }
+                                                span { style: "font-size: 9px; color: {TEXT_DIM};", "{node_percent}%" }
+                                            }
+                                            div {
+                                                style: "
+                                                    height: 6px; border-radius: 999px;
+                                                    background-color: {BG_BASE}; overflow: hidden;
+                                                ",
+                                                div {
+                                                    style: "height: 100%; width: {node_percent}%; background-color: {ACCENT_MARKER};",
+                                                }
                                             }
                                         }
                                     }

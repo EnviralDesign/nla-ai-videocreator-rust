@@ -54,6 +54,7 @@ async fn execute_generation_job(
     mut preview_dirty: Signal<bool>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<comfyui::ComfyUiProgress>>,
 ) -> Result<String, GenerationFailure> {
     if job.output_type != ProviderOutputType::Image {
         return Err(GenerationFailure::Error(
@@ -86,6 +87,7 @@ async fn execute_generation_job(
                 &workflow_path,
                 &job.inputs,
                 manifest_path.as_deref(),
+                progress_tx.clone(),
             )
             .await
             .map_err(|err| GenerationFailure::Error(err))
@@ -318,13 +320,15 @@ pub fn App() -> Element {
                             None
                         } else {
                             job.status = GenerationJobStatus::Running;
-                            job.progress = Some(0.0);
+                            job.progress_overall = Some(0.0);
+                            job.progress_node = Some(0.0);
                             job.next_attempt_at = None;
                             Some(job.clone())
                         }
                     } else {
                         job.status = GenerationJobStatus::Running;
-                        job.progress = Some(0.0);
+                        job.progress_overall = Some(0.0);
+                        job.progress_node = Some(0.0);
                         job.next_attempt_at = None;
                         Some(job.clone())
                     }
@@ -350,8 +354,28 @@ pub fn App() -> Element {
         let preview_dirty = preview_dirty.clone();
         let thumbnailer = thumbnailer.read().clone();
         let thumbnail_cache_buster = thumbnail_cache_buster.clone();
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<comfyui::ComfyUiProgress>();
+        let progress_job_id = job.id;
+        let mut progress_queue = generation_queue.clone();
 
         spawn(async move {
+            spawn(async move {
+                while let Some(progress) = progress_rx.recv().await {
+                    let mut queue = progress_queue.write();
+                    if let Some(entry) = queue.iter_mut().find(|entry| entry.id == progress_job_id) {
+                        if entry.status == GenerationJobStatus::Running {
+                            if let Some(overall) = progress.overall {
+                                entry.progress_overall = Some(overall.clamp(0.0, 1.0));
+                            }
+                            if let Some(node) = progress.node {
+                                entry.progress_node = Some(node.clamp(0.0, 1.0));
+                            }
+                        }
+                    }
+                }
+            });
+
             let result = execute_generation_job(
                 job.clone(),
                 project,
@@ -359,6 +383,7 @@ pub fn App() -> Element {
                 preview_dirty,
                 thumbnailer,
                 thumbnail_cache_buster,
+                Some(progress_tx),
             )
             .await;
 
@@ -368,7 +393,8 @@ pub fn App() -> Element {
                     Ok(version) => {
                         entry.status = GenerationJobStatus::Succeeded;
                         entry.version = Some(version.clone());
-                        entry.progress = Some(1.0);
+                        entry.progress_overall = Some(1.0);
+                        entry.progress_node = Some(1.0);
                         entry.error = None;
                         entry.attempts = 0;
                         entry.next_attempt_at = None;
@@ -398,7 +424,8 @@ pub fn App() -> Element {
                     Err(GenerationFailure::Error(err)) => {
                         entry.status = GenerationJobStatus::Failed;
                         entry.error = Some(err.clone());
-                        entry.progress = None;
+                        entry.progress_overall = None;
+                        entry.progress_node = None;
                     }
                 }
             }
@@ -990,6 +1017,17 @@ pub fn App() -> Element {
             }
         }
     };
+    let on_clear_generation_queue = {
+        let mut generation_queue = generation_queue.clone();
+        let mut generation_paused = generation_paused.clone();
+        let mut generation_pause_reason = generation_pause_reason.clone();
+        move |_| {
+            let mut queue = generation_queue.write();
+            queue.retain(|job| job.status == GenerationJobStatus::Running);
+            generation_paused.set(false);
+            generation_pause_reason.set(None);
+        }
+    };
     let on_resume_generation_queue = {
         let mut generation_paused = generation_paused.clone();
         let mut generation_pause_reason = generation_pause_reason.clone();
@@ -1497,6 +1535,7 @@ pub fn App() -> Element {
                 open: queue_open(),
                 jobs: generation_queue(),
                 on_close: move |_| queue_open.set(false),
+                on_clear_queue: on_clear_generation_queue,
                 on_delete_job: on_delete_generation_job,
                 paused: generation_paused(),
                 pause_reason: generation_pause_reason(),
