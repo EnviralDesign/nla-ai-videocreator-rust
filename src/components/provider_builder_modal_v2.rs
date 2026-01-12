@@ -857,7 +857,8 @@ pub fn ProviderBuilderModalV2(
                                         } else {
                                             for (index, input) in exposed_inputs().iter().enumerate() {
                                                 {
-                                                    let mut exposed_inputs_clone = exposed_inputs.clone();
+                                                    let mut exposed_inputs = exposed_inputs.clone();
+                                                    let input_clone = input.clone();
                                                     rsx! {
                                                         div {
                                                             key: "input-{index}",
@@ -878,11 +879,11 @@ pub fn ProviderBuilderModalV2(
                                                                     border: 1px solid {}; border-radius: 4px;
                                                                 ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
                                                                 on_change: move |v: String| {
-                                                                    let mut next = exposed_inputs_clone();
+                                                                    let mut next = exposed_inputs();
                                                                     if let Some(target) = next.get_mut(index) {
                                                                         target.name = v;
                                                                     }
-                                                                    exposed_inputs_clone.set(next);
+                                                                    exposed_inputs.set(next);
                                                                 },
                                                                 on_blur: move |_| {},
                                                                 on_keydown: move |_| {},
@@ -927,7 +928,114 @@ pub fn ProviderBuilderModalV2(
                                                                     "×"
                                                                 }
                                                             }
-                                                            div { style: "font-size: 9px; color: {TEXT_DIM};", "→ {input.selector.class_type}.{input.selector.input_key}" }
+                                                            div {
+                                                                style: "display: flex; gap: 6px; align-items: center;",
+                                                                select {
+                                                                    value: "{input.input_type_key}",
+                                                                    style: "
+                                                                        width: 120px; padding: 4px 6px; font-size: 10px;
+                                                                        background-color: {BG_SURFACE}; color: {TEXT_PRIMARY};
+                                                                        border: 1px solid {BORDER_DEFAULT}; border-radius: 4px;
+                                                                    ",
+                                                                    onchange: move |e| {
+                                                                        let mut next = exposed_inputs();
+                                                                        if let Some(target) = next.get_mut(index) {
+                                                                            let next_type = e.value();
+                                                                            target.input_type_key = next_type.clone();
+                                                                            if next_type != "text" {
+                                                                                target.multiline = false;
+                                                                            }
+                                                                        }
+                                                                        exposed_inputs.set(next);
+                                                                    },
+                                                                    option { value: "text", "Text" }
+                                                                    option { value: "number", "Number" }
+                                                                    option { value: "integer", "Integer" }
+                                                                    option { value: "boolean", "Boolean" }
+                                                                    option { value: "enum", "Enum" }
+                                                                    option { value: "image", "Image" }
+                                                                    option { value: "video", "Video" }
+                                                                    option { value: "audio", "Audio" }
+                                                                }
+                                                                crate::components::common::StableTextInput {
+                                                                    id: format!("input-default-{}", index),
+                                                                    value: input.default_text.clone(),
+                                                                    placeholder: Some("default (optional)".to_string()),
+                                                                    style: Some(format!("
+                                                                        flex: 1; padding: 4px 6px; font-size: 10px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 4px;
+                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                    on_change: move |v: String| {
+                                                                        let mut next = exposed_inputs();
+                                                                        if let Some(target) = next.get_mut(index) {
+                                                                            target.default_text = v;
+                                                                        }
+                                                                        exposed_inputs.set(next);
+                                                                    },
+                                                                    on_blur: move |_| {},
+                                                                    on_keydown: move |_| {},
+                                                                    autofocus: false,
+                                                                }
+                                                                label {
+                                                                    style: "font-size: 9px; color: {TEXT_DIM}; display: flex; gap: 4px; align-items: center;",
+                                                                    input {
+                                                                        r#type: "checkbox",
+                                                                        checked: input.required,
+                                                                        onchange: move |_| {
+                                                                            let mut next = exposed_inputs();
+                                                                            if let Some(target) = next.get_mut(index) {
+                                                                                target.required = !target.required;
+                                                                            }
+                                                                            exposed_inputs.set(next);
+                                                                        },
+                                                                    }
+                                                                    "Required"
+                                                                }
+                                                                if input.input_type_key == "text" {
+                                                                    label {
+                                                                        style: "font-size: 9px; color: {TEXT_DIM}; display: flex; gap: 4px; align-items: center;",
+                                                                        input {
+                                                                            r#type: "checkbox",
+                                                                            checked: input.multiline,
+                                                                            onchange: move |_| {
+                                                                                let mut next = exposed_inputs();
+                                                                                if let Some(target) = next.get_mut(index) {
+                                                                                    target.multiline = !target.multiline;
+                                                                                }
+                                                                                exposed_inputs.set(next);
+                                                                            },
+                                                                        }
+                                                                        "Multiline"
+                                                                    }
+                                                                }
+                                                            }
+                                                            if input.input_type_key == "enum" {
+                                                                crate::components::common::StableTextInput {
+                                                                    id: format!("input-enum-{}", index),
+                                                                    value: input.enum_options.clone(),
+                                                                    placeholder: Some("Enum options (comma-separated)".to_string()),
+                                                                    style: Some(format!("
+                                                                        width: 100%; padding: 4px 6px; font-size: 10px;
+                                                                        background-color: {}; color: {};
+                                                                        border: 1px solid {}; border-radius: 4px;
+                                                                    ", BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT)),
+                                                                    on_change: move |v: String| {
+                                                                        let mut next = exposed_inputs();
+                                                                        if let Some(target) = next.get_mut(index) {
+                                                                            target.enum_options = v;
+                                                                        }
+                                                                        exposed_inputs.set(next);
+                                                                    },
+                                                                    on_blur: move |_| {},
+                                                                    on_keydown: move |_| {},
+                                                                    autofocus: false,
+                                                                }
+                                                            }
+                                                            div {
+                                                                style: "font-size: 9px; color: {TEXT_DIM};",
+                                                                "→ {input_clone.selector.class_type}.{input_clone.selector.input_key}"
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1008,7 +1116,9 @@ fn input_type_to_key(input_type: &ProviderInputType) -> (String, String) {
             let opts = options.join(",");
             ("enum".to_string(), opts)
         }
-        _ => ("text".to_string(), String::new()), // Image/Video/Audio fallback
+        ProviderInputType::Image => ("image".to_string(), String::new()),
+        ProviderInputType::Video => ("video".to_string(), String::new()),
+        ProviderInputType::Audio => ("audio".to_string(), String::new()),
     }
 }
 
@@ -1024,7 +1134,7 @@ fn default_value_to_text(value: Option<&serde_json::Value>) -> String {
 }
 
 fn build_input_ui(input: &BuilderInput) -> Option<InputUi> {
-    if input.multiline {
+    if input.input_type_key == "text" && input.multiline {
         Some(InputUi {
             multiline: true,
             min: None,
@@ -1046,6 +1156,9 @@ fn parse_input_type(input: &BuilderInput) -> Result<ProviderInputType, String> {
         "integer" => Ok(ProviderInputType::Integer),
         "number" => Ok(ProviderInputType::Number),
         "boolean" => Ok(ProviderInputType::Boolean),
+        "image" => Ok(ProviderInputType::Image),
+        "video" => Ok(ProviderInputType::Video),
+        "audio" => Ok(ProviderInputType::Audio),
         "enum" => {
             let options: Vec<String> = input
                 .enum_options
@@ -1067,30 +1180,38 @@ fn parse_default_value(
     input_type: &ProviderInputType,
     text: &str,
 ) -> Result<Option<serde_json::Value>, String> {
-    if text.trim().is_empty() {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    match input_type {
-        ProviderInputType::Text => Ok(Some(serde_json::Value::String(text.to_string()))),
-        ProviderInputType::Integer => text
-            .parse::<i64>()
-            .map(|n| Some(serde_json::Value::Number(n.into())))
-            .map_err(|_| format!("Invalid integer: {}", text)),
-        ProviderInputType::Number => text
-            .parse::<f64>()
-            .map_err(|_| format!("Invalid number: {}", text))
-            .and_then(|f| {
-                serde_json::Number::from_f64(f)
-                    .ok_or_else(|| "Invalid number".to_string())
-            })
-            .map(|n| Some(serde_json::Value::Number(n))),
-        ProviderInputType::Boolean => text
-            .parse::<bool>()
-            .map(|b| Some(serde_json::Value::Bool(b)))
-            .map_err(|_| format!("Invalid boolean: {}", text)),
-        ProviderInputType::Enum { .. } => Ok(Some(serde_json::Value::String(text.to_string()))),
-        _ => Ok(Some(serde_json::Value::String(text.to_string()))), // Image/Video/Audio
-    }
+    let value = match input_type {
+        ProviderInputType::Text => serde_json::Value::String(trimmed.to_string()),
+        ProviderInputType::Integer => {
+            let parsed = trimmed
+                .parse::<i64>()
+                .map_err(|_| format!("Invalid integer default '{}'.", trimmed))?;
+            serde_json::Value::Number(parsed.into())
+        }
+        ProviderInputType::Number => {
+            let parsed = trimmed
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid number default '{}'.", trimmed))?;
+            let number = serde_json::Number::from_f64(parsed)
+                .ok_or_else(|| format!("Invalid number default '{}'.", trimmed))?;
+            serde_json::Value::Number(number)
+        }
+        ProviderInputType::Boolean => {
+            let parsed = trimmed
+                .parse::<bool>()
+                .map_err(|_| format!("Invalid boolean default '{}'.", trimmed))?;
+            serde_json::Value::Bool(parsed)
+        }
+        ProviderInputType::Enum { .. } => serde_json::Value::String(trimmed.to_string()),
+        ProviderInputType::Image
+        | ProviderInputType::Video
+        | ProviderInputType::Audio => return Ok(None),
+    };
+    Ok(Some(value))
 }
 
 fn friendly_label(name: &str) -> String {

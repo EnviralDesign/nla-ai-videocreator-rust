@@ -11,16 +11,16 @@ description: Best practices and rules for AI developers working on this project
 - There are CLI integration issues that prevent the AI from running these commands reliably
 
 ### Cargo Test
-- **OK to run** `cargo test` — this can be executed by the AI for verification
+- **Optional** - run `cargo test` only when explicitly requested
 
 ### Cargo Check
-- **OK to run** `cargo check` — useful for quick syntax/type verification without full build
+- **Always run** `cargo check` before yielding back to the user
 
 ## Development Workflow
 
 1. **Make changes** to source files
-2. **Run `cargo check`** if you want to verify syntax/types
-3. **Run `cargo test`** if there are tests to verify
+2. **Run `cargo check`** before yielding back to the user
+3. **Run `cargo test`** only when explicitly requested
 4. **Notify the user** that changes are ready for them to build/run
 
 ## Code Style
@@ -127,4 +127,3 @@ When debugging complex state flows or asynchronous behavior, static code analysi
 - Documenting any architectural changes or new patterns established
 
 This keeps the project documentation as the living source of truth.
-

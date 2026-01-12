@@ -11,9 +11,10 @@
       "name": "noise_seed",
       "label": "Noise Seed",
       "input_type": {
-        "type": "text"
+        "type": "integer"
       },
-      "required": false,
+      "required": true,
+      "default": 41,
       "bind": {
         "selector": {
           "class_type": "KSamplerAdvanced",
@@ -28,7 +29,12 @@
       "input_type": {
         "type": "text"
       },
-      "required": false,
+      "required": true,
+      "default": "hello",
+      "ui": {
+        "multiline": true,
+        "advanced": false
+      },
       "bind": {
         "selector": {
           "class_type": "CLIPTextEncode",

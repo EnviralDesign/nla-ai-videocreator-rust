@@ -807,6 +807,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-11:** Updated AI guidelines to run `cargo check` (not `cargo test`) before yielding back.
+- **2026-01-11:** Provider Builder V2 restores input type, default, required, multiline, and enum option controls for exposed inputs.
 - **2026-01-11:** Removed unused v1 provider builder module wiring and an unused manifest helper to keep builds warning-free.
 - **2026-01-11:** Fixed StableTextArea handler type inference and cleaned up unused v1 component re-exports/variables after the cursor-safe input refactor.
 - **2026-01-11:** Refactored remaining text/number/textarea inputs to use Stable* cursor-safe components and extended Stable* inputs with blur/focus/keydown hooks plus optional rows/autofocus.
