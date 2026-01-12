@@ -908,6 +908,11 @@ src/
 - **2026-01-12:** Added cpal-based playback engine scaffolding with a basic mixer + audio clock.
 - **2026-01-12:** Added waveform peak cache format + background builder for audio (project-local).
 - **2026-01-12:** Added timeline waveform rendering for audio clips with on-demand cache build + refresh.
+- **2026-01-12:** Added waveform mount/cache debug logs and explicit SVG width/height for waveform coordinate alignment.
+- **2026-01-12:** Added one-time ClipElement render debug logging to confirm audio clip wiring when waveform is missing.
+- **2026-01-12:** Switched waveform cache loading to a synchronous render-time path keyed off the cache buster to bypass missing effect callbacks.
+- **2026-01-12:** Replaced per-line SVG waveform rendering with a cached single-path build and added perf timing logs for waveform path generation.
+- **2026-01-12:** Waveform generation now computes per-column min/max from base peaks and logs SVG vs bitmap build timings for perf comparison.
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version

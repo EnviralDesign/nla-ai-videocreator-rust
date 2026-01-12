@@ -26,14 +26,15 @@ pub fn StartupModal(
     let width_default = seed_settings.width;
     let height_default = seed_settings.height;
     let fps_default = seed_settings.fps;
-    let duration_default = seed_settings.duration_seconds;
+    let duration_default_seconds = seed_settings.duration_seconds;
     let preview_default_width = seed_settings.preview_max_width;
     let preview_default_height = seed_settings.preview_max_height;
     let mut name = use_signal(|| seed_name.clone());
     let mut width = use_signal(|| seed_settings.width.to_string());
     let mut height = use_signal(|| seed_settings.height.to_string());
     let mut fps = use_signal(|| seed_settings.fps.to_string());
-    let mut duration = use_signal(|| seed_settings.duration_seconds.to_string());
+    // Duration is displayed in minutes but stored internally as seconds
+    let mut duration = use_signal(|| (seed_settings.duration_seconds / 60.0).to_string());
     let mut preview_max_width = use_signal(|| seed_settings.preview_max_width.to_string());
     let mut preview_max_height = use_signal(|| seed_settings.preview_max_height.to_string());
     let header_title = if is_edit {
@@ -526,7 +527,7 @@ pub fn StartupModal(
                                                 position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
                                                 color: {TEXT_DIM}; font-size: 11px; pointer-events: none;
                                             ",
-                                            "sec"
+                                            "min"
                                         }
                                     }
                                 }
@@ -635,7 +636,8 @@ pub fn StartupModal(
                                             width: parse_u32(&width(), width_default, 1),
                                             height: parse_u32(&height(), height_default, 1),
                                             fps: parse_f64(&fps(), fps_default, 1.0),
-                                            duration_seconds: parse_f64(&duration(), duration_default, 1.0),
+                                            // Convert minutes (UI) back to seconds (storage)
+                                            duration_seconds: parse_f64(&duration(), duration_default_seconds / 60.0, 0.0166) * 60.0,
                                             preview_max_width: parse_u32(
                                                 &preview_max_width(),
                                                 preview_default_width,
@@ -671,7 +673,8 @@ pub fn StartupModal(
                                             width: parse_u32(&width(), width_default, 1),
                                             height: parse_u32(&height(), height_default, 1),
                                             fps: parse_f64(&fps(), fps_default, 1.0),
-                                            duration_seconds: parse_f64(&duration(), duration_default, 1.0),
+                                            // Convert minutes (UI) back to seconds (storage)
+                                            duration_seconds: parse_f64(&duration(), duration_default_seconds / 60.0, 0.0166) * 60.0,
                                             preview_max_width: parse_u32(
                                                 &preview_max_width(),
                                                 preview_default_width,

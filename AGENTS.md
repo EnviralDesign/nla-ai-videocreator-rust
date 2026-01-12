@@ -37,6 +37,8 @@ description: Best practices and rules for AI developers working on this project
 - Keep components in separate files under `src/components/`
 - State management goes in `src/state/`
 - Core logic (non-UI) goes in `src/core/`
+- **Avoid `use_effect` in Dioxus.** In this codebase it has skipped mount-time work or fired at unpredictable times, leading to missing UI updates (e.g., waveforms not loading). It also makes debugging harder because effects run out-of-band from render and can silently fail.
+- If `use_effect` seems necessary, **pause and ask the user first** with a clear reason why it’s the least-bad option for the specific case.
 
 ## File Organization
 

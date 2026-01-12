@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::constants::{ACCENT_AUDIO, ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
-use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path, PeakCache, PeakLevel};
+use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path, PeakCache};
 use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
 
 use super::{MAX_THUMB_TILES, MIN_CLIP_WIDTH_FLOOR_PX, MIN_CLIP_WIDTH_PX, MIN_CLIP_WIDTH_SCALE, THUMB_TILE_WIDTH_PX};
@@ -127,134 +128,162 @@ pub(crate) fn ClipElement(
     };
 
     let mut waveform_cache = use_signal(|| None::<PeakCache>);
-    let waveform_building = use_signal(|| false);
+    let mut waveform_building = use_signal(|| false);
     let waveform_cache_buster = audio_waveform_cache_buster;
-    let project_root_for_wave = project_root.clone();
-    let asset_for_wave = asset.cloned();
-    let asset_id_for_wave = clip.asset_id;
+    let mut waveform_last_buster = use_signal(|| 0_u64);
+    let mut waveform_debug_logged = use_signal(|| false);
+    let mut waveform_path_cache = use_signal(|| None::<(WaveformKey, String)>);
+    let clip_asset_id = clip.asset_id;
+    let clip_duration = clip.duration;
+    let project_root_set = project_root.is_some();
 
-    use_effect(move || {
-        let _ = waveform_cache_buster();
+    if !waveform_debug_logged() {
         println!(
-            "[AUDIO DEBUG] Waveform effect: clip_id={} asset_id={} is_audio={} project_root_set={}",
+            "[AUDIO DEBUG] ClipElement render: clip_id={} asset_id={} asset_found={} is_audio={} duration={} trim={} zoom={} project_root_set={}",
             clip_id,
-            clip.asset_id,
+            clip_asset_id,
+            asset.is_some(),
             is_audio,
-            project_root_for_wave.is_some()
+            clip_duration,
+            trim_in_seconds,
+            zoom,
+            project_root_set
         );
-        if !is_audio {
-            waveform_cache.set(None);
-            return;
-        }
-        let Some(project_root) = project_root_for_wave.clone() else {
-            println!(
-                "[AUDIO DEBUG] Waveform: missing project root for asset {}",
-                clip.asset_id
-            );
-            waveform_cache.set(None);
-            return;
-        };
-        let Some(asset) = asset_for_wave.clone() else {
-            println!(
-                "[AUDIO DEBUG] Waveform: missing asset for clip {}",
-                clip_id
-            );
-            waveform_cache.set(None);
-            return;
-        };
+        waveform_debug_logged.set(true);
+    }
 
-        let Some(source_path) = resolve_audio_source(&project_root, &asset) else {
-            println!(
-                "[AUDIO DEBUG] Waveform: no source path for asset {}",
-                asset.id
-            );
-            waveform_cache.set(None);
-            return;
-        };
-        let cache_path = peak_cache_path(&project_root, asset.id);
-        if waveform_building() {
-            return;
-        }
+    let waveform_buster_value = waveform_cache_buster();
+    if is_audio {
+        if let (Some(project_root), Some(asset)) = (project_root.clone(), asset.clone()) {
+            let asset_id = asset.id;
+            let cache_path = peak_cache_path(&project_root, asset_id);
+            let source_path = resolve_audio_source(&project_root, &asset);
 
-        let mut waveform_cache = waveform_cache.clone();
-        let mut waveform_building = waveform_building.clone();
-        spawn(async move {
-            let cached = match tokio::task::spawn_blocking({
-                let cache_path = cache_path.clone();
-                let source_path = source_path.clone();
-                move || {
-                    if !cache_path.exists() {
-                        return Ok::<Option<PeakCache>, String>(None);
+            if waveform_last_buster() != waveform_buster_value {
+                let mut loaded = None;
+                if let Some(source_path) = source_path.as_ref() {
+                    if cache_path.exists() {
+                        match load_peak_cache(&cache_path)
+                            .and_then(|cache| {
+                                if cache_matches_source(&cache, source_path)? {
+                                    Ok(Some(cache))
+                                } else {
+                                    Ok(None)
+                                }
+                            }) {
+                            Ok(cache) => {
+                                if let Some(cache) = cache.as_ref() {
+                                    println!(
+                                        "[AUDIO DEBUG] Waveform: sync cache hit asset={} path={:?} levels={} base_peaks={}",
+                                        asset_id,
+                                        cache_path,
+                                        cache.levels.len(),
+                                        cache
+                                            .levels
+                                            .first()
+                                            .map(|level| level.peaks.len())
+                                            .unwrap_or(0)
+                                    );
+                                } else {
+                                    println!(
+                                        "[AUDIO DEBUG] Waveform: sync cache miss asset={} path={:?}",
+                                        asset_id, cache_path
+                                    );
+                                }
+                                loaded = cache;
+                            }
+                            Err(err) => {
+                                println!(
+                                    "[AUDIO DEBUG] Waveform: sync cache load failed asset={} err={}",
+                                    asset_id, err
+                                );
+                            }
+                        }
                     }
-                    let cache = load_peak_cache(&cache_path)?;
-                    if cache_matches_source(&cache, &source_path)? {
-                        Ok(Some(cache))
-                    } else {
-                        Ok(None)
-                    }
-                }
-            })
-            .await
-            {
-                Ok(Ok(cache)) => cache,
-                _ => None,
-            };
-
-            if let Some(cache) = cached {
-                println!(
-                    "[AUDIO DEBUG] Waveform: cache hit asset={} path={:?}",
-                    asset.id, cache_path
-                );
-                waveform_cache.set(Some(cache));
-                return;
-            }
-
-            println!(
-                "[AUDIO DEBUG] Waveform: cache miss asset={} building...",
-                asset.id
-            );
-            waveform_building.set(true);
-            let build_source_path = source_path.clone();
-            let build_result = tokio::task::spawn_blocking(move || {
-                build_and_store_peak_cache(
-                    &project_root,
-                    asset_id_for_wave,
-                    &build_source_path,
-                    PeakBuildConfig::default(),
-                )
-            })
-            .await
-            .ok()
-            .and_then(|res| res.ok());
-
-            waveform_building.set(false);
-            if let Some(cache_path) = build_result {
-                let load_path = cache_path.clone();
-                if let Ok(cache) =
-                    tokio::task::spawn_blocking(move || load_peak_cache(&load_path))
-                        .await
-                        .ok()
-                        .unwrap_or_else(|| Err("Waveform cache load failed".to_string()))
-                {
-                    println!(
-                        "[AUDIO DEBUG] Waveform: cache loaded asset={} path={:?}",
-                        asset.id, cache_path
-                    );
-                    waveform_cache.set(Some(cache));
                 } else {
                     println!(
-                        "[AUDIO DEBUG] Waveform: cache load failed asset={} path={:?}",
-                        asset.id, cache_path
+                        "[AUDIO DEBUG] Waveform: no source path for asset {}",
+                        asset_id
                     );
                 }
-            } else {
-                println!(
-                    "[AUDIO DEBUG] Waveform: build failed asset={} source={:?}",
-                    asset.id, source_path
-                );
+                waveform_cache.set(loaded);
+                if waveform_path_cache().is_some() {
+                    waveform_path_cache.set(None);
+                }
+                waveform_last_buster.set(waveform_buster_value);
             }
-        });
-    });
+
+            if waveform_cache().is_none() && !waveform_building() {
+                if let Some(source_path) = source_path {
+                    println!(
+                        "[AUDIO DEBUG] Waveform: sync build start asset={} source={:?}",
+                        asset_id, source_path
+                    );
+                    waveform_building.set(true);
+                    let mut waveform_cache = waveform_cache.clone();
+                    let mut waveform_building = waveform_building.clone();
+                    let mut waveform_cache_buster = waveform_cache_buster.clone();
+                    let project_root_for_build = project_root.clone();
+                    let source_path_for_build = source_path.clone();
+                    spawn(async move {
+                        let build_result = tokio::task::spawn_blocking(move || {
+                            build_and_store_peak_cache(
+                                &project_root_for_build,
+                                asset_id,
+                                &source_path_for_build,
+                                PeakBuildConfig::default(),
+                            )
+                        })
+                        .await
+                        .ok()
+                        .and_then(|res| res.ok());
+
+                        waveform_building.set(false);
+                        if let Some(cache_path) = build_result {
+                            let load_path = cache_path.clone();
+                            if let Ok(cache) =
+                                tokio::task::spawn_blocking(move || load_peak_cache(&load_path))
+                                    .await
+                                    .ok()
+                                    .unwrap_or_else(|| Err("Waveform cache load failed".to_string()))
+                            {
+                                println!(
+                                    "[AUDIO DEBUG] Waveform: sync cache loaded asset={} path={:?} levels={} base_peaks={}",
+                                    asset_id,
+                                    cache_path,
+                                    cache.levels.len(),
+                                    cache
+                                        .levels
+                                        .first()
+                                        .map(|level| level.peaks.len())
+                                        .unwrap_or(0)
+                                );
+                                waveform_cache.set(Some(cache));
+                                waveform_cache_buster
+                                    .set(waveform_cache_buster() + 1);
+                                waveform_path_cache.set(None);
+                            } else {
+                                println!(
+                                    "[AUDIO DEBUG] Waveform: sync cache load failed asset={} path={:?}",
+                                    asset_id, cache_path
+                                );
+                            }
+                        } else {
+                            println!(
+                                "[AUDIO DEBUG] Waveform: sync build failed asset={} source={:?}",
+                                asset_id, source_path
+                            );
+                        }
+                    });
+                }
+            }
+        }
+    } else if waveform_cache().is_some() {
+        waveform_cache.set(None);
+        if waveform_path_cache().is_some() {
+            waveform_path_cache.set(None);
+        }
+    }
 
     let current_start = clip.start_time;
     let current_duration = clip.duration;
@@ -317,21 +346,66 @@ pub(crate) fn ClipElement(
 
             if is_audio {
                 {
-                    let waveform_points = waveform_cache()
-                        .as_ref()
-                        .map(|cache| {
-                            waveform_points_for_clip(
+                    let mut waveform_path = String::new();
+                    if let Some(cache) = waveform_cache().as_ref() {
+                        let key = WaveformKey {
+                            buster: waveform_buster_value,
+                            width: clip_width.max(1) as usize,
+                            zoom_bits: zoom.to_bits(),
+                            trim_bits: trim_in_seconds.to_bits(),
+                            duration_bits: clip.duration.to_bits(),
+                        };
+
+                        let mut needs_rebuild = true;
+                        if let Some((cached_key, cached_path)) = waveform_path_cache().as_ref() {
+                            if *cached_key == key {
+                                waveform_path = cached_path.clone();
+                                needs_rebuild = false;
+                            }
+                        }
+
+                        if needs_rebuild {
+                            let columns_start = Instant::now();
+                            let columns = waveform_columns_for_clip(
                                 cache,
-                                clip.start_time,
                                 clip.duration,
                                 trim_in_seconds,
                                 clip_width.max(1) as usize,
-                                zoom,
-                            )
-                        })
-                        .unwrap_or_default();
+                            );
+                            let columns_elapsed = columns_start.elapsed();
 
-                    if !waveform_points.is_empty() {
+                            let path_start = Instant::now();
+                            waveform_path = waveform_path_from_columns(&columns);
+                            let path_elapsed = path_start.elapsed();
+
+                            let bitmap_start = Instant::now();
+                            let _bitmap = waveform_bitmap_from_columns(
+                                &columns,
+                                clip_width.max(1) as usize,
+                                32,
+                            );
+                            let bitmap_elapsed = bitmap_start.elapsed();
+
+                            let total_ms =
+                                columns_elapsed.as_millis() + path_elapsed.as_millis();
+                            if total_ms > 5 || bitmap_elapsed.as_millis() > 5 {
+                                println!(
+                                    "[PERF DEBUG] Waveform build: clip_id={} asset_id={} width={} zoom={} columns={} columns_ms={} path_ms={} bitmap_ms={}",
+                                    clip_id,
+                                    clip.asset_id,
+                                    clip_width,
+                                    zoom,
+                                    columns.len(),
+                                    columns_elapsed.as_millis(),
+                                    path_elapsed.as_millis(),
+                                    bitmap_elapsed.as_millis()
+                                );
+                            }
+                            waveform_path_cache.set(Some((key, waveform_path.clone())));
+                        }
+                    }
+
+                    if !waveform_path.is_empty() {
                         rsx! {
                             svg {
                                 style: "
@@ -339,19 +413,16 @@ pub(crate) fn ClipElement(
                                     width: 100%; height: 100%;
                                     pointer-events: none; z-index: 0;
                                 ",
+                                width: "{clip_width.max(1)}",
+                                height: "32",
                                 view_box: "0 0 {clip_width.max(1)} 32",
                                 preserve_aspect_ratio: "none",
-                                for (idx, point) in waveform_points.iter().enumerate() {
-                                    line {
-                                        key: "wave-{clip_id}-{idx}",
-                                        x1: "{point.x}",
-                                        y1: "{point.y_top}",
-                                        x2: "{point.x}",
-                                        y2: "{point.y_bottom}",
-                                        stroke: "{ACCENT_AUDIO}",
-                                        stroke_width: "1",
-                                        stroke_opacity: "0.55",
-                                    }
+                                path {
+                                    d: "{waveform_path}",
+                                    fill: "none",
+                                    stroke: "{ACCENT_AUDIO}",
+                                    stroke_width: "1",
+                                    stroke_opacity: "0.55",
                                 }
                             }
                         }
@@ -638,29 +709,34 @@ pub(crate) fn ClipElement(
     }
 }
 
-#[derive(Clone, Copy)]
-struct WavePoint {
-    x: f32,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WaveformKey {
+    buster: u64,
+    width: usize,
+    zoom_bits: u64,
+    trim_bits: u64,
+    duration_bits: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WaveColumn {
     y_top: f32,
     y_bottom: f32,
 }
 
-fn waveform_points_for_clip(
+fn waveform_columns_for_clip(
     cache: &PeakCache,
-    _clip_start_time: f64,
     clip_duration: f64,
     trim_in_seconds: f64,
     width_px: usize,
-    zoom: f64,
-) -> Vec<WavePoint> {
+) -> Vec<WaveColumn> {
     let levels = &cache.levels;
     if levels.is_empty() || width_px == 0 {
         return Vec::new();
     }
 
     let sample_rate = cache.sample_rate as f64;
-    let samples_per_pixel = sample_rate / zoom.max(1.0);
-    let level = select_peak_level(levels, samples_per_pixel);
+    let level = &levels[0];
 
     let clip_duration = clip_duration.max(0.0);
     let trim_in_seconds = trim_in_seconds.max(0.0);
@@ -676,40 +752,85 @@ fn waveform_points_for_clip(
     }
 
     let slice = &level.peaks[start_index..end_index];
-    let width = width_px.max(1);
+    let width = width_px.max(1).min(slice.len().max(1));
     let step = slice.len() as f64 / width as f64;
     let height = 32.0_f32;
     let center = height / 2.0;
     let amp = (height - 6.0) / 2.0;
 
-    let mut points = Vec::with_capacity(width);
+    let mut columns = Vec::with_capacity(width);
     for x in 0..width {
-        let idx = (x as f64 * step).floor() as usize;
-        if idx >= slice.len() {
+        let start = (x as f64 * step).floor() as usize;
+        let end = ((x + 1) as f64 * step).ceil() as usize;
+        if start >= slice.len() {
             continue;
         }
-        let peak = slice[idx];
-        let min = peak.min_l.min(peak.min_r) as f32 / i16::MAX as f32;
-        let max = peak.max_l.max(peak.max_r) as f32 / i16::MAX as f32;
-        points.push(WavePoint {
-            x: x as f32 + 0.5,
+        let end = end.min(slice.len()).max(start + 1);
+        let mut min = i16::MAX;
+        let mut max = i16::MIN;
+        for peak in &slice[start..end] {
+            min = min.min(peak.min_l.min(peak.min_r));
+            max = max.max(peak.max_l.max(peak.max_r));
+        }
+        let min = min as f32 / i16::MAX as f32;
+        let max = max as f32 / i16::MAX as f32;
+        columns.push(WaveColumn {
             y_top: center - max * amp,
             y_bottom: center - min * amp,
         });
     }
 
-    points
+    columns
 }
 
-fn select_peak_level<'a>(levels: &'a [PeakLevel], samples_per_pixel: f64) -> &'a PeakLevel {
-    let mut selected = &levels[0];
-    for level in levels.iter() {
-        if level.block_size as f64 >= samples_per_pixel {
-            selected = level;
+fn waveform_path_from_columns(columns: &[WaveColumn]) -> String {
+    if columns.is_empty() {
+        return String::new();
+    }
+    let mut path = String::with_capacity(columns.len() * 24);
+    for (idx, column) in columns.iter().enumerate() {
+        let x_pos = idx as f32 + 0.5;
+        let _ = std::fmt::Write::write_fmt(
+            &mut path,
+            format_args!(
+                "M{x_pos:.2} {y_top:.2} L{x_pos:.2} {y_bottom:.2} ",
+                y_top = column.y_top,
+                y_bottom = column.y_bottom
+            ),
+        );
+    }
+    path
+}
+
+fn waveform_bitmap_from_columns(
+    columns: &[WaveColumn],
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
+    if columns.is_empty() || width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let mut buffer = vec![0_u8; width * height];
+    let height_f = height as f32;
+    let max_y = height.saturating_sub(1) as i32;
+
+    for (x, column) in columns.iter().enumerate() {
+        if x >= width {
             break;
         }
-        selected = level;
+        let mut y_top = column.y_top.clamp(0.0, height_f - 1.0).round() as i32;
+        let mut y_bottom = column.y_bottom.clamp(0.0, height_f - 1.0).round() as i32;
+        if y_top > y_bottom {
+            std::mem::swap(&mut y_top, &mut y_bottom);
+        }
+        y_top = y_top.clamp(0, max_y);
+        y_bottom = y_bottom.clamp(0, max_y);
+        let base = x;
+        for y in y_top..=y_bottom {
+            buffer[y as usize * width + base] = 255;
+        }
     }
-    selected
+
+    buffer
 }
 
