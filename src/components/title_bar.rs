@@ -313,16 +313,6 @@ pub fn TitleBar(
             // Right side: Quick toggles (compact)
             div {
                 style: "display: flex; align-items: center; gap: 8px;",
-                QuickToggle {
-                    label: "Stats",
-                    enabled: show_preview_stats,
-                    on_toggle: on_toggle_preview_stats,
-                }
-                QuickToggle {
-                    label: "HW",
-                    enabled: use_hw_decode,
-                    on_toggle: on_toggle_hw_decode,
-                }
                 QuickToggleBadge {
                     label: "QUE",
                     enabled: queue_open,
@@ -338,6 +328,9 @@ pub fn TitleBar(
                 div {
                     style: "
                         position: fixed; top: 32px; left: 0; right: 0; bottom: 0;
+                        background: rgba(0, 0, 0, 0.34);
+                        backdrop-filter: blur(5px);
+                        -webkit-backdrop-filter: blur(5px);
                         z-index: 99;
                     ",
                     onclick: close_menus,
@@ -449,32 +442,6 @@ fn MenuDivider() -> Element {
                 height: 1px; background-color: {BORDER_DEFAULT};
                 margin: 4px 8px;
             ",
-        }
-    }
-}
-
-/// Quick toggle button for the right side of the title bar
-#[component]
-fn QuickToggle(
-    label: &'static str,
-    enabled: bool,
-    on_toggle: EventHandler<MouseEvent>,
-) -> Element {
-    let bg = if enabled { ACCENT_PRIMARY } else { BG_BASE };
-    let border = if enabled { ACCENT_PRIMARY } else { BORDER_DEFAULT };
-    let text = if enabled { "#000" } else { TEXT_MUTED };
-    
-    rsx! {
-        button {
-            class: "collapse-btn",
-            style: "
-                background: {bg}; border: 1px solid {border};
-                color: {text}; font-size: 10px; font-weight: 500;
-                cursor: pointer; padding: 2px 8px; border-radius: 999px;
-                text-transform: uppercase; letter-spacing: 0.5px;
-            ",
-            onclick: move |e| on_toggle.call(e),
-            "{label}"
         }
     }
 }

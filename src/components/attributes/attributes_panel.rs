@@ -132,6 +132,10 @@ pub fn AttributesPanelContent(
         .as_ref()
         .map(asset_display_name)
         .unwrap_or_else(|| "Unknown".to_string());
+    let asset_base_label = asset
+        .as_ref()
+        .map(|asset| asset.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
     let project_root = project_read.project_path.clone();
     let generative_info = asset.as_ref().and_then(|asset| match &asset.kind {
         crate::state::AssetKind::GenerativeVideo { folder, .. } => {
@@ -695,7 +699,7 @@ pub fn AttributesPanelContent(
         }))
     };
 
-    let asset_label = asset_display.clone();
+    let asset_label = asset_base_label.clone();
     let on_generate = {
         let gen_folder_path = gen_folder_path.clone();
         let gen_status = gen_status.clone();
@@ -791,11 +795,6 @@ pub fn AttributesPanelContent(
                             update_seed_inputs(&base_inputs, &base_snapshot, field, seed)
                         }
                     };
-                    let label = if batch_count > 1 {
-                        format!("{} ({}/{})", job_asset_label, index + 1, batch_count)
-                    } else {
-                        job_asset_label.clone()
-                    };
                     let job = GenerationJob {
                         id: uuid::Uuid::new_v4(),
                         created_at: chrono::Utc::now(),
@@ -808,7 +807,7 @@ pub fn AttributesPanelContent(
                         output_type: provider.output_type,
                         asset_id,
                         clip_id,
-                        asset_label: label,
+                        asset_label: job_asset_label.clone(),
                         folder_path: folder_path.clone(),
                         inputs,
                         inputs_snapshot: input_snapshot,

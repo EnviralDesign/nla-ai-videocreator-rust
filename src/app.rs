@@ -19,8 +19,7 @@ use crate::core::provider_store::{
     load_global_provider_entries_or_empty,
 };
 use crate::state::{
-    GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry,
-    ProviderOutputType,
+    GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry, ProviderOutputType,
 };
 use crate::providers::comfyui;
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};

@@ -32,6 +32,16 @@ pub fn GenerationQueuePanel(
     rsx! {
         div {
             style: "
+                position: fixed; inset: 0;
+                background: rgba(0, 0, 0, 0.38);
+                backdrop-filter: blur(6px);
+                -webkit-backdrop-filter: blur(6px);
+                z-index: 119;
+            ",
+            onclick: move |e| on_close.call(e),
+        }
+        div {
+            style: "
                 position: fixed; top: 40px; right: 12px;
                 width: 320px; max-height: calc(100vh - 60px);
                 display: flex; flex-direction: column; gap: 10px;
@@ -166,9 +176,6 @@ pub fn GenerationQueuePanel(
                                         style: "display: flex; align-items: center; justify-content: space-between;",
                                         span { style: "font-size: 10px; color: {TEXT_MUTED};", "{job.provider.name}" }
                                         span { style: "font-size: 10px; color: {TEXT_DIM};", "{output_label}" }
-                                    }
-                                    if let Some(version) = job.version.as_ref() {
-                                        span { style: "font-size: 10px; color: {TEXT_DIM};", "Output: {version}" }
                                     }
                                     if job.status == GenerationJobStatus::Running {
                                         div {

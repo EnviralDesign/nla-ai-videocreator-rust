@@ -405,6 +405,7 @@ workflows/
     - [x] Resize clips (drag left/right edges, min duration 0.1s)
     - [x] Delete clips (right-click custom context menu, native menu suppressed)
     - [x] Move clips between compatible tracks (context menu up/down)
+    - [ ] Clip snapping (drag/move/trim to edges, markers, playhead)
   - [x] Clip Creation:
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
@@ -808,6 +809,12 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-12:** Removed Stats/HW quick toggles from the title bar (menus remain).
+- **2026-01-12:** Strengthened dimming backdrops and added subtle blur for queue popover and title-bar menus.
+- **2026-01-12:** Queue popover now closes on outside click.
+- **2026-01-12:** Queue job labels no longer include batch index suffixes.
+- **2026-01-12:** Queue job labels now omit active-version suffixes to avoid confusion while generating.
+- **2026-01-12:** Removed version labels from the queue to avoid misleading planned versions.
 - **2026-01-12:** Added a Manage Versions menu with delete current/others/all actions and confirmations.
 - **2026-01-12:** Added a Clear All action in the generation queue to purge queued/completed jobs quickly.
 - **2026-01-12:** Wired ComfyUI WebSocket progress events into the generation queue with workflow + node progress bars.
