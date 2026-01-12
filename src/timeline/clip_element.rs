@@ -1,10 +1,15 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::constants::{ACCENT_AUDIO, ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
+use crate::constants::{ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
 use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path, PeakCache};
 use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
+
+use image::codecs::bmp::BmpEncoder;
+use image::{ColorType, ImageEncoder};
 
 use super::{MAX_THUMB_TILES, MIN_CLIP_WIDTH_FLOOR_PX, MIN_CLIP_WIDTH_PX, MIN_CLIP_WIDTH_SCALE, THUMB_TILE_WIDTH_PX};
 
@@ -132,7 +137,7 @@ pub(crate) fn ClipElement(
     let waveform_cache_buster = audio_waveform_cache_buster;
     let mut waveform_last_buster = use_signal(|| 0_u64);
     let mut waveform_debug_logged = use_signal(|| false);
-    let mut waveform_path_cache = use_signal(|| None::<(WaveformKey, String)>);
+    let mut waveform_bitmap_cache = use_signal(|| None::<(WaveformKey, String)>);
     let clip_asset_id = clip.asset_id;
     let clip_duration = clip.duration;
     let project_root_set = project_root.is_some();
@@ -207,8 +212,8 @@ pub(crate) fn ClipElement(
                     );
                 }
                 waveform_cache.set(loaded);
-                if waveform_path_cache().is_some() {
-                    waveform_path_cache.set(None);
+                if waveform_bitmap_cache().is_some() {
+                    waveform_bitmap_cache.set(None);
                 }
                 waveform_last_buster.set(waveform_buster_value);
             }
@@ -261,7 +266,7 @@ pub(crate) fn ClipElement(
                                 waveform_cache.set(Some(cache));
                                 waveform_cache_buster
                                     .set(waveform_cache_buster() + 1);
-                                waveform_path_cache.set(None);
+                                waveform_bitmap_cache.set(None);
                             } else {
                                 println!(
                                     "[AUDIO DEBUG] Waveform: sync cache load failed asset={} path={:?}",
@@ -280,8 +285,8 @@ pub(crate) fn ClipElement(
         }
     } else if waveform_cache().is_some() {
         waveform_cache.set(None);
-        if waveform_path_cache().is_some() {
-            waveform_path_cache.set(None);
+        if waveform_bitmap_cache().is_some() {
+            waveform_bitmap_cache.set(None);
         }
     }
 
@@ -346,7 +351,7 @@ pub(crate) fn ClipElement(
 
             if is_audio {
                 {
-                    let mut waveform_path = String::new();
+                    let mut waveform_url = String::new();
                     if let Some(cache) = waveform_cache().as_ref() {
                         let key = WaveformKey {
                             buster: waveform_buster_value,
@@ -357,73 +362,94 @@ pub(crate) fn ClipElement(
                         };
 
                         let mut needs_rebuild = true;
-                        if let Some((cached_key, cached_path)) = waveform_path_cache().as_ref() {
+                        if let Some((cached_key, cached_url)) = waveform_bitmap_cache().as_ref() {
                             if *cached_key == key {
-                                waveform_path = cached_path.clone();
+                                waveform_url = cached_url.clone();
                                 needs_rebuild = false;
                             }
                         }
 
                         if needs_rebuild {
-                            let columns_start = Instant::now();
-                            let columns = waveform_columns_for_clip(
-                                cache,
-                                clip.duration,
-                                trim_in_seconds,
-                                clip_width.max(1) as usize,
-                            );
-                            let columns_elapsed = columns_start.elapsed();
-
-                            let path_start = Instant::now();
-                            waveform_path = waveform_path_from_columns(&columns);
-                            let path_elapsed = path_start.elapsed();
-
-                            let bitmap_start = Instant::now();
-                            let _bitmap = waveform_bitmap_from_columns(
-                                &columns,
-                                clip_width.max(1) as usize,
-                                32,
-                            );
-                            let bitmap_elapsed = bitmap_start.elapsed();
-
-                            let total_ms =
-                                columns_elapsed.as_millis() + path_elapsed.as_millis();
-                            if total_ms > 5 || bitmap_elapsed.as_millis() > 5 {
-                                println!(
-                                    "[PERF DEBUG] Waveform build: clip_id={} asset_id={} width={} zoom={} columns={} columns_ms={} path_ms={} bitmap_ms={}",
-                                    clip_id,
+                            if let Some(project_root) = project_root.as_ref() {
+                                let bmp_path = waveform_bmp_cache_path(
+                                    project_root,
                                     clip.asset_id,
-                                    clip_width,
-                                    zoom,
-                                    columns.len(),
-                                    columns_elapsed.as_millis(),
-                                    path_elapsed.as_millis(),
-                                    bitmap_elapsed.as_millis()
+                                    &key,
+                                    32,
                                 );
+                                let bmp_url = crate::utils::get_local_file_url(&bmp_path);
+
+                                if bmp_path.exists() {
+                                    waveform_url = bmp_url.clone();
+                                    waveform_bitmap_cache.set(Some((key, bmp_url)));
+                                } else {
+                                    let columns_start = Instant::now();
+                                    let columns = waveform_columns_for_clip(
+                                        cache,
+                                        clip.duration,
+                                        trim_in_seconds,
+                                        clip_width.max(1) as usize,
+                                    );
+                                    let columns_elapsed = columns_start.elapsed();
+
+                                    let bitmap_start = Instant::now();
+                                    let bitmap = waveform_bitmap_from_columns(
+                                        &columns,
+                                        clip_width.max(1) as usize,
+                                        32,
+                                    );
+                                    let bitmap_elapsed = bitmap_start.elapsed();
+
+                                    match write_waveform_bmp(
+                                        &bmp_path,
+                                        clip.asset_id,
+                                        clip_width.max(1) as usize,
+                                        32,
+                                        &bitmap,
+                                    ) {
+                                        Ok((encode_ms, write_ms, byte_len)) => {
+                                            waveform_url = bmp_url.clone();
+                                            waveform_bitmap_cache.set(Some((key, bmp_url)));
+                                            let total_ms = columns_elapsed.as_millis()
+                                                + bitmap_elapsed.as_millis();
+                                            if total_ms > 5 || encode_ms > 5 || write_ms > 5 {
+                                                println!(
+                                                    "[PERF DEBUG] Waveform bmp build: clip_id={} asset_id={} width={} zoom={} columns={} columns_ms={} bitmap_ms={} bmp_encode_ms={} bmp_write_ms={} bmp_bytes={}",
+                                                    clip_id,
+                                                    clip.asset_id,
+                                                    clip_width,
+                                                    zoom,
+                                                    columns.len(),
+                                                    columns_elapsed.as_millis(),
+                                                    bitmap_elapsed.as_millis(),
+                                                    encode_ms,
+                                                    write_ms,
+                                                    byte_len
+                                                );
+                                            }
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "[PERF DEBUG] Waveform bmp write failed: asset_id={} err={}",
+                                                clip.asset_id, err
+                                            );
+                                        }
+                                    }
+                                }
                             }
-                            waveform_path_cache.set(Some((key, waveform_path.clone())));
                         }
                     }
 
-                    if !waveform_path.is_empty() {
+                    if !waveform_url.is_empty() {
                         rsx! {
-                            svg {
+                            img {
                                 style: "
                                     position: absolute; left: 0; right: 0; top: 0; bottom: 0;
                                     width: 100%; height: 100%;
                                     pointer-events: none; z-index: 0;
                                 ",
-                                width: "{clip_width.max(1)}",
-                                height: "32",
-                                view_box: "0 0 {clip_width.max(1)} 32",
-                                preserve_aspect_ratio: "none",
-                                path {
-                                    d: "{waveform_path}",
-                                    fill: "none",
-                                    stroke: "{ACCENT_AUDIO}",
-                                    stroke_width: "1",
-                                    stroke_opacity: "0.55",
-                                }
+                                src: "{waveform_url}",
+                                draggable: "false",
                             }
                         }
                     } else {
@@ -752,7 +778,7 @@ fn waveform_columns_for_clip(
     }
 
     let slice = &level.peaks[start_index..end_index];
-    let width = width_px.max(1).min(slice.len().max(1));
+    let width = width_px.max(1);
     let step = slice.len() as f64 / width as f64;
     let height = 32.0_f32;
     let center = height / 2.0;
@@ -781,25 +807,6 @@ fn waveform_columns_for_clip(
     }
 
     columns
-}
-
-fn waveform_path_from_columns(columns: &[WaveColumn]) -> String {
-    if columns.is_empty() {
-        return String::new();
-    }
-    let mut path = String::with_capacity(columns.len() * 24);
-    for (idx, column) in columns.iter().enumerate() {
-        let x_pos = idx as f32 + 0.5;
-        let _ = std::fmt::Write::write_fmt(
-            &mut path,
-            format_args!(
-                "M{x_pos:.2} {y_top:.2} L{x_pos:.2} {y_bottom:.2} ",
-                y_top = column.y_top,
-                y_bottom = column.y_bottom
-            ),
-        );
-    }
-    path
 }
 
 fn waveform_bitmap_from_columns(
@@ -832,5 +839,70 @@ fn waveform_bitmap_from_columns(
     }
 
     buffer
+}
+
+fn waveform_bmp_cache_path(
+    project_root: &Path,
+    asset_id: uuid::Uuid,
+    key: &WaveformKey,
+    height: usize,
+) -> PathBuf {
+    let file_name = format!(
+        "w{}_h{}_z{:x}_t{:x}_d{:x}_b{:x}.bmp",
+        key.width, height, key.zoom_bits, key.trim_bits, key.duration_bits, key.buster
+    );
+    project_root
+        .join(".cache")
+        .join("audio")
+        .join("waveform_strips")
+        .join(asset_id.to_string())
+        .join(file_name)
+}
+
+fn write_waveform_bmp(
+    path: &Path,
+    asset_id: uuid::Uuid,
+    width: usize,
+    height: usize,
+    bitmap: &[u8],
+) -> Result<(u128, u128, usize), String> {
+    if bitmap.is_empty() || width == 0 || height == 0 {
+        return Err("Empty bitmap.".to_string());
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+
+    let mut bmp_bytes = Vec::new();
+    let bmp_encode_start = Instant::now();
+    let bmp_result = BmpEncoder::new(&mut bmp_bytes)
+        .write_image(bitmap, width as u32, height as u32, ColorType::L8.into());
+    let bmp_encode_ms = bmp_encode_start.elapsed().as_millis();
+
+    if bmp_result.is_err() {
+        println!(
+            "[PERF DEBUG] Waveform bmp encode failed: asset_id={} err={}",
+            asset_id, bmp_result.is_err()
+        );
+        return Err("BMP encode failed.".to_string());
+    }
+
+    let bmp_write_start = Instant::now();
+    let bmp_write_result = fs::write(path, &bmp_bytes);
+    let bmp_write_ms = bmp_write_start.elapsed().as_millis();
+
+    println!(
+        "[PERF DEBUG] Waveform bmp encode: asset_id={} width={} height={} bmp_encode_ms={} bmp_bytes={} bmp_write_ms={} bmp_write_ok={}",
+        asset_id,
+        width,
+        height,
+        bmp_encode_ms,
+        bmp_bytes.len(),
+        bmp_write_ms,
+        bmp_write_result.is_ok()
+    );
+    bmp_write_result.map_err(|err| err.to_string())?;
+    Ok((bmp_encode_ms, bmp_write_ms, bmp_bytes.len()))
 }
 
