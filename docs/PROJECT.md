@@ -920,6 +920,7 @@ src/
 - **2026-01-12:** Preferred stereo output configs when available and allowed multi-channel decode buffers.
 - **2026-01-12:** Fixed packed f32 audio extraction to use full interleaved buffer (avoids accelerated playback).
 - **2026-01-12:** Scrubbing now pauses playback while dragging and resumes on release, with audio preview during scrub.
+- **2026-01-12:** Audio decode now prewarms on project load/clip add and avoids blocking UI on first play.
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version
