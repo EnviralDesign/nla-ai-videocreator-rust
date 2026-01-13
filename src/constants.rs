@@ -154,6 +154,7 @@ pub const TIMELINE_VIEWPORT_SCRIPT: &str = r#"
 const hostId = "timeline-scroll-host";
 let lastWidth = null;
 let lastScrollLeft = null;
+let lastUserScrollMs = 0;
 
 function sendWidth() {
     const host = document.getElementById(hostId);
@@ -176,6 +177,10 @@ function sendWidth() {
 function applyScrollLeft(value) {
     const host = document.getElementById(hostId);
     if (!host) {
+        return;
+    }
+    const now = performance.now();
+    if (now - lastUserScrollMs < 80) {
         return;
     }
     const next = Math.max(0, value || 0);
@@ -217,7 +222,10 @@ function attach() {
         attributes: true,
         attributeFilter: ["data-scroll-left"],
     });
-    host.addEventListener("scroll", sendWidth, { passive: true });
+    host.addEventListener("scroll", () => {
+        lastUserScrollMs = performance.now();
+        sendWidth();
+    }, { passive: true });
     window.addEventListener("resize", sendWidth, { passive: true });
     const initialValue = readScrollLeftAttr(host);
     if (initialValue !== null) {
