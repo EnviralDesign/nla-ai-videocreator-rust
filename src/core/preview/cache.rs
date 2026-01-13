@@ -24,6 +24,15 @@ pub struct FrameCache {
     pub(crate) asset_index: HashMap<PathBuf, HashSet<i64>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FrameCacheStats {
+    pub entries: usize,
+    pub total_bytes: usize,
+    pub max_bytes: usize,
+    pub asset_count: usize,
+    pub lru_len: usize,
+}
+
 impl FrameCache {
     pub fn new(max_bytes: usize) -> Self {
         Self {
@@ -36,15 +45,33 @@ impl FrameCache {
         }
     }
 
+    pub fn stats(&self) -> FrameCacheStats {
+        FrameCacheStats {
+            entries: self.entries.len(),
+            total_bytes: self.total_bytes,
+            max_bytes: self.max_bytes,
+            asset_count: self.asset_index.len(),
+            lru_len: self.lru_order.len(),
+        }
+    }
+
     pub(crate) fn get(&mut self, key: &FrameKey) -> Option<CachedFrame> {
-        let entry = self.entries.get_mut(key)?;
-        self.access_counter = self.access_counter.wrapping_add(1);
-        entry.last_used = self.access_counter;
-        self.lru_order.push_back((key.clone(), entry.last_used));
+        let (image, source_width, source_height) = {
+            let entry = self.entries.get_mut(key)?;
+            self.access_counter = self.access_counter.wrapping_add(1);
+            entry.last_used = self.access_counter;
+            self.lru_order.push_back((key.clone(), entry.last_used));
+            (
+                Arc::clone(&entry.image),
+                entry.source_width,
+                entry.source_height,
+            )
+        };
+        self.compact_lru_if_needed();
         Some(CachedFrame {
-            image: Arc::clone(&entry.image),
-            source_width: entry.source_width,
-            source_height: entry.source_height,
+            image,
+            source_width,
+            source_height,
         })
     }
 
@@ -83,6 +110,7 @@ impl FrameCache {
         self.total_bytes = self.total_bytes.saturating_add(size_bytes);
         self.lru_order.push_back((key, last_used));
         self.evict_if_needed();
+        self.compact_lru_if_needed();
     }
 
     pub(crate) fn invalidate_path(&mut self, path: &Path) {
@@ -131,6 +159,29 @@ impl FrameCache {
                     self.asset_index.remove(&key.path);
                 }
             }
+        }
+    }
+
+    fn compact_lru_if_needed(&mut self) {
+        let entry_count = self.entries.len();
+        if entry_count == 0 {
+            self.lru_order.clear();
+            return;
+        }
+        let max_len = entry_count.saturating_mul(4).saturating_add(1024);
+        if self.lru_order.len() <= max_len {
+            return;
+        }
+
+        let mut ordered: Vec<(FrameKey, u64)> = self
+            .entries
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.last_used))
+            .collect();
+        ordered.sort_by_key(|(_, stamp)| *stamp);
+        self.lru_order.clear();
+        for item in ordered {
+            self.lru_order.push_back(item);
         }
     }
 }

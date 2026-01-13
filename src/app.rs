@@ -969,6 +969,100 @@ pub fn App() -> Element {
         }
     });
 
+    let audio_sample_cache_for_debug = audio_sample_cache.clone();
+    let audio_decode_in_flight_for_debug = audio_decode_in_flight.clone();
+    use_future(move || {
+        let previewer = previewer.clone();
+        let audio_sample_cache = audio_sample_cache_for_debug.clone();
+        let audio_decode_in_flight = audio_decode_in_flight_for_debug.clone();
+        let clip_cache_buckets = clip_cache_buckets.clone();
+        let project = project.clone();
+        async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let cache_stats = previewer.read().debug_cache_stats();
+                let plate_info = previewer.read().debug_plate_cache_bytes();
+
+                let (audio_assets, audio_samples, audio_bytes) = if let Ok(cache) =
+                    audio_sample_cache.lock()
+                {
+                    let mut samples = 0_usize;
+                    for entry in cache.values() {
+                        samples = samples.saturating_add(entry.len());
+                    }
+                    let bytes = samples.saturating_mul(std::mem::size_of::<f32>());
+                    (cache.len(), samples, bytes)
+                } else {
+                    (0, 0, 0)
+                };
+
+                let inflight = audio_decode_in_flight
+                    .lock()
+                    .map(|set| set.len())
+                    .unwrap_or(0);
+
+                let bucket_map = clip_cache_buckets();
+                let bucket_clips = bucket_map.len();
+                let bucket_total = bucket_map.values().map(|v| v.len()).sum::<usize>();
+
+                let project_snapshot = project.read();
+
+                if let Some(stats) = cache_stats {
+                    if let Some((plate_w, plate_h, plate_bytes)) = plate_info {
+                        println!(
+                            "[MEM DEBUG] preview_cache entries={} bytes={} max={} assets={} lru={} plate={}x{} plate_bytes={} audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
+                            stats.entries,
+                            stats.total_bytes,
+                            stats.max_bytes,
+                            stats.asset_count,
+                            stats.lru_len,
+                            plate_w,
+                            plate_h,
+                            plate_bytes,
+                            audio_assets,
+                            audio_samples,
+                            audio_bytes,
+                            inflight,
+                            project_snapshot.clips.len(),
+                            project_snapshot.assets.len(),
+                            bucket_clips,
+                            bucket_total
+                        );
+                    } else {
+                        println!(
+                            "[MEM DEBUG] preview_cache entries={} bytes={} max={} assets={} lru={} plate=none audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
+                            stats.entries,
+                            stats.total_bytes,
+                            stats.max_bytes,
+                            stats.asset_count,
+                            stats.lru_len,
+                            audio_assets,
+                            audio_samples,
+                            audio_bytes,
+                            inflight,
+                            project_snapshot.clips.len(),
+                            project_snapshot.assets.len(),
+                            bucket_clips,
+                            bucket_total
+                        );
+                    }
+                } else {
+                    println!(
+                        "[MEM DEBUG] preview_cache unavailable audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
+                        audio_assets,
+                        audio_samples,
+                        audio_bytes,
+                        inflight,
+                        project_snapshot.clips.len(),
+                        project_snapshot.assets.len(),
+                        bucket_clips,
+                        bucket_total
+                    );
+                }
+            }
+        }
+    });
+
     use_effect(move || {
         let _tick = preview_cache_tick();
         if !SHOW_CACHE_TICKS {

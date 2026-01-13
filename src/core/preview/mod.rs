@@ -10,5 +10,5 @@ mod utils;
 
 pub use renderer::PreviewRenderer;
 #[allow(unused_imports)]
-pub use cache::FrameCache;
+pub use cache::{FrameCache, FrameCacheStats};
 pub use types::*;
