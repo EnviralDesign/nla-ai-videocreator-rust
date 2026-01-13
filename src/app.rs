@@ -1387,6 +1387,9 @@ pub fn App() -> Element {
                             current_time.set(snapped_time);
                             if let Some(engine) = audio_engine.as_ref() {
                                 engine.seek_seconds(snapped_time);
+                                engine.trigger_scrub_preview(
+                                    ((engine.sample_rate() as f64) * 0.03).round() as u64,
+                                );
                             }
                         }
                         _ => {}
@@ -1402,6 +1405,7 @@ pub fn App() -> Element {
                     if is_scrubbing() {
                         is_scrubbing.set(false);
                         if let Some(engine) = audio_engine.as_ref() {
+                            engine.set_scrub_hold(false);
                             if scrub_was_playing() {
                                 engine.seek_seconds(current_time());
                                 engine.play();
@@ -1872,7 +1876,8 @@ pub fn App() -> Element {
                                     }
                                     if let Some(engine) = audio_engine.as_ref() {
                                         let engine = Arc::clone(engine);
-                                        if let Some(project_root) = project.read().project_path.clone()
+                                        if let Some(project_root) =
+                                            project.read().project_path.clone()
                                         {
                                             let project_snapshot = project.read().clone();
                                             let (items, missing) =
@@ -1913,7 +1918,11 @@ pub fn App() -> Element {
                                                 );
                                             }
                                         }
+                                        engine.set_scrub_hold(true);
                                         engine.seek_seconds(current_time());
+                                        engine.trigger_scrub_preview(
+                                            ((engine.sample_rate() as f64) * 0.03).round() as u64,
+                                        );
                                         engine.play();
                                     }
                                     dragging.set(Some("playhead"));

@@ -34,6 +34,8 @@ pub struct AudioPlaybackEngine {
     items: Arc<Mutex<Vec<PlaybackItem>>>,
     playing: Arc<AtomicBool>,
     playhead_frames: Arc<AtomicU64>,
+    scrub_hold: Arc<AtomicBool>,
+    scrub_preview_frames: Arc<AtomicU64>,
     sample_rate: u32,
     channels: u16,
     sample_format: SampleFormat,
@@ -52,10 +54,9 @@ impl AudioPlaybackEngine {
         let items = Arc::new(Mutex::new(Vec::<PlaybackItem>::new()));
         let playing = Arc::new(AtomicBool::new(false));
         let playhead_frames = Arc::new(AtomicU64::new(0));
+        let scrub_hold = Arc::new(AtomicBool::new(false));
+        let scrub_preview_frames = Arc::new(AtomicU64::new(0));
 
-        let items_for_cb = Arc::clone(&items);
-        let playing_for_cb = Arc::clone(&playing);
-        let playhead_for_cb = Arc::clone(&playhead_frames);
         let channels_for_cb = channels;
 
         println!(
@@ -67,65 +68,81 @@ impl AudioPlaybackEngine {
             SampleFormat::F32 => build_output_stream::<f32>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::I16 => build_output_stream::<i16>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::U16 => build_output_stream::<u16>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::I32 => build_output_stream::<i32>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::U32 => build_output_stream::<u32>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::F64 => build_output_stream::<f64>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::I8 => build_output_stream::<i8>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             SampleFormat::U8 => build_output_stream::<u8>(
                 &device,
                 &output.config,
-                items_for_cb,
-                playing_for_cb,
-                playhead_for_cb,
+                Arc::clone(&items),
+                Arc::clone(&playing),
+                Arc::clone(&playhead_frames),
+                Arc::clone(&scrub_hold),
+                Arc::clone(&scrub_preview_frames),
                 channels_for_cb,
             )?,
             other => {
@@ -143,6 +160,8 @@ impl AudioPlaybackEngine {
             items,
             playing,
             playhead_frames,
+            scrub_hold,
+            scrub_preview_frames,
             sample_rate,
             channels,
             sample_format: output.sample_format,
@@ -182,6 +201,17 @@ impl AudioPlaybackEngine {
 
     pub fn sample_format(&self) -> SampleFormat {
         self.sample_format
+    }
+
+    pub fn set_scrub_hold(&self, hold: bool) {
+        self.scrub_hold.store(hold, Ordering::Relaxed);
+        if !hold {
+            self.scrub_preview_frames.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub fn trigger_scrub_preview(&self, frames: u64) {
+        self.scrub_preview_frames.store(frames, Ordering::Relaxed);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -239,6 +269,8 @@ fn build_output_stream<T>(
     items: Arc<Mutex<Vec<PlaybackItem>>>,
     playing: Arc<AtomicBool>,
     playhead: Arc<AtomicU64>,
+    scrub_hold: Arc<AtomicBool>,
+    scrub_preview_frames: Arc<AtomicU64>,
     channels: u16,
 ) -> Result<cpal::Stream, String>
 where
@@ -298,11 +330,24 @@ where
                     }
                 }
 
+                if scrub_hold.load(Ordering::Relaxed) {
+                    let preview_remaining = scrub_preview_frames.load(Ordering::Relaxed);
+                    if preview_remaining == 0 {
+                        for sample in data.iter_mut() {
+                            *sample = T::from_sample(0.0);
+                        }
+                        return;
+                    }
+                    let consumed = preview_remaining.saturating_sub(frames as u64);
+                    scrub_preview_frames.store(consumed, Ordering::Relaxed);
+                }
+
                 for (out, sample) in data.iter_mut().zip(mix_buffer.iter()) {
                     *out = T::from_sample(sample.clamp(-1.0, 1.0));
                 }
-
-                playhead.store(end_frame, Ordering::Relaxed);
+                if !scrub_hold.load(Ordering::Relaxed) {
+                    playhead.store(end_frame, Ordering::Relaxed);
+                }
             },
             move |err| {
                 println!("Audio output error: {}", err);
