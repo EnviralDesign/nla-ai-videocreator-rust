@@ -2084,6 +2084,7 @@ pub fn App() -> Element {
                             on_audio_items_refresh: {
                                 let audio_engine = audio_engine.clone();
                                 let audio_sample_cache = audio_sample_cache.clone();
+                                let audio_decode_in_flight = audio_decode_in_flight.clone();
                                 let project = project.clone();
                                 move |_| {
                                     if let Some(engine) = audio_engine.as_ref() {
@@ -2098,15 +2099,33 @@ pub fn App() -> Element {
                                                 &audio_sample_cache,
                                                 false,
                                             );
-                                            if missing.is_empty() {
-                                                engine.set_items(items);
-                                                engine.trigger_scrub_preview(
-                                                    (engine.sample_rate() as f64 * 0.03).round() as u64,
-                                                );
-                                            } else {
+                                            engine.set_items(items);
+                                            if !missing.is_empty() {
                                                 println!(
                                                     "[AUDIO DEBUG] Volume update pending decode: missing={}",
                                                     missing.len()
+                                                );
+                                                let mut missing_set = HashSet::<uuid::Uuid>::new();
+                                                for id in missing {
+                                                    missing_set.insert(id);
+                                                }
+                                                let mut targets = audio_decode_targets_for_project(
+                                                    &project_snapshot,
+                                                    &project_root,
+                                                );
+                                                targets.retain(|(id, _)| missing_set.contains(id));
+                                                let decode_config = AudioDecodeConfig {
+                                                    target_rate: engine.sample_rate(),
+                                                    target_channels: engine.channels(),
+                                                };
+                                                schedule_audio_decode_targets(
+                                                    targets,
+                                                    decode_config,
+                                                    Arc::clone(&audio_sample_cache),
+                                                    Arc::clone(&audio_decode_in_flight),
+                                                    project_snapshot,
+                                                    project_root,
+                                                    Arc::clone(engine),
                                                 );
                                             }
                                         }

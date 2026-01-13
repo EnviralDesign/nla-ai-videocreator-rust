@@ -167,7 +167,13 @@ pub fn AttributesPanelContent(
                                         track.volume = value.max(0.0);
                                     }
                                     on_audio_items_refresh.call(());
-                                }
+                                },
+                                on_change: move |value: f32| {
+                                    if let Some(track) = project.write().tracks.iter_mut().find(|track| track.id == track_id) {
+                                        track.volume = value.max(0.0);
+                                    }
+                                    on_audio_items_refresh.call(());
+                                },
                             }
                         }
                     }
@@ -1090,7 +1096,13 @@ pub fn AttributesPanelContent(
                                 clip.volume = value.max(0.0);
                             }
                             on_audio_items_refresh.call(());
-                        }
+                        },
+                        on_change: move |value: f32| {
+                            if let Some(clip) = project.write().clips.iter_mut().find(|clip| clip.id == clip_id) {
+                                clip.volume = value.max(0.0);
+                            }
+                            on_audio_items_refresh.call(());
+                        },
                     }
                 }
             }

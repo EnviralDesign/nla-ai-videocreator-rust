@@ -13,6 +13,7 @@ pub fn NumericField(
     clamp_min: Option<f32>,
     clamp_max: Option<f32>,
     on_commit: EventHandler<f32>,
+    #[props(default = None)] on_change: Option<EventHandler<f32>>,
 ) -> Element {
     let mut text = use_signal(|| format!("{:.2}", value));
     let mut last_prop_value = use_signal(|| value);
@@ -55,6 +56,20 @@ pub fn NumericField(
             commit_on_key();
         }
     };
+    let on_change_handler = on_change.clone();
+    let on_change = move |next_value: String| {
+        text.set(next_value.clone());
+        if let Some(handler) = on_change_handler.as_ref() {
+            let mut parsed = parse_f32_input(&next_value, last_prop_value());
+            if let Some(min) = clamp_min {
+                parsed = parsed.max(min);
+            }
+            if let Some(max) = clamp_max {
+                parsed = parsed.min(max);
+            }
+            handler.call(parsed);
+        }
+    };
 
     let text_value = text();
     let input_id = format!("numeric-field-{}", label.replace(' ', "-"));
@@ -82,7 +97,7 @@ pub fn NumericField(
                 min: clamp_min.map(|v| v.to_string()),
                 max: clamp_max.map(|v| v.to_string()),
                 step: Some(step.to_string()),
-                on_change: move |v| text.set(v),
+                on_change: on_change,
                 on_blur: on_blur,
                 on_keydown: on_keydown,
             }

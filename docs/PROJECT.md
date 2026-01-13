@@ -927,6 +927,7 @@ src/
 - **2026-01-12:** Video clips now contribute their embedded audio during playback.
 - **2026-01-12:** Fixed packed f32 decode slicing to avoid padding noise in multi-channel output.
 - **2026-01-12:** Added clip + track volume controls (Attributes panel) and applied gains in the mixer.
+- **2026-01-12:** Volume fields now update live on change so playback reflects edits without pausing.
 - **2026-01-12:** Defaulted clip/track volumes to 1.0 on load for older projects.
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
