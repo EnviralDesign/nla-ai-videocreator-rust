@@ -57,6 +57,12 @@ enum PreviewCanvasMessage {
     Clear,
 }
 
+#[derive(Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum TimelineViewportCommand {
+    Scroll { scroll_left: f64 },
+}
+
 #[derive(Clone, Copy, Deserialize)]
 struct TimelineViewportState {
     width: f64,
@@ -320,6 +326,44 @@ fn toggle_playback(
         }
     }
     is_playing.set(next_playing);
+}
+
+fn set_timeline_zoom_anchored(
+    new_zoom: f64,
+    duration: f64,
+    viewport_width: Option<f64>,
+    current_time: f64,
+    mut zoom: Signal<f64>,
+    mut scroll_offset: Signal<f64>,
+    timeline_viewport_eval: Signal<Option<document::Eval>>,
+) {
+    let old_zoom = zoom();
+    if (new_zoom - old_zoom).abs() < f64::EPSILON {
+        return;
+    }
+
+    let anchor_x = (current_time * old_zoom) - scroll_offset();
+    let mut next_scroll = (current_time * new_zoom) - anchor_x;
+    if !next_scroll.is_finite() {
+        next_scroll = 0.0;
+    }
+    if next_scroll < 0.0 {
+        next_scroll = 0.0;
+    }
+    if let Some(width) = viewport_width {
+        let max_scroll = (duration * new_zoom - width).max(0.0);
+        if next_scroll > max_scroll {
+            next_scroll = max_scroll;
+        }
+    }
+
+    zoom.set(new_zoom);
+    scroll_offset.set(next_scroll);
+    if let Some(eval) = timeline_viewport_eval() {
+        let _ = eval.send(TimelineViewportCommand::Scroll {
+            scroll_left: next_scroll,
+        });
+    }
 }
 
 async fn execute_generation_job(
@@ -1415,6 +1459,10 @@ pub fn App() -> Element {
     let project_for_hotkeys = project.clone();
     let current_time_for_hotkeys = current_time.clone();
     let is_playing_for_hotkeys = is_playing.clone();
+    let zoom_for_hotkeys = zoom.clone();
+    let scroll_offset_for_hotkeys = scroll_offset.clone();
+    let timeline_viewport_width_for_hotkeys = timeline_viewport_width.clone();
+    let timeline_viewport_eval_for_hotkeys = timeline_viewport_eval.clone();
 
     rsx! {
         // Global CSS with drag state handling
@@ -1582,8 +1630,17 @@ pub fn App() -> Element {
                                     timeline_viewport_width(),
                                     timeline_fps,
                                 );
-                                let new_zoom = (zoom() * 1.25).clamp(min_zoom, max_zoom);
-                                zoom.set(new_zoom);
+                                let new_zoom =
+                                    (zoom_for_hotkeys() * 1.25).clamp(min_zoom, max_zoom);
+                                set_timeline_zoom_anchored(
+                                    new_zoom,
+                                    duration,
+                                    timeline_viewport_width_for_hotkeys(),
+                                    current_time_for_hotkeys(),
+                                    zoom_for_hotkeys.clone(),
+                                    scroll_offset_for_hotkeys.clone(),
+                                    timeline_viewport_eval_for_hotkeys.clone(),
+                                );
                             }
                             HotkeyAction::TimelineZoomOut => {
                                 let (min_zoom, max_zoom) = timeline_zoom_bounds(
@@ -1591,8 +1648,17 @@ pub fn App() -> Element {
                                     timeline_viewport_width(),
                                     timeline_fps,
                                 );
-                                let new_zoom = (zoom() * 0.8).clamp(min_zoom, max_zoom);
-                                zoom.set(new_zoom);
+                                let new_zoom =
+                                    (zoom_for_hotkeys() * 0.8).clamp(min_zoom, max_zoom);
+                                set_timeline_zoom_anchored(
+                                    new_zoom,
+                                    duration,
+                                    timeline_viewport_width_for_hotkeys(),
+                                    current_time_for_hotkeys(),
+                                    zoom_for_hotkeys.clone(),
+                                    scroll_offset_for_hotkeys.clone(),
+                                    timeline_viewport_eval_for_hotkeys.clone(),
+                                );
                             }
                             HotkeyAction::PlayPause => {
                                 toggle_playback(
@@ -1936,7 +2002,16 @@ pub fn App() -> Element {
                                     timeline_viewport_width(),
                                     timeline_fps,
                                 );
-                                zoom.set(z.clamp(min_zoom, max_zoom));
+                                let new_zoom = z.clamp(min_zoom, max_zoom);
+                                set_timeline_zoom_anchored(
+                                    new_zoom,
+                                    duration,
+                                    timeline_viewport_width(),
+                                    current_time(),
+                                    zoom.clone(),
+                                    scroll_offset.clone(),
+                                    timeline_viewport_eval.clone(),
+                                );
                             },
                             on_play_pause: {
                                 let audio_engine = audio_engine.clone();

@@ -173,6 +173,19 @@ function sendWidth() {
     dioxus.send({ width: width, scroll_left: scrollLeft });
 }
 
+function applyScrollLeft(value) {
+    const host = document.getElementById(hostId);
+    if (!host) {
+        return;
+    }
+    const next = Math.max(0, value || 0);
+    if (Math.abs(host.scrollLeft - next) < 0.5) {
+        return;
+    }
+    host.scrollLeft = next;
+    sendWidth();
+}
+
 function attach() {
     const host = document.getElementById(hostId);
     if (!host) {
@@ -187,5 +200,13 @@ function attach() {
 }
 
 attach();
-await new Promise(() => {});
+while (true) {
+    const msg = await dioxus.recv();
+    if (!msg) {
+        continue;
+    }
+    if (msg.kind === "scroll") {
+        applyScrollLeft(msg.scroll_left);
+    }
+}
 "#;

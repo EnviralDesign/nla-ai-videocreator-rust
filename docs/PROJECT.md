@@ -688,6 +688,7 @@ This allows:
 | 1-Second Step Buttons | Frame-stepping felt too slow; 1s steps preferred for navigating | ✅ Decided |
 | Frame-snapped Playhead | All seeking snaps to project fps frame boundaries for accurate positioning | ✅ Decided |
 | Timeline tick spacing | Major ticks use a "nice" seconds list based on target pixel spacing | ? Decided |
+| Playhead-anchored zoom | Zoom in/out keeps the playhead anchored by adjusting timeline scroll | ? Decided |
 | Timeline snapping targets | Snap to clip edges first, then playhead, then markers; snap in frame units to avoid gaps | ? Decided |
 | Snap preview indicator | Show a 50% opacity snap line at the active target while dragging | ? Decided |
 | Snap disable modifier | Hold Alt while dragging to temporarily disable snapping | ? Decided |
@@ -1060,4 +1061,5 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 ---
 
 *Last updated: 2026-01-12*
+
 
