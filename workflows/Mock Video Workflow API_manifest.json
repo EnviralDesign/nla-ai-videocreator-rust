@@ -1,0 +1,34 @@
+{
+  "adapter_type": "comfy_ui",
+  "schema_version": 1,
+  "name": "Video Provider",
+  "output_type": "video",
+  "workflow": {
+    "workflow_path": "C:\\repos\\nla-ai-videocreator-rust\\workflows\\Mock Video Workflow API.json"
+  },
+  "inputs": [
+    {
+      "name": "seed",
+      "label": "Seed",
+      "input_type": {
+        "type": "integer"
+      },
+      "required": true,
+      "default": 42,
+      "bind": {
+        "selector": {
+          "class_type": "SeedGenerator",
+          "input_key": "seed",
+          "title": "SeedGenerator"
+        }
+      }
+    }
+  ],
+  "output": {
+    "selector": {
+      "class_type": "VHS_VideoCombine",
+      "input_key": "images",
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  }
+}
