@@ -5,9 +5,10 @@ use std::time::Instant;
 
 use image::{Rgba, RgbaImage};
 
+use crate::core::media::probe_duration_seconds;
 use crate::core::preview_store;
 use crate::core::video_decode::{DecodeMode, VideoDecodeWorker};
-use crate::state::{Asset, Project, TrackType};
+use crate::state::{Asset, AssetKind, Project, TrackType};
 
 use super::{
     cache::FrameCache,
@@ -33,6 +34,7 @@ pub struct PreviewRenderer {
     max_height: u32,
     video_decoder: VideoDecodeWorker,
     frame_cache: Mutex<FrameCache>,
+    duration_cache: Mutex<HashMap<PathBuf, Option<f64>>>,
     plate_cache: Mutex<Option<PlateCache>>,
 }
 
@@ -52,6 +54,7 @@ impl PreviewRenderer {
             max_height,
             video_decoder: VideoDecodeWorker::new(max_width, max_height),
             frame_cache: Mutex::new(FrameCache::new(max_cache_bytes)),
+            duration_cache: Mutex::new(HashMap::new()),
             plate_cache: Mutex::new(None),
         }
     }
@@ -60,6 +63,37 @@ impl PreviewRenderer {
         if let Ok(mut cache) = self.frame_cache.lock() {
             cache.invalidate_folder(folder);
         }
+    }
+
+    fn cached_video_duration(&self, path: &Path) -> Option<f64> {
+        let mut cache = self.duration_cache.lock().ok()?;
+        if let Some(duration) = cache.get(path) {
+            return *duration;
+        }
+        let duration = probe_duration_seconds(path);
+        cache.insert(path.to_path_buf(), duration);
+        duration
+    }
+
+    fn mapped_source_time(
+        &self,
+        asset: &Asset,
+        path: &Path,
+        source_time: f64,
+        declared_duration: Option<f64>,
+    ) -> (f64, Option<f64>) {
+        let AssetKind::GenerativeVideo { .. } = asset.kind else {
+            return (source_time, declared_duration);
+        };
+
+        let declared = declared_duration.filter(|value| *value > 0.0);
+        let actual = self.cached_video_duration(path).filter(|value| *value > 0.0);
+        if let (Some(declared), Some(actual)) = (declared, actual) {
+            let ratio = actual / declared;
+            return (source_time * ratio, Some(actual));
+        }
+
+        (source_time, declared_duration)
     }
 
     /// Render a preview frame for the given time and store the encoded PNG in memory.
@@ -301,7 +335,9 @@ impl PreviewRenderer {
             };
 
             let (frame_index, frame_time) = if is_video {
-                let time = clamp_time(source_time, duration);
+                let (mapped_time, clamp_duration) =
+                    self.mapped_source_time(asset, &path, source_time, duration);
+                let time = clamp_time(mapped_time, clamp_duration);
                 let index = time_to_frame_index(time, fps);
                 let frame_time = frame_index_to_time(index, fps);
                 (index, frame_time)
@@ -575,7 +611,9 @@ impl PreviewRenderer {
             resolve_asset_source(project_root, asset, &["png", "jpg", "jpeg", "webp"], &["mp4", "mov", "mkv", "webm"])?;
 
         let (frame_index, frame_time) = if is_video {
-            let time = clamp_time(time_seconds, duration);
+            let (mapped_time, clamp_duration) =
+                self.mapped_source_time(asset, &path, time_seconds, duration);
+            let time = clamp_time(mapped_time, clamp_duration);
             let index = time_to_frame_index(time, fps);
             let frame_time = frame_index_to_time(index, fps);
             (index, frame_time)

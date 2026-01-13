@@ -540,6 +540,7 @@ pub fn App() -> Element {
     let generation_paused = use_signal(|| false);
     let generation_pause_reason = use_signal(|| None::<String>);
     let mut queue_open = use_signal(|| false);
+    let gen_video_modal_open = use_signal(|| false);
 
     // Startup Modal state - check if we have a valid project path on load
     // For MVP, we start with a dummy project, so we check if project_path is None
@@ -1336,7 +1337,8 @@ pub fn App() -> Element {
             || show_new_project_dialog()
             || show_project_settings_dialog()
             || menu_open()
-            || queue_open();
+            || queue_open()
+            || gen_video_modal_open();
         if preview_native_suspended() == suspended {
             return;
         }
@@ -1769,6 +1771,7 @@ pub fn App() -> Element {
                         thumbnail_cache_buster: thumbnail_cache_buster(),
                         thumbnail_refresh_tick: thumbnail_refresh_tick(),
                         panel_width: left_w,
+                        gen_video_modal_open: gen_video_modal_open,
                         on_import: move |asset: crate::state::Asset| {
                             let mut project_write = project.write();
                             project_write.add_asset(asset.clone());

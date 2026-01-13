@@ -33,6 +33,12 @@ pub enum AssetKind {
         folder: PathBuf,
         /// Currently active version (e.g., "v1")
         active_version: Option<String>,
+        /// Target frames per second for generated output
+        #[serde(default = "default_generative_video_fps")]
+        fps: f64,
+        /// Target frame count for generated output
+        #[serde(default = "default_generative_video_frame_count")]
+        frame_count: u32,
     },
     /// A generative image asset with version history
     GenerativeImage {
@@ -129,14 +135,22 @@ impl Asset {
     }
 
     /// Create a new generative video asset (starts hollow)
-    pub fn new_generative_video(name: impl Into<String>, folder: PathBuf) -> Self {
+    pub fn new_generative_video(
+        name: impl Into<String>,
+        folder: PathBuf,
+        fps: f64,
+        frame_count: u32,
+    ) -> Self {
+        let duration_seconds = generative_video_duration_seconds(fps, frame_count);
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
-            duration_seconds: None,
+            duration_seconds,
             kind: AssetKind::GenerativeVideo {
                 folder,
                 active_version: None,
+                fps,
+                frame_count,
             },
         }
     }
@@ -208,6 +222,25 @@ impl Asset {
     }
 }
 
+pub const DEFAULT_GENERATIVE_VIDEO_FPS: f64 = 16.0;
+pub const DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT: u32 = 81;
+
+fn default_generative_video_fps() -> f64 {
+    DEFAULT_GENERATIVE_VIDEO_FPS
+}
+
+fn default_generative_video_frame_count() -> u32 {
+    DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT
+}
+
+pub fn generative_video_duration_seconds(fps: f64, frame_count: u32) -> Option<f64> {
+    if fps > 0.0 && frame_count > 0 {
+        Some(frame_count as f64 / fps)
+    } else {
+        None
+    }
+}
+
 pub fn asset_display_name(asset: &Asset) -> String {
     if asset.is_generative() {
         if let Some(version) = asset.active_version() {
@@ -228,7 +261,12 @@ mod tests {
         assert!(!video.is_audio());
         assert!(!video.is_generative());
 
-        let gen_video = Asset::new_generative_video("Gen Video", PathBuf::from("generated/video/gen_001"));
+        let gen_video = Asset::new_generative_video(
+            "Gen Video",
+            PathBuf::from("generated/video/gen_001"),
+            DEFAULT_GENERATIVE_VIDEO_FPS,
+            DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT,
+        );
         assert!(gen_video.is_visual());
         assert!(!gen_video.is_audio());
         assert!(gen_video.is_generative());

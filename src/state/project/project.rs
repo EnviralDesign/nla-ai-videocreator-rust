@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::state::{Asset, GenerativeConfig};
+use crate::state::{generative_video_duration_seconds, Asset, AssetKind, GenerativeConfig};
 use super::{Clip, ClipTransform, Marker, ProjectSettings, Track, TrackType};
 
 /// The main project container
@@ -110,6 +110,21 @@ impl Project {
     /// Get a clip duration for an asset, falling back to a default value
     pub fn asset_clip_duration(&self, id: Uuid, default_duration: f64) -> f64 {
         self.asset_duration_seconds(id).unwrap_or(default_duration)
+    }
+
+    pub fn ensure_generative_video_durations(&mut self) {
+        for asset in self.assets.iter_mut() {
+            let AssetKind::GenerativeVideo {
+                fps,
+                frame_count,
+                ..
+            } = &asset.kind else {
+                continue;
+            };
+            if asset.duration_seconds.is_none() {
+                asset.duration_seconds = generative_video_duration_seconds(*fps, *frame_count);
+            }
+        }
     }
 
     /// Get all clips on a specific track

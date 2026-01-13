@@ -828,6 +828,8 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-13:** Suspended the native preview while the generative video creation modal is open.
+- **2026-01-13:** Generative video assets now require FPS + frame count on creation, and preview playback retimes to fill the declared asset duration.
 - **2026-01-13:** Added ComfyUI queue support for video outputs, including output selection fallback by file type.
 - **2026-01-12:** Removed Stats/HW quick toggles from the title bar (menus remain).
 - **2026-01-12:** Strengthened dimming backdrops and added subtle blur for queue popover and title-bar menus.

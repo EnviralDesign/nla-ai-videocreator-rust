@@ -1,7 +1,10 @@
 use dioxus::prelude::*;
-use crate::components::assets::AssetItem;
+use crate::components::assets::{AssetItem, GenerativeVideoModal};
 use crate::constants::*;
-use crate::state::next_generative_index;
+use crate::state::{
+    generative_video_duration_seconds, next_generative_index, DEFAULT_GENERATIVE_VIDEO_FPS,
+    DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT,
+};
 
 #[component]
 pub fn AssetsPanelContent(
@@ -10,6 +13,7 @@ pub fn AssetsPanelContent(
     thumbnail_cache_buster: u64,
     thumbnail_refresh_tick: u64,
     panel_width: f64,
+    gen_video_modal_open: Signal<bool>,
     on_import: EventHandler<crate::state::Asset>,
     on_import_file: EventHandler<std::path::PathBuf>,
     on_rename: EventHandler<(uuid::Uuid, String)>,
@@ -19,6 +23,10 @@ pub fn AssetsPanelContent(
     on_drag_start: EventHandler<uuid::Uuid>,
 ) -> Element {
     let _ = thumbnail_refresh_tick;
+    let mut gen_video_modal_open = gen_video_modal_open;
+    let mut gen_video_fps = use_signal(|| DEFAULT_GENERATIVE_VIDEO_FPS.to_string());
+    let mut gen_video_frames = use_signal(|| DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT.to_string());
+    let mut gen_video_error = use_signal(|| None::<String>);
     let next_video_index = next_generative_index(
         &assets,
         "Gen Video",
@@ -34,6 +42,23 @@ pub fn AssetsPanelContent(
         "Gen Audio",
         |kind| matches!(kind, crate::state::AssetKind::GenerativeAudio { .. }),
     );
+    let parsed_fps = gen_video_fps()
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| *value > 0.0);
+    let parsed_frames = gen_video_frames()
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0);
+    let duration_label = match (parsed_fps, parsed_frames) {
+        (Some(fps), Some(frames)) => {
+            let duration = generative_video_duration_seconds(fps, frames).unwrap_or(0.0);
+            format!("{:.2}s", duration)
+        }
+        _ => "--".to_string(),
+    };
     rsx! {
         div {
             style: "display: flex; flex-direction: column; height: 100%; padding: 8px;",
@@ -87,15 +112,11 @@ pub fn AssetsPanelContent(
                             cursor: pointer; transition: all 0.15s ease;
                         ",
                         onclick: {
-                            let on_import = on_import.clone();
                             move |_| {
-                                let id = uuid::Uuid::new_v4();
-                                let folder = std::path::PathBuf::from(format!("generated/video/{}", id));
-                                let asset = crate::state::Asset::new_generative_video(
-                                    format!("Gen Video {}", next_video_index),
-                                    folder
-                                );
-                                on_import.call(asset);
+                                gen_video_fps.set(DEFAULT_GENERATIVE_VIDEO_FPS.to_string());
+                                gen_video_frames.set(DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT.to_string());
+                                gen_video_error.set(None);
+                                gen_video_modal_open.set(true);
                             }
                         },
                         "🎬 Video"
@@ -178,6 +199,55 @@ pub fn AssetsPanelContent(
                         }
                     }
                 }
+            }
+            GenerativeVideoModal {
+                open: gen_video_modal_open(),
+                fps_value: gen_video_fps(),
+                frame_count_value: gen_video_frames(),
+                duration_label: duration_label,
+                error: gen_video_error(),
+                on_change_fps: move |value: String| {
+                    gen_video_fps.set(value);
+                    gen_video_error.set(None);
+                },
+                on_change_frame_count: move |value: String| {
+                    gen_video_frames.set(value);
+                    gen_video_error.set(None);
+                },
+                on_cancel: move |_| {
+                    gen_video_modal_open.set(false);
+                },
+                on_create: {
+                    let on_import = on_import.clone();
+                    move |_| {
+                        let fps = gen_video_fps()
+                            .trim()
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|value| *value > 0.0);
+                        let frames = gen_video_frames()
+                            .trim()
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|value| *value > 0);
+                        let (Some(fps), Some(frame_count)) = (fps, frames) else {
+                            gen_video_error.set(Some(
+                                "Enter a valid FPS and frame count.".to_string(),
+                            ));
+                            return;
+                        };
+                        let id = uuid::Uuid::new_v4();
+                        let folder = std::path::PathBuf::from(format!("generated/video/{}", id));
+                        let asset = crate::state::Asset::new_generative_video(
+                            format!("Gen Video {}", next_video_index),
+                            folder,
+                            fps,
+                            frame_count,
+                        );
+                        on_import.call(asset);
+                        gen_video_modal_open.set(false);
+                    }
+                },
             }
         }
     }

@@ -48,6 +48,7 @@ impl Project {
         let mut project: Project = serde_json::from_str(&json)?;
         project.project_path = Some(folder.to_path_buf());
         project.load_generative_configs();
+        project.ensure_generative_video_durations();
         Ok(project)
     }
 
@@ -146,6 +147,7 @@ impl Project {
                 AssetKind::GenerativeVideo {
                     folder,
                     active_version,
+                    ..
                 }
                 | AssetKind::GenerativeImage {
                     folder,
