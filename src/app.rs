@@ -10,9 +10,12 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use crate::core::generation::next_version_label;
+use crate::core::audio::decode::{decode_audio_to_f32, AudioDecodeConfig};
 use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path};
+use crate::core::audio::playback::{AudioPlaybackEngine, PlaybackItem};
 use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
 use crate::core::media::{resolve_asset_duration_seconds, spawn_asset_duration_probe, spawn_missing_duration_probes};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
@@ -23,6 +26,7 @@ use crate::core::provider_store::{
 use crate::state::{
     GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry, ProviderOutputType,
 };
+use crate::state::TrackType;
 use crate::providers::comfyui;
 use crate::timeline::{timeline_zoom_bounds, TimelinePanel};
 use crate::hotkeys::{handle_hotkey, HotkeyAction, HotkeyContext, HotkeyResult};
@@ -46,6 +50,114 @@ enum PreviewCanvasMessage {
 enum GenerationFailure {
     Offline(String),
     Error(String),
+}
+
+fn build_audio_playback_items(
+    project: &crate::state::Project,
+    project_root: &std::path::Path,
+    engine: &AudioPlaybackEngine,
+    sample_cache: &Arc<Mutex<HashMap<uuid::Uuid, Arc<Vec<f32>>>>>,
+) -> Vec<PlaybackItem> {
+    let mut track_types = HashMap::new();
+    for track in project.tracks.iter() {
+        track_types.insert(track.id, track.track_type.clone());
+    }
+
+    let sample_rate = engine.sample_rate() as f64;
+    let channels = engine.channels();
+    let mut items = Vec::new();
+    let mut clip_count = 0_usize;
+
+    for clip in project.clips.iter() {
+        let Some(track_type) = track_types.get(&clip.track_id) else {
+            continue;
+        };
+        if *track_type != TrackType::Audio {
+            continue;
+        }
+        let Some(asset) = project.find_asset(clip.asset_id) else {
+            continue;
+        };
+        if !asset.is_audio() {
+            continue;
+        }
+        clip_count += 1;
+        let Some(source_path) = resolve_audio_source(project_root, asset) else {
+            println!(
+                "[AUDIO DEBUG] Playback build: missing source path asset_id={}",
+                asset.id
+            );
+            continue;
+        };
+
+        let cached = sample_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&asset.id).cloned());
+        let samples = if let Some(samples) = cached {
+            samples
+        } else {
+            let decode_config = AudioDecodeConfig {
+                target_rate: engine.sample_rate(),
+                target_channels: engine.channels(),
+            };
+            let decoded = match decode_audio_to_f32(&source_path, decode_config) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    println!(
+                        "[AUDIO DEBUG] Playback decode failed asset_id={} err={}",
+                        asset.id, err
+                    );
+                    continue;
+                }
+            };
+            let samples = Arc::new(decoded.samples);
+            if let Ok(mut cache) = sample_cache.lock() {
+                cache.insert(asset.id, Arc::clone(&samples));
+            }
+            samples
+        };
+
+        let total_frames = (samples.len() / channels.max(1) as usize) as u64;
+        let trim_frames = (clip.trim_in_seconds.max(0.0) * sample_rate).round() as u64;
+        if trim_frames >= total_frames {
+            continue;
+        }
+        let clip_frames = (clip.duration.max(0.0) * sample_rate).round() as u64;
+        let available_frames = total_frames.saturating_sub(trim_frames);
+        let frame_count = clip_frames.min(available_frames);
+        if frame_count == 0 {
+            continue;
+        }
+        let start_frame = (clip.start_time.max(0.0) * sample_rate).round() as u64;
+
+        println!(
+            "[AUDIO DEBUG] Playback item: clip_id={} asset_id={} start={}s duration={}s trim_in={}s frames={} offset_frames={}",
+            clip.id,
+            asset.id,
+            clip.start_time,
+            clip.duration,
+            clip.trim_in_seconds,
+            frame_count,
+            trim_frames
+        );
+
+        items.push(PlaybackItem {
+            samples,
+            start_frame,
+            sample_offset_frames: trim_frames,
+            frame_count,
+            channels,
+        });
+    }
+
+    println!(
+        "[AUDIO DEBUG] Playback build: clips={} items={}",
+        clip_count,
+        items.len()
+    );
+
+    items
 }
 
 async fn execute_generation_job(
@@ -164,6 +276,18 @@ pub fn App() -> Element {
     let default_cache_root = crate::core::paths::app_cache_root().join("scratch");
     let default_cache_root_for_thumbs = default_cache_root.clone();
     let default_cache_root_for_preview = default_cache_root.clone();
+    let audio_engine = use_hook(|| {
+        match AudioPlaybackEngine::new() {
+            Ok(engine) => Some(Arc::new(engine)),
+            Err(err) => {
+                println!("[AUDIO DEBUG] Audio engine init failed: {}", err);
+                None
+            }
+        }
+    });
+    let audio_sample_cache = use_hook(|| {
+        Arc::new(Mutex::new(HashMap::<uuid::Uuid, Arc<Vec<f32>>>::new()))
+    });
     
     // Core services
     let mut thumbnailer = use_signal(move || {
@@ -234,7 +358,7 @@ pub fn App() -> Element {
     // Timeline playback state
     let mut current_time = use_signal(|| 0.0_f64);        // Current time in seconds
     let mut zoom = use_signal(|| 100.0_f64);              // Pixels per second
-    let mut is_playing = use_signal(|| false);            // Playback state
+    let is_playing = use_signal(|| false);                // Playback state
     let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
     
     // Derive duration from project
@@ -440,10 +564,12 @@ pub fn App() -> Element {
         });
     });
 
+    let audio_engine_for_timer = audio_engine.clone();
     use_future(move || {
         let mut current_time = current_time.clone();
         let mut is_playing = is_playing.clone();
         let project = project.clone();
+        let audio_engine = audio_engine_for_timer.clone();
         async move {
             let mut last_tick = Instant::now();
             loop {
@@ -453,11 +579,21 @@ pub fn App() -> Element {
                     continue;
                 }
 
+                let duration = project.read().duration();
+                if let Some(engine) = audio_engine.as_ref() {
+                    let time = engine.playhead_seconds();
+                    let snapped = (time.min(duration) * 60.0).round() / 60.0;
+                    current_time.set(snapped);
+                    if time >= duration {
+                        engine.pause();
+                        is_playing.set(false);
+                    }
+                    continue;
+                }
+
                 let now = Instant::now();
                 let delta = now.saturating_duration_since(last_tick);
                 last_tick = now;
-
-                let duration = project.read().duration();
                 let next_time = (current_time() + delta.as_secs_f64()).min(duration);
                 let snapped = (next_time * 60.0).round() / 60.0;
                 current_time.set(snapped);
@@ -1098,7 +1234,9 @@ pub fn App() -> Element {
                 cursor: {drag_cursor};
             ",
             
-            onmousemove: move |e| {
+            onmousemove: {
+                let audio_engine = audio_engine.clone();
+                move |e| {
                 if dragged_asset().is_some() {
                     mouse_pos.set((e.client_coordinates().x, e.client_coordinates().y));
                 }
@@ -1129,10 +1267,14 @@ pub fn App() -> Element {
                             // Snap to frame boundary (60fps)
                             let snapped_time = (raw_time * 60.0).round() / 60.0;
                             current_time.set(snapped_time);
+                            if let Some(engine) = audio_engine.as_ref() {
+                                engine.seek_seconds(snapped_time);
+                            }
                         }
                         _ => {}
                     }
                 }
+            }
             },
             onmouseup: move |_| {
                 dragging.set(None);
@@ -1496,10 +1638,17 @@ pub fn App() -> Element {
                             is_playing: is_playing(),
                             scroll_offset: scroll_offset(),
                             // Callbacks
-                            on_seek: move |t: f64| {
-                                // Snap to frame boundary (60fps) and clamp to duration
-                                let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
-                                current_time.set(snapped);
+                            on_seek: {
+                                let audio_engine = audio_engine.clone();
+                                move |t: f64| {
+                                    // Snap to frame boundary (60fps) and clamp to duration
+                                    let snapped =
+                                        ((t * 60.0).round() / 60.0).clamp(0.0, duration);
+                                    current_time.set(snapped);
+                                    if let Some(engine) = audio_engine.as_ref() {
+                                        engine.seek_seconds(snapped);
+                                    }
+                                }
                             },
                             on_zoom_change: move |z: f64| {
                                 let (min_zoom, max_zoom) = timeline_zoom_bounds(
@@ -1509,7 +1658,40 @@ pub fn App() -> Element {
                                 );
                                 zoom.set(z.clamp(min_zoom, max_zoom));
                             },
-                            on_play_pause: move |_| is_playing.set(!is_playing()),
+                            on_play_pause: {
+                                let audio_engine = audio_engine.clone();
+                                let audio_sample_cache = audio_sample_cache.clone();
+                                let project = project.clone();
+                                let current_time = current_time.clone();
+                                let mut is_playing = is_playing.clone();
+                                move |_| {
+                                    let next_playing = !is_playing();
+                                    if let Some(engine) = audio_engine.as_ref() {
+                                        if next_playing {
+                                            if let Some(project_root) =
+                                                project.read().project_path.clone()
+                                            {
+                                                let items = build_audio_playback_items(
+                                                    &project.read(),
+                                                    &project_root,
+                                                    engine,
+                                                    &audio_sample_cache,
+                                                );
+                                                engine.set_items(items);
+                                            } else {
+                                                println!(
+                                                    "[AUDIO DEBUG] Play requested without project root"
+                                                );
+                                            }
+                                            engine.seek_seconds(current_time());
+                                            engine.play();
+                                        } else {
+                                            engine.pause();
+                                        }
+                                    }
+                                    is_playing.set(next_playing);
+                                }
+                            },
                             on_scroll: move |offset: f64| scroll_offset.set(offset),
                             on_seek_start: move |e: MouseEvent| {
                                 dragging.set(Some("playhead"));

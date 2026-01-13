@@ -388,7 +388,7 @@ workflows/
   - [x] Timecode display (HH:MM:SS:FF format)
   - [x] Dynamic track list (from project data, not hardcoded)
   - [x] Add/remove tracks UI
-  - [ ] Audio playback integration
+  - [x] Audio playback integration (cpal playback + audio-clock-driven playhead)
 
 - [x] **Track System** (Revised Architecture) ✓
   - [x] Video tracks — hold video clips, image clips (stills), generative clips
@@ -915,6 +915,10 @@ src/
 - **2026-01-12:** Waveform generation now computes per-column min/max from base peaks and logs SVG vs bitmap build timings for perf comparison.
 - **2026-01-12:** Waveforms now render from cached BMP strips under `.cache/audio/waveform_strips/` (disk-backed, uncompressed).
 - **2026-01-12:** Added a waveform strip width cap and softened waveform opacity/brightness for readability.
+- **2026-01-12:** Wired cpal playback into timeline controls with audio-clock playhead sync and on-demand decode caching.
+- **2026-01-12:** Added cpal output format fallback (mixes in f32, converts to device sample format).
+- **2026-01-12:** Preferred stereo output configs when available and allowed multi-channel decode buffers.
+- **2026-01-12:** Fixed packed f32 audio extraction to use full interleaved buffer (avoids accelerated playback).
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version

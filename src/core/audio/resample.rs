@@ -121,7 +121,6 @@ fn channel_layout_for_channels(channels: u16) -> ChannelLayout {
 }
 
 pub fn frame_to_f32_interleaved(frame: &frame::Audio) -> Result<Vec<f32>, String> {
-    let channels = frame.channels();
     let format = frame.format();
     if format != Sample::F32(sample::Type::Packed) {
         return Err(format!(
@@ -129,17 +128,13 @@ pub fn frame_to_f32_interleaved(frame: &frame::Audio) -> Result<Vec<f32>, String
             format
         ));
     }
-
-    match channels {
-        1 => Ok(frame.plane::<f32>(0).to_vec()),
-        2 => {
-            let mut output = Vec::with_capacity(frame.samples() * 2);
-            for &(left, right) in frame.plane::<(f32, f32)>(0) {
-                output.push(left);
-                output.push(right);
-            }
-            Ok(output)
-        }
-        _ => Err(format!("Unsupported channel count: {}", channels)),
+    let data = frame.data(0);
+    if data.len() % std::mem::size_of::<f32>() != 0 {
+        return Err(format!(
+            "Packed f32 data size not aligned: {} bytes",
+            data.len()
+        ));
     }
+    let samples: &[f32] = bytemuck::cast_slice(data);
+    Ok(samples.to_vec())
 }
