@@ -440,12 +440,12 @@ workflows/
   - [x] Active version load/save on project open
   - [x] Thumbnail updates after generation completes
 
-- [ ] **Markers**
-  - [ ] Click to add marker at playhead position
-  - [ ] Drag markers to reposition
-  - [ ] Delete markers
-  - [ ] Marker labels (optional)
-  - [ ] Marker colors (optional)
+- [x] **Markers**
+  - [x] Click to add marker at playhead position
+  - [x] Drag markers to reposition
+  - [x] Delete markers
+  - [x] Marker labels (optional)
+  - [x] Marker colors (optional)
 
 - [x] **Audio Track**
   - [x] Import MP3/WAV
@@ -690,6 +690,7 @@ This allows:
 | Timeline tick spacing | Major ticks use a "nice" seconds list based on target pixel spacing | ? Decided |
 | Playhead-anchored zoom | Zoom in/out keeps the playhead anchored by adjusting timeline scroll | ? Decided |
 | Timeline zoom scroll sync | Sync scrollLeft via data attribute + MutationObserver to avoid jitter | ? Decided |
+| Marker interactions | Click marker track adds at playhead; drag to move; right-click delete; labels/colors in Attributes | ? Decided |
 | Timeline snapping targets | Snap to clip edges first, then playhead, then markers; snap in frame units to avoid gaps | ? Decided |
 | Snap preview indicator | Show a 50% opacity snap line at the active target while dragging | ? Decided |
 | Snap disable modifier | Hold Alt while dragging to temporarily disable snapping | ? Decided |

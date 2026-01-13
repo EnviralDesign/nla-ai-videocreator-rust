@@ -8,6 +8,7 @@ mod playback_controls;
 mod track_label;
 mod track_row;
 mod clip_element;
+mod marker_element;
 
 pub use panel::TimelinePanel;
 

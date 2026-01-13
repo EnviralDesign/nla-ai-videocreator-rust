@@ -47,8 +47,10 @@ pub fn AttributesPanelContent(
     let selection_state = selection.read();
     let selected_clip_count = selection_state.clip_ids.len();
     let selected_track_count = selection_state.track_ids.len();
+    let selected_marker_count = selection_state.marker_ids.len();
     let selected_clip_id = selection_state.primary_clip();
     let selected_track_id = selection_state.primary_track();
+    let selected_marker_id = selection_state.primary_marker();
     drop(selection_state);
 
     use_effect(move || {
@@ -58,7 +60,7 @@ pub fn AttributesPanelContent(
         }
     });
 
-    if selected_clip_count == 0 && selected_track_count == 0 {
+    if selected_clip_count == 0 && selected_track_count == 0 && selected_marker_count == 0 {
         return rsx! {
             div {
                 style: "padding: 12px;",
@@ -74,7 +76,7 @@ pub fn AttributesPanelContent(
         };
     }
 
-    let total_selected = selected_clip_count + selected_track_count;
+    let total_selected = selected_clip_count + selected_track_count + selected_marker_count;
     if total_selected > 1 {
         return rsx! {
             div {
@@ -92,6 +94,105 @@ pub fn AttributesPanelContent(
     }
 
     let Some(clip_id) = selected_clip_id else {
+        if let Some(marker_id) = selected_marker_id {
+            let project_read = project.read();
+            let marker = match project_read.markers.iter().find(|marker| marker.id == marker_id) {
+                Some(marker) => marker.clone(),
+                None => {
+                    drop(project_read);
+                    return rsx! {
+                        div {
+                            style: "padding: 12px;",
+                            div {
+                                style: "
+                                    display: flex; align-items: center; justify-content: center;
+                                    height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                                    color: {TEXT_DIM}; font-size: 12px;
+                                ",
+                                "Selection missing"
+                            }
+                        }
+                    };
+                }
+            };
+            drop(project_read);
+
+            let marker_id = marker.id;
+            let marker_label = marker.label.clone().unwrap_or_default();
+            let marker_color = marker
+                .color
+                .clone()
+                .unwrap_or_else(|| ACCENT_MARKER.to_string());
+
+            return rsx! {
+                div {
+                    style: "padding: 12px; display: flex; flex-direction: column; gap: 12px;",
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px;",
+                        span { style: "font-size: 11px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "Marker" }
+                    }
+                    div {
+                        style: "
+                            display: flex; flex-direction: column; gap: 10px;
+                            padding: 10px; background-color: {BG_SURFACE};
+                            border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                        ",
+                        ProviderTextField {
+                            label: "Label".to_string(),
+                            value: marker_label,
+                            on_commit: move |value: String| {
+                                let next = if value.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(value)
+                                };
+                                project.write().set_marker_label(marker_id, next);
+                            }
+                        }
+                        ProviderTextField {
+                            label: "Color (hex)".to_string(),
+                            value: marker.color.clone().unwrap_or_default(),
+                            on_commit: move |value: String| {
+                                let next = if value.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(value)
+                                };
+                                project.write().set_marker_color(marker_id, next);
+                            }
+                        }
+                        div {
+                            style: "display: flex; align-items: center; gap: 8px;",
+                            div {
+                                style: "
+                                    width: 16px; height: 16px; border-radius: 4px;
+                                    background-color: {marker_color};
+                                    border: 1px solid {BORDER_DEFAULT};
+                                ",
+                            }
+                            span { style: "font-size: 10px; color: {TEXT_DIM};", "Preview" }
+                        }
+                    }
+                    button {
+                        style: "
+                            align-self: flex-start;
+                            padding: 6px 10px;
+                            border-radius: 6px;
+                            border: 1px solid {BORDER_SUBTLE};
+                            background-color: {BG_SURFACE};
+                            color: #ef4444;
+                            font-size: 11px;
+                            cursor: pointer;
+                        ",
+                        onclick: move |_| {
+                            project.write().remove_marker(marker_id);
+                            selection.write().remove_marker(marker_id);
+                        },
+                        "Delete Marker"
+                    }
+                }
+            };
+        }
         if let Some(track_id) = selected_track_id {
             let project_read = project.read();
             let track = match project_read.tracks.iter().find(|track| track.id == track_id) {

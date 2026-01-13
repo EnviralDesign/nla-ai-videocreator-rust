@@ -11,6 +11,8 @@ pub struct SelectionState {
     pub asset_ids: Vec<Uuid>,
     /// Selected track IDs in the timeline.
     pub track_ids: Vec<Uuid>,
+    /// Selected marker IDs in the timeline.
+    pub marker_ids: Vec<Uuid>,
 }
 
 impl SelectionState {
@@ -19,6 +21,7 @@ impl SelectionState {
         self.clip_ids.clear();
         self.asset_ids.clear();
         self.track_ids.clear();
+        self.marker_ids.clear();
     }
 
     /// Replace the selection with a single clip.
@@ -26,6 +29,7 @@ impl SelectionState {
         self.clip_ids.clear();
         self.asset_ids.clear();
         self.track_ids.clear();
+        self.marker_ids.clear();
         self.clip_ids.push(clip_id);
     }
 
@@ -44,11 +48,31 @@ impl SelectionState {
         self.clip_ids.clear();
         self.asset_ids.clear();
         self.track_ids.clear();
+        self.marker_ids.clear();
         self.track_ids.push(track_id);
     }
 
     /// Return the primary selected track, if any.
     pub fn primary_track(&self) -> Option<Uuid> {
         self.track_ids.first().copied()
+    }
+
+    /// Replace the selection with a single marker.
+    pub fn select_marker(&mut self, marker_id: Uuid) {
+        self.clip_ids.clear();
+        self.asset_ids.clear();
+        self.track_ids.clear();
+        self.marker_ids.clear();
+        self.marker_ids.push(marker_id);
+    }
+
+    /// Remove a marker from selection, if present.
+    pub fn remove_marker(&mut self, marker_id: Uuid) {
+        self.marker_ids.retain(|id| *id != marker_id);
+    }
+
+    /// Return the primary selected marker, if any.
+    pub fn primary_marker(&self) -> Option<Uuid> {
+        self.marker_ids.first().copied()
     }
 }

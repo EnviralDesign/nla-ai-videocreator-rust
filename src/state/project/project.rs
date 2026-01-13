@@ -314,6 +314,34 @@ impl Project {
         id
     }
 
+    /// Move a marker to a new time (seconds), keeping the list sorted.
+    pub fn move_marker(&mut self, id: Uuid, new_time: f64) -> bool {
+        if let Some(marker) = self.markers.iter_mut().find(|marker| marker.id == id) {
+            marker.time = new_time.max(0.0);
+            self.markers.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+            return true;
+        }
+        false
+    }
+
+    /// Update a marker label (empty string clears it).
+    pub fn set_marker_label(&mut self, id: Uuid, label: Option<String>) -> bool {
+        if let Some(marker) = self.markers.iter_mut().find(|marker| marker.id == id) {
+            marker.label = label.filter(|value| !value.trim().is_empty());
+            return true;
+        }
+        false
+    }
+
+    /// Update a marker color (hex string) or clear it.
+    pub fn set_marker_color(&mut self, id: Uuid, color: Option<String>) -> bool {
+        if let Some(marker) = self.markers.iter_mut().find(|marker| marker.id == id) {
+            marker.color = color.filter(|value| !value.trim().is_empty());
+            return true;
+        }
+        false
+    }
+
     /// Remove a clip by ID
     pub fn remove_clip(&mut self, id: Uuid) -> bool {
         let len = self.clips.len();

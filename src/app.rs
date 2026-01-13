@@ -605,7 +605,7 @@ pub fn App() -> Element {
         for marker in project_read.markers.iter() {
             if in_view(marker.time) {
                 let marker_frame = frames_from_seconds(marker.time, fps).round();
-                targets.push(SnapTarget::marker(marker_frame));
+                targets.push(SnapTarget::marker(marker_frame, marker.id));
             }
         }
 
@@ -648,11 +648,14 @@ pub fn App() -> Element {
     let mut dragged_asset = use_signal(|| None::<uuid::Uuid>);
     let mut mouse_pos = use_signal(|| (0.0, 0.0));
     let mut selection = use_signal(|| crate::state::SelectionState::default());
-    let attributes_key = selection
-        .read()
+    let selection_state = selection.read();
+    let attributes_key = selection_state
         .primary_clip()
-        .map(|id| id.to_string())
+        .map(|id| format!("clip-{id}"))
+        .or_else(|| selection_state.primary_marker().map(|id| format!("marker-{id}")))
+        .or_else(|| selection_state.primary_track().map(|id| format!("track-{id}")))
         .unwrap_or_else(|| "none".to_string());
+    drop(selection_state);
     
     // Context menu state: (x, y, track_id) - None means no menu shown
     let mut context_menu = use_signal(|| None::<(f64, f64, uuid::Uuid)>);
@@ -1593,9 +1596,13 @@ pub fn App() -> Element {
             // Hotkey handler
             onkeydown: move |e: KeyboardEvent| {
                 // Build context for hotkey dispatch
+                let selection_state = selection.read();
+                let has_selection =
+                    !selection_state.clip_ids.is_empty() || !selection_state.marker_ids.is_empty();
+                drop(selection_state);
                 let hotkey_context = HotkeyContext {
                     timeline_visible: !timeline_collapsed(),
-                    has_selection: !selection.read().clip_ids.is_empty(),
+                    has_selection,
                     input_focused: false, // TODO: track when input fields have focus
                 };
 
@@ -1942,6 +1949,7 @@ pub fn App() -> Element {
                             tracks: project.read().tracks.clone(),
 
                             clips: project.read().clips.clone(),
+                            markers: project.read().markers.clone(),
                             assets: project.read().assets.clone(),
                             thumbnailer: thumbnailer.read().clone(),
                             thumbnail_cache_buster: thumbnail_cache_buster(),
@@ -2124,6 +2132,24 @@ pub fn App() -> Element {
                             selected_clips: selection.read().clip_ids.clone(),
                             on_clip_select: move |clip_id| {
                                 selection.write().select_clip(clip_id);
+                            },
+                            on_marker_add: move |time: f64| {
+                                let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);
+                                let marker = crate::state::Marker::new(snapped);
+                                let id = project.write().add_marker(marker);
+                                selection.write().select_marker(id);
+                            },
+                            on_marker_move: move |(marker_id, time)| {
+                                let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);
+                                project.write().move_marker(marker_id, snapped);
+                            },
+                            on_marker_delete: move |marker_id| {
+                                project.write().remove_marker(marker_id);
+                                selection.write().remove_marker(marker_id);
+                            },
+                            selected_markers: selection.read().marker_ids.clone(),
+                            on_marker_select: move |marker_id| {
+                                selection.write().select_marker(marker_id);
                             },
                             snap_targets: timeline_snap_targets.clone(),
                             // Asset Drag & Drop

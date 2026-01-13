@@ -31,6 +31,8 @@ pub struct SnapTarget {
     pub kind: SnapTargetKind,
     /// Clip id if this target comes from a clip edge.
     pub clip_id: Option<Uuid>,
+    /// Marker id if this target comes from a marker.
+    pub marker_id: Option<Uuid>,
 }
 
 impl SnapTarget {
@@ -40,6 +42,7 @@ impl SnapTarget {
             frame,
             kind: SnapTargetKind::ClipEdge,
             clip_id: Some(clip_id),
+            marker_id: None,
         }
     }
 
@@ -49,15 +52,17 @@ impl SnapTarget {
             frame,
             kind: SnapTargetKind::Playhead,
             clip_id: None,
+            marker_id: None,
         }
     }
 
     /// Build a marker target.
-    pub fn marker(frame: f64) -> Self {
+    pub fn marker(frame: f64, marker_id: Uuid) -> Self {
         Self {
             frame,
             kind: SnapTargetKind::Marker,
             clip_id: None,
+            marker_id: Some(marker_id),
         }
     }
 }

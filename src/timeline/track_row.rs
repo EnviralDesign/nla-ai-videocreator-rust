@@ -6,6 +6,7 @@ use crate::core::timeline_snap::{snap_time_to_frame, SnapTarget};
 use crate::state::TrackType;
 
 use super::clip_element::ClipElement;
+use super::marker_element::MarkerElement;
 
 /// Track row content area
 #[component]
@@ -14,6 +15,7 @@ pub fn TrackRow(
     track_id: uuid::Uuid,
     track_type: TrackType,
     clips: Vec<crate::state::Clip>,
+    markers: Vec<crate::state::Marker>,
     assets: Vec<crate::state::Asset>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: u64,
@@ -22,6 +24,8 @@ pub fn TrackRow(
     audio_waveform_cache_buster: Signal<u64>,
     zoom: f64,  // pixels per second
     fps: f64,
+    duration: f64,
+    current_time: f64,
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
     on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
@@ -30,6 +34,11 @@ pub fn TrackRow(
     on_clip_select: EventHandler<uuid::Uuid>,
     on_snap_preview: EventHandler<Option<f64>>,
     snap_targets: std::sync::Arc<Vec<SnapTarget>>,
+    on_marker_add: EventHandler<f64>,
+    on_marker_move: EventHandler<(uuid::Uuid, f64)>,
+    on_marker_delete: EventHandler<uuid::Uuid>,
+    selected_markers: Vec<uuid::Uuid>,
+    on_marker_select: EventHandler<uuid::Uuid>,
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>,
     on_deselect_all: EventHandler<MouseEvent>,
@@ -39,6 +48,12 @@ pub fn TrackRow(
     let track_clips: Vec<_> = clips.iter()
         .filter(|c| c.track_id == track_id)
         .collect();
+
+    let track_markers: Vec<_> = if track_type == TrackType::Marker {
+        markers
+    } else {
+        Vec::new()
+    };
     
     // Color based on track type
     let clip_color = match track_type {
@@ -74,7 +89,13 @@ pub fn TrackRow(
                 // Click on empty track area deselects all clips
                 if let Some(btn) = e.trigger_button() {
                     if format!("{:?}", btn) == "Primary" {
-                        on_deselect_all.call(e);
+                        if track_type == TrackType::Marker {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            on_marker_add.call(current_time);
+                        } else {
+                            on_deselect_all.call(e);
+                        }
                     }
                 }
             },
@@ -111,6 +132,23 @@ pub fn TrackRow(
                     on_move_track: move |(id, direction)| on_clip_move_track.call((id, direction)),
                     is_selected: selected_clips.contains(&clip.id),
                     on_select: move |id| on_clip_select.call(id),
+                    on_snap_preview: move |time| on_snap_preview.call(time),
+                    snap_targets: snap_targets.clone(),
+                }
+            }
+            // Render markers (marker track only)
+            for marker in track_markers.iter() {
+                MarkerElement {
+                    key: "{marker.id}",
+                    marker: marker.clone(),
+                    width: width,
+                    zoom: zoom,
+                    fps: fps,
+                    duration: duration,
+                    is_selected: selected_markers.contains(&marker.id),
+                    on_select: move |id| on_marker_select.call(id),
+                    on_move: move |(id, time)| on_marker_move.call((id, time)),
+                    on_delete: move |id| on_marker_delete.call(id),
                     on_snap_preview: move |time| on_snap_preview.call(time),
                     snap_targets: snap_targets.clone(),
                 }
