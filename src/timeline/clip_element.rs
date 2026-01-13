@@ -155,26 +155,7 @@ pub(crate) fn ClipElement(
     let mut waveform_building = use_signal(|| false);
     let waveform_cache_buster = audio_waveform_cache_buster;
     let mut waveform_last_buster = use_signal(|| 0_u64);
-    let mut waveform_debug_logged = use_signal(|| false);
     let mut waveform_bitmap_cache = use_signal(|| None::<(WaveformKey, String)>);
-    let clip_asset_id = clip.asset_id;
-    let clip_duration = clip.duration;
-    let project_root_set = project_root.is_some();
-
-    if !waveform_debug_logged() {
-        println!(
-            "[AUDIO DEBUG] ClipElement render: clip_id={} asset_id={} asset_found={} is_audio={} duration={} trim={} zoom={} project_root_set={}",
-            clip_id,
-            clip_asset_id,
-            asset.is_some(),
-            is_audio,
-            clip_duration,
-            trim_in_seconds,
-            zoom,
-            project_root_set
-        );
-        waveform_debug_logged.set(true);
-    }
 
     let waveform_buster_value = waveform_cache_buster();
     if is_audio {
@@ -196,39 +177,11 @@ pub(crate) fn ClipElement(
                                 }
                             }) {
                             Ok(cache) => {
-                                if let Some(cache) = cache.as_ref() {
-                                    println!(
-                                        "[AUDIO DEBUG] Waveform: sync cache hit asset={} path={:?} levels={} base_peaks={}",
-                                        asset_id,
-                                        cache_path,
-                                        cache.levels.len(),
-                                        cache
-                                            .levels
-                                            .first()
-                                            .map(|level| level.peaks.len())
-                                            .unwrap_or(0)
-                                    );
-                                } else {
-                                    println!(
-                                        "[AUDIO DEBUG] Waveform: sync cache miss asset={} path={:?}",
-                                        asset_id, cache_path
-                                    );
-                                }
                                 loaded = cache;
                             }
-                            Err(err) => {
-                                println!(
-                                    "[AUDIO DEBUG] Waveform: sync cache load failed asset={} err={}",
-                                    asset_id, err
-                                );
-                            }
+                            Err(_err) => {}
                         }
                     }
-                } else {
-                    println!(
-                        "[AUDIO DEBUG] Waveform: no source path for asset {}",
-                        asset_id
-                    );
                 }
                 waveform_cache.set(loaded);
                 if waveform_bitmap_cache().is_some() {
@@ -239,10 +192,6 @@ pub(crate) fn ClipElement(
 
             if waveform_cache().is_none() && !waveform_building() {
                 if let Some(source_path) = source_path {
-                    println!(
-                        "[AUDIO DEBUG] Waveform: sync build start asset={} source={:?}",
-                        asset_id, source_path
-                    );
                     waveform_building.set(true);
                     let mut waveform_cache = waveform_cache.clone();
                     let mut waveform_building = waveform_building.clone();
@@ -271,32 +220,11 @@ pub(crate) fn ClipElement(
                                     .ok()
                                     .unwrap_or_else(|| Err("Waveform cache load failed".to_string()))
                             {
-                                println!(
-                                    "[AUDIO DEBUG] Waveform: sync cache loaded asset={} path={:?} levels={} base_peaks={}",
-                                    asset_id,
-                                    cache_path,
-                                    cache.levels.len(),
-                                    cache
-                                        .levels
-                                        .first()
-                                        .map(|level| level.peaks.len())
-                                        .unwrap_or(0)
-                                );
                                 waveform_cache.set(Some(cache));
                                 waveform_cache_buster
                                     .set(waveform_cache_buster() + 1);
                                 waveform_bitmap_cache.set(None);
-                            } else {
-                                println!(
-                                    "[AUDIO DEBUG] Waveform: sync cache load failed asset={} path={:?}",
-                                    asset_id, cache_path
-                                );
                             }
-                        } else {
-                            println!(
-                                "[AUDIO DEBUG] Waveform: sync build failed asset={} source={:?}",
-                                asset_id, source_path
-                            );
                         }
                     });
                 }
@@ -438,30 +366,14 @@ pub(crate) fn ClipElement(
                                         WAVEFORM_BMP_HEIGHT_PX,
                                         &bitmap,
                                     ) {
-                                        Ok((encode_ms, write_ms, byte_len)) => {
+                                        Ok((_encode_ms, _write_ms, _byte_len)) => {
                                             waveform_url = bmp_url.clone();
                                             waveform_bitmap_cache.set(Some((key, bmp_url)));
-                                            let total_ms = columns_elapsed.as_millis()
-                                                + bitmap_elapsed.as_millis();
-                                            if total_ms > 5 || encode_ms > 5 || write_ms > 5 {
-                                                println!(
-                                                    "[PERF DEBUG] Waveform bmp build: clip_id={} asset_id={} width={} zoom={} columns={} columns_ms={} bitmap_ms={} bmp_encode_ms={} bmp_write_ms={} bmp_bytes={}",
-                                                    clip_id,
-                                                    clip.asset_id,
-                                                    render_width,
-                                                    zoom,
-                                                    columns.len(),
-                                                    columns_elapsed.as_millis(),
-                                                    bitmap_elapsed.as_millis(),
-                                                    encode_ms,
-                                                    write_ms,
-                                                    byte_len
-                                                );
-                                            }
+                                            let _ = (columns_elapsed, bitmap_elapsed);
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "[PERF DEBUG] Waveform bmp write failed: asset_id={} err={}",
+                                            eprintln!(
+                                                "[AUDIO WARN] Waveform bmp write failed: asset_id={} err={}",
                                                 clip.asset_id, err
                                             );
                                         }
@@ -1066,9 +978,9 @@ fn write_waveform_bmp(
     let bmp_encode_ms = bmp_encode_start.elapsed().as_millis();
 
     if bmp_result.is_err() {
-        println!(
-            "[PERF DEBUG] Waveform bmp encode failed: asset_id={} err={}",
-            asset_id, bmp_result.is_err()
+        eprintln!(
+            "[AUDIO WARN] Waveform bmp encode failed: asset_id={}",
+            asset_id
         );
         return Err("BMP encode failed.".to_string());
     }
@@ -1077,16 +989,6 @@ fn write_waveform_bmp(
     let bmp_write_result = fs::write(path, &bmp_bytes);
     let bmp_write_ms = bmp_write_start.elapsed().as_millis();
 
-    println!(
-        "[PERF DEBUG] Waveform bmp encode: asset_id={} width={} height={} bmp_encode_ms={} bmp_bytes={} bmp_write_ms={} bmp_write_ok={}",
-        asset_id,
-        width,
-        height,
-        bmp_encode_ms,
-        bmp_bytes.len(),
-        bmp_write_ms,
-        bmp_write_result.is_ok()
-    );
     bmp_write_result.map_err(|err| err.to_string())?;
     Ok((bmp_encode_ms, bmp_write_ms, bmp_bytes.len()))
 }

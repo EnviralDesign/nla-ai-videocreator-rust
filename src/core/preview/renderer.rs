@@ -10,7 +10,7 @@ use crate::core::video_decode::{DecodeMode, VideoDecodeWorker};
 use crate::state::{Asset, Project, TrackType};
 
 use super::{
-    cache::{FrameCache, FrameCacheStats},
+    cache::FrameCache,
     layers::{
         composite_layer, compute_layer_placement, preview_canvas_size, DecodedFrame, PendingDecode,
         PreviewLayer,
@@ -60,17 +60,6 @@ impl PreviewRenderer {
         if let Ok(mut cache) = self.frame_cache.lock() {
             cache.invalidate_folder(folder);
         }
-    }
-
-    pub fn debug_cache_stats(&self) -> Option<FrameCacheStats> {
-        self.frame_cache.lock().ok().map(|cache| cache.stats())
-    }
-
-    pub fn debug_plate_cache_bytes(&self) -> Option<(u32, u32, usize)> {
-        let cache = self.plate_cache.lock().ok()?;
-        let entry = cache.as_ref()?;
-        let bytes_per_image = entry.width as usize * entry.height as usize * 4;
-        Some((entry.width, entry.height, bytes_per_image.saturating_mul(2)))
     }
 
     /// Render a preview frame for the given time and store the encoded PNG in memory.

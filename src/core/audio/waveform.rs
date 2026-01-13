@@ -38,14 +38,6 @@ impl Default for PeakBuildConfig {
 
 pub fn build_peak_cache(source_path: &Path, config: PeakBuildConfig) -> Result<PeakCache, String> {
     let (source_size, source_mtime) = source_identity(source_path)?;
-    println!(
-        "[AUDIO DEBUG] Peak build start: source={:?} base_block={} levels={} target_rate={} target_channels={}",
-        source_path,
-        config.base_block,
-        config.max_levels,
-        config.target_rate,
-        config.target_channels
-    );
     let mut accumulator = PeakAccumulator::new(config.base_block);
 
     decode_audio_chunks(
@@ -62,11 +54,6 @@ pub fn build_peak_cache(source_path: &Path, config: PeakBuildConfig) -> Result<P
 
     let base_peaks = accumulator.finish();
     let levels = build_levels(base_peaks, config.base_block, config.level_factor, config.max_levels);
-    println!(
-        "[AUDIO DEBUG] Peak build complete: levels={} base_peaks={}",
-        levels.len(),
-        levels.first().map(|level| level.peaks.len()).unwrap_or(0)
-    );
 
     Ok(PeakCache {
         sample_rate: config.target_rate,
@@ -83,17 +70,9 @@ pub fn build_and_store_peak_cache(
     source_path: &Path,
     config: PeakBuildConfig,
 ) -> Result<std::path::PathBuf, String> {
-    println!(
-        "[AUDIO DEBUG] Peak cache write: asset_id={} source={:?}",
-        asset_id, source_path
-    );
     let cache = build_peak_cache(source_path, config)?;
     let cache_path = peak_cache_path(project_root, asset_id);
     write_peak_cache(&cache_path, &cache)?;
-    println!(
-        "[AUDIO DEBUG] Peak cache saved: asset_id={} path={:?}",
-        asset_id, cache_path
-    );
     Ok(cache_path)
 }
 

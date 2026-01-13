@@ -31,6 +31,8 @@ pub enum HotkeyAction {
     TimelineZoomOut,
     /// Save the current project.
     SaveProject,
+    /// Toggle playback.
+    PlayPause,
 
     // ═══════════════════════════════════════════════════════════════
     // Playback (future)
@@ -115,6 +117,7 @@ pub fn handle_hotkey(
         }
         Key::Character(c) if c == "+" => return HotkeyResult::Action(HotkeyAction::TimelineZoomIn),
         Key::Character(c) if c == "-" => return HotkeyResult::Action(HotkeyAction::TimelineZoomOut),
+        Key::Character(c) if c == " " => return HotkeyResult::Action(HotkeyAction::PlayPause),
         _ => {}
     }
 

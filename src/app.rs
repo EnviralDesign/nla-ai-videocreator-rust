@@ -85,7 +85,6 @@ pub(crate) fn build_audio_playback_items(
     let sample_rate = engine.sample_rate() as f64;
     let channels = engine.channels();
     let mut items = Vec::new();
-    let mut clip_count = 0_usize;
     let mut missing = Vec::new();
 
     for clip in project.clips.iter() {
@@ -101,12 +100,7 @@ pub(crate) fn build_audio_playback_items(
         if !asset.is_audio() && !asset.is_video() {
             continue;
         }
-        clip_count += 1;
         let Some(source_path) = resolve_audio_or_video_source(project_root, asset) else {
-            println!(
-                "[AUDIO DEBUG] Playback build: missing source path asset_id={}",
-                asset.id
-            );
             continue;
         };
 
@@ -127,8 +121,8 @@ pub(crate) fn build_audio_playback_items(
             let decoded = match decode_audio_to_f32(&source_path, decode_config) {
                 Ok(decoded) => decoded,
                 Err(err) => {
-                    println!(
-                        "[AUDIO DEBUG] Playback decode failed asset_id={} err={}",
+                    eprintln!(
+                        "[AUDIO ERROR] Playback decode failed asset_id={} err={}",
                         asset.id, err
                     );
                     continue;
@@ -157,18 +151,6 @@ pub(crate) fn build_audio_playback_items(
         let clip_volume = clip.volume;
         let gain = (track_volume * clip_volume).max(0.0);
 
-        println!(
-            "[AUDIO DEBUG] Playback item: clip_id={} asset_id={} start={}s duration={}s trim_in={}s frames={} offset_frames={} gain={}",
-            clip.id,
-            asset.id,
-            clip.start_time,
-            clip.duration,
-            clip.trim_in_seconds,
-            frame_count,
-            trim_frames,
-            gain
-        );
-
         items.push(PlaybackItem {
             samples,
             start_frame,
@@ -178,12 +160,6 @@ pub(crate) fn build_audio_playback_items(
             gain,
         });
     }
-
-    println!(
-        "[AUDIO DEBUG] Playback build: clips={} items={}",
-        clip_count,
-        items.len()
-    );
 
     (items, missing)
 }
@@ -269,11 +245,7 @@ fn schedule_audio_decode_targets(
                 if let Ok(mut cache) = sample_cache.lock() {
                     cache.insert(asset_id, Arc::clone(&samples));
                 }
-                println!(
-                    "[AUDIO DEBUG] Playback cache ready: asset_id={} samples={}",
-                    asset_id,
-                    samples.len()
-                );
+                // Cache ready; no logging to reduce console noise.
                 let (items, _) = build_audio_playback_items(
                     &project_snapshot,
                     &project_root,
@@ -283,8 +255,8 @@ fn schedule_audio_decode_targets(
                 );
                 audio_engine.set_items(items);
             } else {
-                println!(
-                    "[AUDIO DEBUG] Playback decode failed (background) asset_id={}",
+                eprintln!(
+                    "[AUDIO WARN] Playback decode failed (background) asset_id={}",
                     asset_id
                 );
             }
@@ -416,7 +388,7 @@ pub fn App() -> Element {
         match AudioPlaybackEngine::new() {
             Ok(engine) => Some(Arc::new(engine)),
             Err(err) => {
-                println!("[AUDIO DEBUG] Audio engine init failed: {}", err);
+                eprintln!("[AUDIO ERROR] Audio engine init failed: {}", err);
                 None
             }
         }
@@ -969,99 +941,6 @@ pub fn App() -> Element {
         }
     });
 
-    let audio_sample_cache_for_debug = audio_sample_cache.clone();
-    let audio_decode_in_flight_for_debug = audio_decode_in_flight.clone();
-    use_future(move || {
-        let previewer = previewer.clone();
-        let audio_sample_cache = audio_sample_cache_for_debug.clone();
-        let audio_decode_in_flight = audio_decode_in_flight_for_debug.clone();
-        let clip_cache_buckets = clip_cache_buckets.clone();
-        let project = project.clone();
-        async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                let cache_stats = previewer.read().debug_cache_stats();
-                let plate_info = previewer.read().debug_plate_cache_bytes();
-
-                let (audio_assets, audio_samples, audio_bytes) = if let Ok(cache) =
-                    audio_sample_cache.lock()
-                {
-                    let mut samples = 0_usize;
-                    for entry in cache.values() {
-                        samples = samples.saturating_add(entry.len());
-                    }
-                    let bytes = samples.saturating_mul(std::mem::size_of::<f32>());
-                    (cache.len(), samples, bytes)
-                } else {
-                    (0, 0, 0)
-                };
-
-                let inflight = audio_decode_in_flight
-                    .lock()
-                    .map(|set| set.len())
-                    .unwrap_or(0);
-
-                let bucket_map = clip_cache_buckets();
-                let bucket_clips = bucket_map.len();
-                let bucket_total = bucket_map.values().map(|v| v.len()).sum::<usize>();
-
-                let project_snapshot = project.read();
-
-                if let Some(stats) = cache_stats {
-                    if let Some((plate_w, plate_h, plate_bytes)) = plate_info {
-                        println!(
-                            "[MEM DEBUG] preview_cache entries={} bytes={} max={} assets={} lru={} plate={}x{} plate_bytes={} audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
-                            stats.entries,
-                            stats.total_bytes,
-                            stats.max_bytes,
-                            stats.asset_count,
-                            stats.lru_len,
-                            plate_w,
-                            plate_h,
-                            plate_bytes,
-                            audio_assets,
-                            audio_samples,
-                            audio_bytes,
-                            inflight,
-                            project_snapshot.clips.len(),
-                            project_snapshot.assets.len(),
-                            bucket_clips,
-                            bucket_total
-                        );
-                    } else {
-                        println!(
-                            "[MEM DEBUG] preview_cache entries={} bytes={} max={} assets={} lru={} plate=none audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
-                            stats.entries,
-                            stats.total_bytes,
-                            stats.max_bytes,
-                            stats.asset_count,
-                            stats.lru_len,
-                            audio_assets,
-                            audio_samples,
-                            audio_bytes,
-                            inflight,
-                            project_snapshot.clips.len(),
-                            project_snapshot.assets.len(),
-                            bucket_clips,
-                            bucket_total
-                        );
-                    }
-                } else {
-                    println!(
-                        "[MEM DEBUG] preview_cache unavailable audio_cache assets={} samples={} bytes={} inflight={} clips={} assets={} buckets={} bucket_total={}",
-                        audio_assets,
-                        audio_samples,
-                        audio_bytes,
-                        inflight,
-                        project_snapshot.clips.len(),
-                        project_snapshot.assets.len(),
-                        bucket_clips,
-                        bucket_total
-                    );
-                }
-            }
-        }
-    });
 
     use_effect(move || {
         let _tick = preview_cache_tick();
@@ -1829,10 +1708,6 @@ pub fn App() -> Element {
                                                 &project_root,
                                                 &asset,
                                             ) {
-                                                println!(
-                                                    "[AUDIO DEBUG] Refresh cache: asset_id={} source={:?}",
-                                                    asset.id, source_path
-                                                );
                                                 let _ = tokio::task::spawn_blocking(move || {
                                                     crate::core::audio::waveform::build_and_store_peak_cache(
                                                         &project_root,
@@ -1842,12 +1717,7 @@ pub fn App() -> Element {
                                                     )
                                                 })
                                                 .await;
-                                            }
-                                            else {
-                                                println!(
-                                                    "[AUDIO DEBUG] Refresh cache: no source path for asset {}",
-                                                    asset.id
-                                                );
+                                            } else {
                                             }
                                         }
                                         audio_waveform_cache_buster
@@ -2050,10 +1920,6 @@ pub fn App() -> Element {
                                                         Arc::clone(&engine),
                                                     );
                                                 }
-                                            } else {
-                                                println!(
-                                                    "[AUDIO DEBUG] Play requested without project root"
-                                                );
                                             }
                                             engine.seek_seconds(current_time());
                                             engine.play();
@@ -2296,10 +2162,6 @@ pub fn App() -> Element {
                                             );
                                             engine.set_items(items);
                                             if !missing.is_empty() {
-                                                println!(
-                                                    "[AUDIO DEBUG] Volume update pending decode: missing={}",
-                                                    missing.len()
-                                                );
                                                 let mut missing_set = HashSet::<uuid::Uuid>::new();
                                                 for id in missing {
                                                     missing_set.insert(id);

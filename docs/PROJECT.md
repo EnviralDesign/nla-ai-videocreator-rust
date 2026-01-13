@@ -691,7 +691,7 @@ This allows:
 | Snap disable modifier | Hold Alt while dragging to temporarily disable snapping | ? Decided |
 | Playhead snapping | Playhead drags snap to clip edges and markers; Alt disables | ? Decided |
 | Ctrl+S save hotkey | Ctrl/Cmd+S triggers a project save | ? Decided |
-| Memory debug logging | Added periodic cache size logging to trace memory growth | ? Decided |
+| Audio logging reduction | Removed audio/perf debug logs; keep warnings/errors only | ? Decided |
 | Preview cache LRU compaction | Rebuild LRU queue when it grows too large to avoid unbounded memory | ? Decided |
 | Click-to-scrub Interaction | Click anywhere on ruler to seek; playhead follows cursor, not grabbed | ✅ Decided |
 | Hierarchical Timeline Layout | Fixed left column + scrollable right column; no JS scroll sync needed | ✅ Decided |

@@ -60,10 +60,6 @@ impl AudioPlaybackEngine {
 
         let channels_for_cb = channels;
 
-        println!(
-            "[AUDIO DEBUG] Audio output config: rate={} channels={} format={}",
-            sample_rate, channels, output.sample_format
-        );
 
         let stream = match output.sample_format {
             SampleFormat::F32 => build_output_stream::<f32>(

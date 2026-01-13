@@ -65,10 +65,6 @@ where
 {
     init_ffmpeg()?;
 
-    println!(
-        "[AUDIO DEBUG] Decode start: path={:?} target_rate={} target_channels={}",
-        path, config.target_rate, config.target_channels
-    );
     let mut ictx = format::input(path).map_err(|err| err.to_string())?;
     let stream = ictx
         .streams()
@@ -116,14 +112,6 @@ where
         },
     )?;
 
-    println!(
-        "[AUDIO DEBUG] Decode stream: index={} source_rate={} source_channels={} target_rate={} target_channels={}",
-        stream_index,
-        source_rate,
-        source_channels,
-        resampler.target_rate(),
-        resampler.target_channels()
-    );
 
     let meta = AudioDecodeMeta {
         source_rate,
@@ -162,10 +150,6 @@ where
     )?;
     flush_resampler(&mut resampler, &mut on_samples, &mut total_samples)?;
 
-    println!(
-        "[AUDIO DEBUG] Decode complete: total_samples={} duration_seconds={:?}",
-        total_samples, meta.duration_seconds
-    );
     Ok(meta)
 }
 
