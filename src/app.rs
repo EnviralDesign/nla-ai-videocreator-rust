@@ -2146,10 +2146,21 @@ pub fn App() -> Element {
                             },
                             on_marker_add: move |time: f64| {
                                 let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);
-                                let marker = crate::state::Marker::new(snapped);
-                                let id = project.write().add_marker(marker);
-                                selection.write().select_marker(id);
-                                timeline_focused.set(true);
+                                let target_frame = frames_from_seconds(snapped, timeline_fps).round();
+                                let exists = project
+                                    .read()
+                                    .markers
+                                    .iter()
+                                    .any(|marker| {
+                                        frames_from_seconds(marker.time, timeline_fps).round()
+                                            == target_frame
+                                    });
+                                if !exists {
+                                    let marker = crate::state::Marker::new(snapped);
+                                    let id = project.write().add_marker(marker);
+                                    selection.write().select_marker(id);
+                                    timeline_focused.set(true);
+                                }
                             },
                             on_marker_move: move |(marker_id, time)| {
                                 let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);

@@ -47,7 +47,8 @@ pub fn MarkerElement(
                 left: {position}px;
                 top: 0;
                 height: 100%;
-                transform: translateX(-0.5px);
+                width: 12px;
+                transform: translateX(-6px);
                 cursor: ew-resize;
             ",
             onmousedown: move |e| {
@@ -74,10 +75,11 @@ pub fn MarkerElement(
             div {
                 style: "
                     position: absolute;
-                    left: {-(line_width / 2.0)}px;
+                    left: 50%;
                     top: 0;
                     width: {line_width}px;
                     height: 100%;
+                    transform: translateX(-50%);
                     background-color: {marker_color};
                     box-shadow: 0 0 0 1px rgba(0,0,0,0.2);
                 ",
@@ -86,10 +88,11 @@ pub fn MarkerElement(
             div {
                 style: "
                     position: absolute;
-                    left: -4px;
+                    left: 50%;
                     bottom: 0;
                     width: 0;
                     height: 0;
+                    transform: translateX(-50%);
                     border-left: 4px solid transparent;
                     border-right: 4px solid transparent;
                     border-bottom: 6px solid {marker_color};
@@ -99,7 +102,7 @@ pub fn MarkerElement(
                 div {
                     style: "
                         position: absolute;
-                        left: 6px;
+                        left: 10px;
                         top: 2px;
                         max-width: 120px;
                         padding: 2px 6px;
@@ -119,7 +122,7 @@ pub fn MarkerElement(
                 div {
                     style: "
                         position: absolute;
-                        left: 6px;
+                        left: 10px;
                         top: 3px;
                         font-size: 9px;
                         color: {TEXT_DIM};
