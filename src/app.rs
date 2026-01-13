@@ -57,12 +57,6 @@ enum PreviewCanvasMessage {
     Clear,
 }
 
-#[derive(Clone, Copy, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum TimelineViewportCommand {
-    Scroll { scroll_left: f64 },
-}
-
 #[derive(Clone, Copy, Deserialize)]
 struct TimelineViewportState {
     width: f64,
@@ -335,7 +329,6 @@ fn set_timeline_zoom_anchored(
     current_time: f64,
     mut zoom: Signal<f64>,
     mut scroll_offset: Signal<f64>,
-    timeline_viewport_eval: Signal<Option<document::Eval>>,
 ) {
     let old_zoom = zoom();
     if (new_zoom - old_zoom).abs() < f64::EPSILON {
@@ -359,11 +352,6 @@ fn set_timeline_zoom_anchored(
 
     zoom.set(new_zoom);
     scroll_offset.set(next_scroll);
-    if let Some(eval) = timeline_viewport_eval() {
-        let _ = eval.send(TimelineViewportCommand::Scroll {
-            scroll_left: next_scroll,
-        });
-    }
 }
 
 async fn execute_generation_job(
@@ -1462,7 +1450,6 @@ pub fn App() -> Element {
     let zoom_for_hotkeys = zoom.clone();
     let scroll_offset_for_hotkeys = scroll_offset.clone();
     let timeline_viewport_width_for_hotkeys = timeline_viewport_width.clone();
-    let timeline_viewport_eval_for_hotkeys = timeline_viewport_eval.clone();
 
     rsx! {
         // Global CSS with drag state handling
@@ -1639,7 +1626,6 @@ pub fn App() -> Element {
                                     current_time_for_hotkeys(),
                                     zoom_for_hotkeys.clone(),
                                     scroll_offset_for_hotkeys.clone(),
-                                    timeline_viewport_eval_for_hotkeys.clone(),
                                 );
                             }
                             HotkeyAction::TimelineZoomOut => {
@@ -1657,7 +1643,6 @@ pub fn App() -> Element {
                                     current_time_for_hotkeys(),
                                     zoom_for_hotkeys.clone(),
                                     scroll_offset_for_hotkeys.clone(),
-                                    timeline_viewport_eval_for_hotkeys.clone(),
                                 );
                             }
                             HotkeyAction::PlayPause => {
@@ -2010,7 +1995,6 @@ pub fn App() -> Element {
                                     current_time(),
                                     zoom.clone(),
                                     scroll_offset.clone(),
-                                    timeline_viewport_eval.clone(),
                                 );
                             },
                             on_play_pause: {

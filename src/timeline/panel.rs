@@ -353,6 +353,7 @@ pub fn TimelinePanel(
                     // ═══════════════════════════════════════════════════════════════
                     div {
                         id: "timeline-scroll-host",
+                        "data-scroll-left": "{scroll_offset}",
                         style: "
                             flex: 1;
                             overflow-x: auto;

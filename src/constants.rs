@@ -186,6 +186,18 @@ function applyScrollLeft(value) {
     sendWidth();
 }
 
+function readScrollLeftAttr(host) {
+    const raw = host.getAttribute("data-scroll-left");
+    if (!raw) {
+        return null;
+    }
+    const value = parseFloat(raw);
+    if (!Number.isFinite(value)) {
+        return null;
+    }
+    return value;
+}
+
 function attach() {
     const host = document.getElementById(hostId);
     if (!host) {
@@ -194,8 +206,23 @@ function attach() {
     }
     const observer = new ResizeObserver(() => sendWidth());
     observer.observe(host);
+    const mutationObserver = new MutationObserver(() => {
+        const value = readScrollLeftAttr(host);
+        if (value === null) {
+            return;
+        }
+        applyScrollLeft(value);
+    });
+    mutationObserver.observe(host, {
+        attributes: true,
+        attributeFilter: ["data-scroll-left"],
+    });
     host.addEventListener("scroll", sendWidth, { passive: true });
     window.addEventListener("resize", sendWidth, { passive: true });
+    const initialValue = readScrollLeftAttr(host);
+    if (initialValue !== null) {
+        applyScrollLeft(initialValue);
+    }
     sendWidth();
 }
 
