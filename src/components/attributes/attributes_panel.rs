@@ -3,7 +3,9 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use crate::components::common::{NumericField, ProviderTextAreaField, ProviderTextField};
+use crate::components::common::{
+    NumericField, ProviderTextAreaField, ProviderTextField, StableNumberInput,
+};
 use super::generative_controls::render_generative_controls;
 use super::provider_inputs::render_provider_inputs;
 use crate::constants::*;
@@ -19,13 +21,18 @@ use crate::state::{
     parse_version_index,
     GenerationJob,
     GenerationJobStatus,
+    AssetKind,
     ProviderConnection,
     ProviderEntry,
     ProviderInputType,
     ProviderOutputType,
+    DEFAULT_GENERATIVE_VIDEO_FPS,
+    DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT,
+    generative_video_duration_seconds,
     SeedStrategy,
     TrackType,
 };
+use crate::utils::parse_i64_input;
 
 const MAX_BATCH_COUNT: u32 = 50;
 
@@ -374,6 +381,10 @@ pub fn AttributesPanelContent(
     let gen_output = generative_info.as_ref().map(|(_, output)| *output);
     let gen_folder_path = generative_info.as_ref().and_then(|(folder, _)| {
         project_root.as_ref().map(|root| root.join(folder))
+    });
+    let gen_video_spec = asset.as_ref().and_then(|asset| match &asset.kind {
+        AssetKind::GenerativeVideo { fps, frame_count, .. } => Some((*fps, *frame_count)),
+        _ => None,
     });
     let providers_list = providers.read().clone();
     let compatible_providers: Vec<ProviderEntry> = match gen_output {
@@ -1058,6 +1069,48 @@ pub fn AttributesPanelContent(
         }))
     };
 
+    let mut update_gen_video_fps = {
+        let mut project = project.clone();
+        let mut preview_dirty = preview_dirty.clone();
+        let asset_id = clip.asset_id;
+        move |value: f32| {
+            let fps = value.max(1.0) as f64;
+            let frame_count = {
+                let project_read = project.read();
+                project_read
+                    .find_asset(asset_id)
+                    .and_then(|asset| match &asset.kind {
+                        AssetKind::GenerativeVideo { frame_count, .. } => Some(*frame_count),
+                        _ => None,
+                    })
+                    .unwrap_or(DEFAULT_GENERATIVE_VIDEO_FRAME_COUNT)
+            };
+            update_generative_video_asset(&mut project.write(), asset_id, fps, frame_count);
+            preview_dirty.set(true);
+        }
+    };
+
+    let mut update_gen_video_frames = {
+        let mut project = project.clone();
+        let mut preview_dirty = preview_dirty.clone();
+        let asset_id = clip.asset_id;
+        move |value: i64| {
+            let frame_count = value.max(1) as u32;
+            let fps = {
+                let project_read = project.read();
+                project_read
+                    .find_asset(asset_id)
+                    .and_then(|asset| match &asset.kind {
+                        AssetKind::GenerativeVideo { fps, .. } => Some(*fps),
+                        _ => None,
+                    })
+                    .unwrap_or(DEFAULT_GENERATIVE_VIDEO_FPS)
+            };
+            update_generative_video_asset(&mut project.write(), asset_id, fps, frame_count);
+            preview_dirty.set(true);
+        }
+    };
+
     let transform = clip.transform;
     let clip_id = clip.id;
     let clip_label = clip.label.clone().unwrap_or_default();
@@ -1070,6 +1123,10 @@ pub fn AttributesPanelContent(
         "Generate".to_string()
     };
     let generate_opacity = "1.0";
+    let gen_video_duration_label = gen_video_spec
+        .and_then(|(fps, frame_count)| generative_video_duration_seconds(fps, frame_count))
+        .map(|duration| format!("{:.2}s", duration))
+        .unwrap_or_else(|| "--".to_string());
 
     rsx! {
         div {
@@ -1231,6 +1288,47 @@ pub fn AttributesPanelContent(
             }
 
             if gen_output.is_some() {
+                if let Some((fps, frame_count)) = gen_video_spec {
+                    div {
+                        style: "
+                            display: flex; flex-direction: column; gap: 10px;
+                            padding: 10px; background-color: {BG_SURFACE};
+                            border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                        ",
+                        div {
+                            style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                            "Asset Config"
+                        }
+                        div {
+                            style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;",
+                            NumericField {
+                                label: "FPS",
+                                value: fps as f32,
+                                step: "0.1",
+                                clamp_min: Some(1.0),
+                                clamp_max: None,
+                                on_commit: move |value: f32| {
+                                    update_gen_video_fps(value);
+                                }
+                            }
+                            IntegerField {
+                                label: "Frame Count",
+                                value: frame_count as i64,
+                                step: "1",
+                                clamp_min: Some(1),
+                                clamp_max: None,
+                                on_commit: move |value: i64| {
+                                    update_gen_video_frames(value);
+                                }
+                            }
+                        }
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between;",
+                            span { style: "font-size: 10px; color: {TEXT_DIM};", "Duration" }
+                            span { style: "font-size: 11px; color: {TEXT_PRIMARY};", "{gen_video_duration_label}" }
+                        }
+                    }
+                }
                 {render_generative_controls(
                     &version_options,
                     &selected_version_value,
@@ -1283,6 +1381,137 @@ fn update_clip_transform(
 ) {
     if let Some(clip) = project.write().clips.iter_mut().find(|clip| clip.id == clip_id) {
         update(&mut clip.transform);
+    }
+}
+
+fn update_generative_video_asset(
+    project: &mut crate::state::Project,
+    asset_id: uuid::Uuid,
+    fps: f64,
+    frame_count: u32,
+) {
+    let duration = generative_video_duration_seconds(fps, frame_count);
+    if let Some(asset) = project.assets.iter_mut().find(|asset| asset.id == asset_id) {
+        if let AssetKind::GenerativeVideo {
+            fps: stored_fps,
+            frame_count: stored_frames,
+            ..
+        } = &mut asset.kind
+        {
+            *stored_fps = fps;
+            *stored_frames = frame_count;
+            asset.duration_seconds = duration;
+        }
+    }
+
+    let Some(duration) = duration else {
+        return;
+    };
+
+    for clip in project.clips.iter_mut().filter(|clip| clip.asset_id == asset_id) {
+        if clip.duration > duration {
+            clip.duration = duration.max(0.0);
+        }
+        let max_trim = (duration - clip.duration).max(0.0);
+        if clip.trim_in_seconds > max_trim {
+            clip.trim_in_seconds = max_trim;
+        }
+    }
+}
+
+#[component]
+fn IntegerField(
+    label: &'static str,
+    value: i64,
+    step: &'static str,
+    clamp_min: Option<i64>,
+    clamp_max: Option<i64>,
+    on_commit: EventHandler<i64>,
+    #[props(default = None)] on_change: Option<EventHandler<i64>>,
+) -> Element {
+    let mut text = use_signal(|| format!("{}", value));
+    let mut last_prop_value = use_signal(|| value);
+    if value != last_prop_value() {
+        text.set(format!("{}", value));
+        last_prop_value.set(value);
+    }
+
+    let make_commit = || {
+        let mut text = text.clone();
+        let mut last_prop_value = last_prop_value.clone();
+        let on_commit = on_commit.clone();
+        move || {
+            let mut parsed = parse_i64_input(&text(), value);
+            if let Some(min) = clamp_min {
+                parsed = parsed.max(min);
+            }
+            if let Some(max) = clamp_max {
+                parsed = parsed.min(max);
+            }
+            on_commit.call(parsed);
+            text.set(format!("{}", parsed));
+            last_prop_value.set(parsed);
+        }
+    };
+
+    let mut commit_on_blur = make_commit();
+    let mut commit_on_key = make_commit();
+
+    let on_blur = move |_| {
+        commit_on_blur();
+    };
+
+    let on_keydown = move |e: KeyboardEvent| {
+        if e.key() == Key::Enter {
+            commit_on_key();
+        }
+    };
+    let on_change_handler = on_change.clone();
+    let on_change = move |next_value: String| {
+        text.set(next_value.clone());
+        if let Some(handler) = on_change_handler.as_ref() {
+            let mut parsed = parse_i64_input(&next_value, last_prop_value());
+            if let Some(min) = clamp_min {
+                parsed = parsed.max(min);
+            }
+            if let Some(max) = clamp_max {
+                parsed = parsed.min(max);
+            }
+            handler.call(parsed);
+        }
+    };
+
+    let text_value = text();
+    let input_id = format!("integer-field-{}", label.replace(' ', "-"));
+    let input_style = format!(
+        "
+            width: 100%; min-width: 0; box-sizing: border-box;
+            padding: 6px 8px; font-size: 12px;
+            background-color: {}; color: {};
+            border: 1px solid {}; border-radius: 4px;
+            outline: none;
+            user-select: text;
+        ",
+        BG_SURFACE, TEXT_PRIMARY, BORDER_DEFAULT
+    );
+
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column; gap: 4px; min-width: 0;",
+            span { style: "font-size: 10px; color: {TEXT_MUTED};", "{label}" }
+            StableNumberInput {
+                id: input_id,
+                value: text_value,
+                placeholder: None,
+                style: Some(input_style),
+                min: clamp_min.map(|v| v.to_string()),
+                max: clamp_max.map(|v| v.to_string()),
+                step: Some(step.to_string()),
+                on_change: on_change,
+                on_blur: on_blur,
+                on_keydown: on_keydown,
+            }
+        }
     }
 }
 

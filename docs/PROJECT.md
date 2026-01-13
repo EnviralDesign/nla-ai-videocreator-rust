@@ -828,6 +828,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-13:** Added Asset Config controls in the Attributes panel for editing generative video FPS + frame count.
 - **2026-01-13:** Suspended the native preview while the generative video creation modal is open.
 - **2026-01-13:** Generative video assets now require FPS + frame count on creation, and preview playback retimes to fill the declared asset duration.
 - **2026-01-13:** Added ComfyUI queue support for video outputs, including output selection fallback by file type.
