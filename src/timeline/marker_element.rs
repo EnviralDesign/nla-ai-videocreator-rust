@@ -31,6 +31,8 @@ pub fn MarkerElement(
     let mut drag_active = use_signal(|| false);
     let mut drag_start_x = use_signal(|| 0.0);
     let mut drag_start_time = use_signal(|| marker_time);
+    let mut show_menu = use_signal(|| false);
+    let mut menu_pos = use_signal(|| (0.0, 0.0));
 
     let filtered_snap_targets: Vec<SnapTarget> = snap_targets
         .iter()
@@ -63,7 +65,9 @@ pub fn MarkerElement(
             oncontextmenu: move |e| {
                 e.prevent_default();
                 e.stop_propagation();
-                on_delete.call(marker_id);
+                let coords = e.client_coordinates();
+                menu_pos.set((coords.x, coords.y));
+                show_menu.set(true);
             },
 
             // Marker line
@@ -83,12 +87,12 @@ pub fn MarkerElement(
                 style: "
                     position: absolute;
                     left: -4px;
-                    top: 2px;
+                    bottom: 0;
                     width: 0;
                     height: 0;
                     border-left: 4px solid transparent;
                     border-right: 4px solid transparent;
-                    border-top: 6px solid {marker_color};
+                    border-bottom: 6px solid {marker_color};
                 ",
             }
             if let Some(label) = marker.label.as_ref().filter(|label| !label.is_empty()) {
@@ -165,6 +169,46 @@ pub fn MarkerElement(
                     drag_active.set(false);
                     on_snap_preview.call(None);
                 },
+            }
+        }
+
+        if show_menu() {
+            div {
+                style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9998;",
+                onclick: move |_| show_menu.set(false),
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    show_menu.set(false);
+                },
+            }
+            div {
+                style: "
+                    position: fixed;
+                    left: {menu_pos().0}px;
+                    top: {menu_pos().1}px;
+                    background-color: {BG_SURFACE};
+                    border: 1px solid {BORDER_DEFAULT};
+                    border-radius: 6px;
+                    padding: 4px 0;
+                    min-width: 140px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    z-index: 9999;
+                    font-size: 12px;
+                ",
+                oncontextmenu: move |e| e.prevent_default(),
+                div {
+                    style: "
+                        padding: 6px 12px;
+                        color: #ef4444;
+                        cursor: pointer;
+                        transition: background-color 0.1s ease;
+                    ",
+                    onclick: move |_| {
+                        on_delete.call(marker_id);
+                        show_menu.set(false);
+                    },
+                    "Delete Marker"
+                }
             }
         }
     }

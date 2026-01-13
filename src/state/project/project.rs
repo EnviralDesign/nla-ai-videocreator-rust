@@ -333,6 +333,15 @@ impl Project {
         false
     }
 
+    /// Update a marker description (empty string clears it).
+    pub fn set_marker_description(&mut self, id: Uuid, description: Option<String>) -> bool {
+        if let Some(marker) = self.markers.iter_mut().find(|marker| marker.id == id) {
+            marker.description = description.filter(|value| !value.trim().is_empty());
+            return true;
+        }
+        false
+    }
+
     /// Update a marker color (hex string) or clear it.
     pub fn set_marker_color(&mut self, id: Uuid, color: Option<String>) -> bool {
         if let Some(marker) = self.markers.iter_mut().find(|marker| marker.id == id) {

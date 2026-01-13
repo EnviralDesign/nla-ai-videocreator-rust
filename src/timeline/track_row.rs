@@ -1,7 +1,17 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
-use crate::constants::{ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO, BG_BASE, BG_HOVER, BORDER_SUBTLE};
+use crate::constants::{
+    ACCENT_AUDIO,
+    ACCENT_MARKER,
+    ACCENT_VIDEO,
+    BG_BASE,
+    BG_HOVER,
+    BG_SURFACE,
+    BORDER_DEFAULT,
+    BORDER_SUBTLE,
+    TEXT_PRIMARY,
+};
 use crate::core::timeline_snap::{snap_time_to_frame, SnapTarget};
 use crate::state::TrackType;
 
@@ -44,6 +54,8 @@ pub fn TrackRow(
     on_deselect_all: EventHandler<MouseEvent>,
 ) -> Element {
     let fps = fps.max(1.0);
+    let mut show_marker_menu = use_signal(|| false);
+    let mut marker_menu_pos = use_signal(|| (0.0, 0.0));
     // Filter clips for this track
     let track_clips: Vec<_> = clips.iter()
         .filter(|c| c.track_id == track_id)
@@ -84,18 +96,19 @@ pub fn TrackRow(
                 position: relative;
                 transition: background-color 0.2s;
             ",
-            oncontextmenu: move |e| e.prevent_default(),
+            oncontextmenu: move |e| {
+                e.prevent_default();
+                if track_type == TrackType::Marker {
+                    let coords = e.client_coordinates();
+                    marker_menu_pos.set((coords.x, coords.y));
+                    show_marker_menu.set(true);
+                }
+            },
             onmousedown: move |e| {
                 // Click on empty track area deselects all clips
                 if let Some(btn) = e.trigger_button() {
                     if format!("{:?}", btn) == "Primary" {
-                        if track_type == TrackType::Marker {
-                            e.prevent_default();
-                            e.stop_propagation();
-                            on_marker_add.call(current_time);
-                        } else {
-                            on_deselect_all.call(e);
-                        }
+                        on_deselect_all.call(e);
                     }
                 }
             },
@@ -151,6 +164,43 @@ pub fn TrackRow(
                     on_delete: move |id| on_marker_delete.call(id),
                     on_snap_preview: move |time| on_snap_preview.call(time),
                     snap_targets: snap_targets.clone(),
+                }
+            }
+            if show_marker_menu() {
+                div {
+                    style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9998;",
+                    onclick: move |_| show_marker_menu.set(false),
+                    oncontextmenu: move |e| {
+                        e.prevent_default();
+                        show_marker_menu.set(false);
+                    },
+                }
+                div {
+                    style: "
+                        position: fixed;
+                        left: {marker_menu_pos().0}px;
+                        top: {marker_menu_pos().1}px;
+                        background-color: {BG_SURFACE};
+                        border: 1px solid {BORDER_DEFAULT};
+                        border-radius: 6px;
+                        padding: 4px 0;
+                        min-width: 160px;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        z-index: 9999;
+                        font-size: 12px;
+                    ",
+                    oncontextmenu: move |e| e.prevent_default(),
+                    div {
+                        style: "
+                            padding: 6px 12px; color: {TEXT_PRIMARY}; cursor: pointer;
+                            transition: background-color 0.1s ease;
+                        ",
+                        onclick: move |_| {
+                            on_marker_add.call(current_time);
+                            show_marker_menu.set(false);
+                        },
+                        "Add Marker at Playhead"
+                    }
                 }
             }
         }

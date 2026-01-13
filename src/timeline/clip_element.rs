@@ -93,6 +93,9 @@ pub(crate) fn ClipElement(
     let is_generative = asset.map(|a| a.is_generative()).unwrap_or(false);
     let is_visual = asset.map(|a| a.is_visual()).unwrap_or(false);
     let is_audio = asset.map(|a| a.is_audio()).unwrap_or(false);
+    let has_source_trim = asset
+        .map(|a| a.is_video() || a.is_audio())
+        .unwrap_or(false);
     let trim_in_seconds = clip.trim_in_seconds.max(0.0);
     let max_duration = asset.and_then(|a| {
         if a.is_video() || a.is_audio() {
@@ -660,11 +663,15 @@ pub(crate) fn ClipElement(
                         Some("resize-left") => {
                             // Moving left edge: keep right edge fixed while clamping to source duration
                             let end_frames = frames_from_seconds(drag_start_end_time(), fps).round();
-                            let min_start_frames = frames_from_seconds(
-                                (current_start - trim_in_seconds).max(0.0),
-                                fps,
-                            )
-                            .round();
+                            let min_start_frames = if has_source_trim {
+                                frames_from_seconds(
+                                    (current_start - trim_in_seconds).max(0.0),
+                                    fps,
+                                )
+                                .round()
+                            } else {
+                                0.0
+                            };
                             let mut new_start_frames =
                                 frames_from_seconds(drag_start_time(), fps).round() + delta_frames;
                             let mut snap_target_frame = None;

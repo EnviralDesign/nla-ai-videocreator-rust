@@ -10,6 +10,8 @@ pub struct Marker {
     pub time: f64,
     /// Optional label
     pub label: Option<String>,
+    /// Optional description
+    pub description: Option<String>,
     /// Optional color (hex string, e.g., "#f97316")
     pub color: Option<String>,
 }
@@ -22,6 +24,7 @@ impl Marker {
             id: Uuid::new_v4(),
             time,
             label: None,
+            description: None,
             color: None,
         }
     }
@@ -33,6 +36,7 @@ impl Marker {
             id: Uuid::new_v4(),
             time,
             label: Some(label.into()),
+            description: None,
             color: None,
         }
     }

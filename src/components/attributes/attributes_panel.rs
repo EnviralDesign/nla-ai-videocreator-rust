@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use crate::components::common::{NumericField, ProviderTextField};
+use crate::components::common::{NumericField, ProviderTextAreaField, ProviderTextField};
 use super::generative_controls::render_generative_controls;
 use super::provider_inputs::render_provider_inputs;
 use crate::constants::*;
@@ -119,6 +119,7 @@ pub fn AttributesPanelContent(
 
             let marker_id = marker.id;
             let marker_label = marker.label.clone().unwrap_or_default();
+            let marker_description = marker.description.clone().unwrap_or_default();
             let marker_color = marker
                 .color
                 .clone()
@@ -149,16 +150,37 @@ pub fn AttributesPanelContent(
                                 project.write().set_marker_label(marker_id, next);
                             }
                         }
-                        ProviderTextField {
-                            label: "Color (hex)".to_string(),
-                            value: marker.color.clone().unwrap_or_default(),
+                        ProviderTextAreaField {
+                            label: "Description".to_string(),
+                            value: marker_description,
+                            rows: 3,
                             on_commit: move |value: String| {
                                 let next = if value.trim().is_empty() {
                                     None
                                 } else {
                                     Some(value)
                                 };
-                                project.write().set_marker_color(marker_id, next);
+                                project.write().set_marker_description(marker_id, next);
+                            }
+                        }
+                        div {
+                            style: "display: flex; flex-direction: column; gap: 6px;",
+                            span { style: "font-size: 10px; color: {TEXT_MUTED};", "Color" }
+                            input {
+                                r#type: "color",
+                                value: "{marker_color}",
+                                style: "
+                                    width: 100%;
+                                    height: 28px;
+                                    border-radius: 6px;
+                                    border: 1px solid {BORDER_DEFAULT};
+                                    background-color: {BG_SURFACE};
+                                    padding: 0;
+                                ",
+                                oninput: move |e| {
+                                    let value = e.value();
+                                    project.write().set_marker_color(marker_id, Some(value));
+                                }
                             }
                         }
                         div {
