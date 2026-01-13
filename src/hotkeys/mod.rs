@@ -163,6 +163,13 @@ mod tests {
     }
 
     #[test]
+    fn test_space_toggles_playback() {
+        let ctx = HotkeyContext::default();
+        let result = handle_hotkey(&Key::Character(" ".to_string()), false, false, false, false, &ctx);
+        assert!(matches!(result, HotkeyResult::Action(HotkeyAction::PlayPause)));
+    }
+
+    #[test]
     fn test_suppressed_when_input_focused() {
         let ctx = HotkeyContext {
             input_focused: true,

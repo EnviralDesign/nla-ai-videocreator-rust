@@ -268,6 +268,60 @@ fn schedule_audio_decode_targets(
     }
 }
 
+fn toggle_playback(
+    audio_engine: &Option<Arc<AudioPlaybackEngine>>,
+    audio_sample_cache: &Arc<Mutex<HashMap<uuid::Uuid, Arc<Vec<f32>>>>>,
+    audio_decode_in_flight: &Arc<Mutex<HashSet<uuid::Uuid>>>,
+    project: Signal<crate::state::Project>,
+    current_time: Signal<f64>,
+    mut is_playing: Signal<bool>,
+) {
+    let next_playing = !is_playing();
+    if let Some(engine) = audio_engine.as_ref() {
+        let engine = Arc::clone(engine);
+        if next_playing {
+            if let Some(project_root) = project.read().project_path.clone() {
+                let project_snapshot = project.read().clone();
+                let (items, missing) = build_audio_playback_items(
+                    &project_snapshot,
+                    &project_root,
+                    &engine,
+                    audio_sample_cache,
+                    false,
+                );
+                engine.set_items(items);
+                if !missing.is_empty() {
+                    let mut missing_set = HashSet::<uuid::Uuid>::new();
+                    for id in missing {
+                        missing_set.insert(id);
+                    }
+                    let mut targets =
+                        audio_decode_targets_for_project(&project_snapshot, &project_root);
+                    targets.retain(|(id, _)| missing_set.contains(id));
+                    let decode_config = AudioDecodeConfig {
+                        target_rate: engine.sample_rate(),
+                        target_channels: engine.channels(),
+                    };
+                    schedule_audio_decode_targets(
+                        targets,
+                        decode_config,
+                        Arc::clone(audio_sample_cache),
+                        Arc::clone(audio_decode_in_flight),
+                        project_snapshot,
+                        project_root,
+                        Arc::clone(&engine),
+                    );
+                }
+            }
+            engine.seek_seconds(current_time());
+            engine.play();
+        } else {
+            engine.pause();
+        }
+    }
+    is_playing.set(next_playing);
+}
+
 async fn execute_generation_job(
     job: GenerationJob,
     mut project: Signal<crate::state::Project>,
@@ -1355,6 +1409,12 @@ pub fn App() -> Element {
             }
         }
     };
+    let audio_engine_for_hotkeys = audio_engine.clone();
+    let audio_sample_cache_for_hotkeys = audio_sample_cache.clone();
+    let audio_decode_in_flight_for_hotkeys = audio_decode_in_flight.clone();
+    let project_for_hotkeys = project.clone();
+    let current_time_for_hotkeys = current_time.clone();
+    let is_playing_for_hotkeys = is_playing.clone();
 
     rsx! {
         // Global CSS with drag state handling
@@ -1533,6 +1593,16 @@ pub fn App() -> Element {
                                 );
                                 let new_zoom = (zoom() * 0.8).clamp(min_zoom, max_zoom);
                                 zoom.set(new_zoom);
+                            }
+                            HotkeyAction::PlayPause => {
+                                toggle_playback(
+                                    &audio_engine_for_hotkeys,
+                                    &audio_sample_cache_for_hotkeys,
+                                    &audio_decode_in_flight_for_hotkeys,
+                                    project_for_hotkeys.clone(),
+                                    current_time_for_hotkeys.clone(),
+                                    is_playing_for_hotkeys.clone(),
+                                );
                             }
                             HotkeyAction::SaveProject => {
                                 if let Err(err) = project.read().save() {
@@ -1874,60 +1944,16 @@ pub fn App() -> Element {
                                 let audio_decode_in_flight = audio_decode_in_flight.clone();
                                 let project = project.clone();
                                 let current_time = current_time.clone();
-                                let mut is_playing = is_playing.clone();
+                                let is_playing = is_playing.clone();
                                 move |_| {
-                                    let next_playing = !is_playing();
-                                    if let Some(engine) = audio_engine.as_ref() {
-                                        let engine = Arc::clone(engine);
-                                        if next_playing {
-                                            if let Some(project_root) =
-                                                project.read().project_path.clone()
-                                            {
-                                                let project_snapshot = project.read().clone();
-                                                let (items, missing) = build_audio_playback_items(
-                                                    &project_snapshot,
-                                                    &project_root,
-                                                    &engine,
-                                                    &audio_sample_cache,
-                                                    false,
-                                                );
-                                                engine.set_items(items);
-                                                if !missing.is_empty() {
-                                                    let mut missing_set =
-                                                        HashSet::<uuid::Uuid>::new();
-                                                    for id in missing {
-                                                        missing_set.insert(id);
-                                                    }
-                                                    let mut targets =
-                                                        audio_decode_targets_for_project(
-                                                            &project_snapshot,
-                                                            &project_root,
-                                                        );
-                                                    targets.retain(|(id, _)| {
-                                                        missing_set.contains(id)
-                                                    });
-                                                    let decode_config = AudioDecodeConfig {
-                                                        target_rate: engine.sample_rate(),
-                                                        target_channels: engine.channels(),
-                                                    };
-                                                    schedule_audio_decode_targets(
-                                                        targets,
-                                                        decode_config,
-                                                        Arc::clone(&audio_sample_cache),
-                                                        Arc::clone(&audio_decode_in_flight),
-                                                        project_snapshot,
-                                                        project_root,
-                                                        Arc::clone(&engine),
-                                                    );
-                                                }
-                                            }
-                                            engine.seek_seconds(current_time());
-                                            engine.play();
-                                        } else {
-                                            engine.pause();
-                                        }
-                                    }
-                                    is_playing.set(next_playing);
+                                    toggle_playback(
+                                        &audio_engine,
+                                        &audio_sample_cache,
+                                        &audio_decode_in_flight,
+                                        project.clone(),
+                                        current_time.clone(),
+                                        is_playing.clone(),
+                                    );
                                 }
                             },
                             on_scroll: move |offset: f64| scroll_offset.set(offset),
