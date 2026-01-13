@@ -447,16 +447,16 @@ workflows/
   - [ ] Marker labels (optional)
   - [ ] Marker colors (optional)
 
-- [ ] **Audio Track**
-  - [ ] Import MP3/WAV
-  - [ ] **Waveform visualization** (essential)
-  - [ ] Basic playback controls (play, pause, seek)
-  - [ ] **Audio scrubbing** — hear audio while dragging playhead (critical for usability)
+- [x] **Audio Track**
+  - [x] Import MP3/WAV
+  - [x] **Waveform visualization** (essential)
+  - [x] Basic playback controls (play, pause, seek)
+  - [x] **Audio scrubbing** - hear audio while dragging playhead (critical for usability)
 
 - [ ] **Selection & Attribute Editor**
   - [x] Clip selection state (single)
   - [x] Attribute panel for clip transforms (position/scale/rotation/opacity)
-  - [ ] Track selection state
+  - [x] Track selection state
   - [ ] Asset selection state
   - [ ] Multi-select support for same-type items
   - [x] For generative clips: provider picker
@@ -471,12 +471,12 @@ workflows/
   - [ ] "Other Assets" section below
   - [ ] Duration defaults to clip duration on timeline
 
-- [ ] **Provider System**
+- [x] **Provider System**
   - [x] Provider entry data model (output type, input schema, connection info)
   - [x] Global provider config storage under `%LOCALAPPDATA%\NLA-AI-VideoCreator\providers\`
   - [x] Provider configuration UI (JSON editor modal)
   - [x] Dynamic input schema rendering (text, number, boolean, enum)
-  - [ ] Health check / connection test
+  - [x] Health check / connection test
   - [x] ComfyUI adapter (first provider)
     - [x] Minimal T2I workflow (prompt + seed)
     - [x] Image output download/save into generated/{type}/{id}/
@@ -501,16 +501,18 @@ workflows/
   - [x] Frame server v0: load stills + in-process FFmpeg decode worker
   - [x] Compositor v0: layer stack with opacity + basic scale/translate
   - [x] Preview panel renders composited frame via direct RGBA canvas upload
-  - [ ] Transform pipeline v1: rotation + anchor/pivot support
+  - [x] Transform pipeline v1: rotation, scale, translation
   - [x] Canvas compositor + direct buffer upload (replace PNG cache)
   - [x] Native preview surface (wgpu) integration
   - [x] Frame caching/prefetch for smooth scrubbing
+  - [ ] Transform pipeline v2: anchor/pivot support
 
 ### Nice to Have (v0.2+)
 
 - [ ] I2V generation (image-to-video providers)
 - [ ] V2V transformation (video-to-video providers)
 - [ ] Video extension
+- [ ] Audio generation (music/sfx providers)
 - [ ] Batch variations ("Generate 5 variations with different seeds")
 - [ ] Beat detection / auto-marker placement
 - [ ] Undo/redo
