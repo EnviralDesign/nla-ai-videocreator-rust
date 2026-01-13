@@ -129,6 +129,18 @@ pub fn frame_to_f32_interleaved(frame: &frame::Audio) -> Result<Vec<f32>, String
         ));
     }
     let data = frame.data(0);
+    let expected_samples = frame.samples().saturating_mul(frame.channels() as usize);
+    let expected_bytes = expected_samples.saturating_mul(std::mem::size_of::<f32>());
+    if expected_samples == 0 {
+        return Ok(Vec::new());
+    }
+    if data.len() < expected_bytes {
+        return Err(format!(
+            "Packed f32 data too small: got {} bytes expected {}",
+            data.len(),
+            expected_bytes
+        ));
+    }
     if data.len() % std::mem::size_of::<f32>() != 0 {
         return Err(format!(
             "Packed f32 data size not aligned: {} bytes",
@@ -136,5 +148,5 @@ pub fn frame_to_f32_interleaved(frame: &frame::Audio) -> Result<Vec<f32>, String
         ));
     }
     let samples: &[f32] = bytemuck::cast_slice(data);
-    Ok(samples.to_vec())
+    Ok(samples[..expected_samples].to_vec())
 }

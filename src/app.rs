@@ -16,7 +16,9 @@ use crate::core::generation::next_version_label;
 use crate::core::audio::decode::{decode_audio_to_f32, AudioDecodeConfig};
 use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path};
 use crate::core::audio::playback::{AudioPlaybackEngine, PlaybackItem};
-use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
+use crate::core::audio::waveform::{
+    build_and_store_peak_cache, resolve_audio_or_video_source, resolve_audio_source, PeakBuildConfig,
+};
 use crate::core::media::{resolve_asset_duration_seconds, spawn_asset_duration_probe, spawn_missing_duration_probes};
 use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::core::provider_store::{
@@ -74,17 +76,17 @@ fn build_audio_playback_items(
         let Some(track_type) = track_types.get(&clip.track_id) else {
             continue;
         };
-        if *track_type != TrackType::Audio {
+        if *track_type != TrackType::Audio && *track_type != TrackType::Video {
             continue;
         }
         let Some(asset) = project.find_asset(clip.asset_id) else {
             continue;
         };
-        if !asset.is_audio() {
+        if !asset.is_audio() && !asset.is_video() {
             continue;
         }
         clip_count += 1;
-        let Some(source_path) = resolve_audio_source(project_root, asset) else {
+        let Some(source_path) = resolve_audio_or_video_source(project_root, asset) else {
             println!(
                 "[AUDIO DEBUG] Playback build: missing source path asset_id={}",
                 asset.id
@@ -180,19 +182,19 @@ fn audio_decode_targets_for_project(
         let Some(track_type) = track_types.get(&clip.track_id) else {
             continue;
         };
-        if *track_type != TrackType::Audio {
+        if *track_type != TrackType::Audio && *track_type != TrackType::Video {
             continue;
         }
         let Some(asset) = project.find_asset(clip.asset_id) else {
             continue;
         };
-        if !asset.is_audio() {
+        if !asset.is_audio() && !asset.is_video() {
             continue;
         }
         if !seen.insert(asset.id) {
             continue;
         }
-        if let Some(source_path) = resolve_audio_source(project_root, asset) {
+        if let Some(source_path) = resolve_audio_or_video_source(project_root, asset) {
             targets.push((asset.id, source_path));
         }
     }
@@ -1980,10 +1982,9 @@ pub fn App() -> Element {
                                 project.write().add_clip(clip);
                                 preview_dirty.set(true);
                                 if let Some(asset) = project.read().find_asset(asset_id).cloned() {
-                                    if asset.is_audio() {
+                                    if asset.is_audio() || asset.is_video() {
                                         if let Some(project_root) = project.read().project_path.clone() {
-                                            if let Some(source_path) = resolve_audio_source(&project_root, &asset) {
-                                                let mut audio_waveform_cache_buster = audio_waveform_cache_buster.clone();
+                                            if let Some(source_path) = resolve_audio_or_video_source(&project_root, &asset) {
                                                 if let Some(engine) = audio_engine.as_ref() {
                                                     let project_snapshot = project.read().clone();
                                                     let decode_config = AudioDecodeConfig {
@@ -2000,37 +2001,40 @@ pub fn App() -> Element {
                                                         Arc::clone(engine),
                                                     );
                                                 }
-                                                spawn(async move {
-                                                    let needs_build = tokio::task::spawn_blocking({
-                                                        let cache_path = peak_cache_path(&project_root, asset_id);
-                                                        let source_path = source_path.clone();
-                                                        move || {
-                                                            if !cache_path.exists() {
-                                                                return Ok::<bool, String>(true);
+                                                if asset.is_audio() {
+                                                    let mut audio_waveform_cache_buster = audio_waveform_cache_buster.clone();
+                                                    spawn(async move {
+                                                        let needs_build = tokio::task::spawn_blocking({
+                                                            let cache_path = peak_cache_path(&project_root, asset_id);
+                                                            let source_path = source_path.clone();
+                                                            move || {
+                                                                if !cache_path.exists() {
+                                                                    return Ok::<bool, String>(true);
+                                                                }
+                                                                let cache = load_peak_cache(&cache_path)?;
+                                                                Ok(!cache_matches_source(&cache, &source_path)?)
                                                             }
-                                                            let cache = load_peak_cache(&cache_path)?;
-                                                            Ok(!cache_matches_source(&cache, &source_path)?)
-                                                        }
-                                                    })
-                                                    .await
-                                                    .ok()
-                                                    .unwrap_or(Ok(true))
-                                                    .unwrap_or(true);
-
-                                                    if needs_build {
-                                                        let _ = tokio::task::spawn_blocking(move || {
-                                                            build_and_store_peak_cache(
-                                                                &project_root,
-                                                                asset.id,
-                                                                &source_path,
-                                                                PeakBuildConfig::default(),
-                                                            )
                                                         })
-                                                        .await;
-                                                        audio_waveform_cache_buster
-                                                            .set(audio_waveform_cache_buster() + 1);
-                                                    }
-                                                });
+                                                        .await
+                                                        .ok()
+                                                        .unwrap_or(Ok(true))
+                                                        .unwrap_or(true);
+
+                                                        if needs_build {
+                                                            let _ = tokio::task::spawn_blocking(move || {
+                                                                build_and_store_peak_cache(
+                                                                    &project_root,
+                                                                    asset.id,
+                                                                    &source_path,
+                                                                    PeakBuildConfig::default(),
+                                                                )
+                                                            })
+                                                            .await;
+                                                            audio_waveform_cache_buster
+                                                                .set(audio_waveform_cache_buster() + 1);
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }
                                     }

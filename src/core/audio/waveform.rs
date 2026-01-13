@@ -118,6 +118,27 @@ pub fn resolve_audio_source(project_root: &Path, asset: &Asset) -> Option<std::p
     }
 }
 
+pub fn resolve_audio_or_video_source(
+    project_root: &Path,
+    asset: &Asset,
+) -> Option<std::path::PathBuf> {
+    match &asset.kind {
+        AssetKind::Audio { path } => Some(project_root.join(path)),
+        AssetKind::Video { path } => Some(project_root.join(path)),
+        AssetKind::GenerativeAudio {
+            folder,
+            active_version,
+            ..
+        } => resolve_generative_audio_source(project_root, folder, active_version.as_deref()),
+        AssetKind::GenerativeVideo {
+            folder,
+            active_version,
+            ..
+        } => resolve_generative_video_source(project_root, folder, active_version.as_deref()),
+        _ => None,
+    }
+}
+
 fn build_levels(
     base_peaks: Vec<PeakPair>,
     base_block: usize,
@@ -255,6 +276,38 @@ fn resolve_generative_audio_source(
 ) -> Option<std::path::PathBuf> {
     let folder_path = project_root.join(folder);
     let extensions = ["wav", "mp3", "ogg", "flac", "m4a"];
+
+    if let Some(version) = active_version {
+        for ext in extensions.iter() {
+            let candidate = folder_path.join(format!("{}.{}", version, ext));
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let entries = std::fs::read_dir(&folder_path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                if extensions.iter().any(|allowed| allowed.eq_ignore_ascii_case(ext)) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_generative_video_source(
+    project_root: &Path,
+    folder: &std::path::PathBuf,
+    active_version: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    let folder_path = project_root.join(folder);
+    let extensions = ["mp4", "mov", "mkv", "webm", "avi"];
 
     if let Some(version) = active_version {
         for ext in extensions.iter() {
