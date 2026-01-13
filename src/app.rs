@@ -559,6 +559,7 @@ pub fn App() -> Element {
     let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
     let mut scrub_was_playing = use_signal(|| false);
     let mut is_scrubbing = use_signal(|| false);
+    let mut timeline_focused = use_signal(|| false);
     
     // Derive duration/snap targets from project
     let (duration, timeline_fps, timeline_snap_targets) = {
@@ -1500,6 +1501,9 @@ pub fn App() -> Element {
                 user-select: {user_select_style};
                 cursor: {drag_cursor};
             ",
+            onmousedown: move |_| {
+                timeline_focused.set(false);
+            },
             
             onmousemove: {
                 let audio_engine = audio_engine.clone();
@@ -1616,6 +1620,9 @@ pub fn App() -> Element {
                 // Dispatch the hotkey
                 match handle_hotkey(&e.key(), shift, ctrl, alt, meta, &hotkey_context) {
                     HotkeyResult::Action(action) => {
+                        if matches!(action, HotkeyAction::PlayPause) && !timeline_focused() {
+                            return;
+                        }
                         e.prevent_default();
                         match action {
                             HotkeyAction::TimelineZoomIn => {
@@ -1653,6 +1660,7 @@ pub fn App() -> Element {
                                 );
                             }
                             HotkeyAction::PlayPause => {
+                                timeline_focused.set(true);
                                 toggle_playback(
                                     &audio_engine_for_hotkeys,
                                     &audio_sample_cache_for_hotkeys,
@@ -2030,6 +2038,7 @@ pub fn App() -> Element {
                                 let audio_decode_in_flight = audio_decode_in_flight.clone();
                                 let project = project.clone();
                                 move |e: MouseEvent| {
+                                    timeline_focused.set(true);
                                     let was_playing = is_playing();
                                     scrub_was_playing.set(was_playing);
                                     is_scrubbing.set(true);
@@ -2109,6 +2118,7 @@ pub fn App() -> Element {
                             selected_tracks: selection.read().track_ids.clone(),
                             on_track_select: move |track_id| {
                                 selection.write().select_track(track_id);
+                                timeline_focused.set(true);
                             },
                             // Clip operations
                             on_clip_delete: move |clip_id| {
@@ -2132,24 +2142,29 @@ pub fn App() -> Element {
                             selected_clips: selection.read().clip_ids.clone(),
                             on_clip_select: move |clip_id| {
                                 selection.write().select_clip(clip_id);
+                                timeline_focused.set(true);
                             },
                             on_marker_add: move |time: f64| {
                                 let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);
                                 let marker = crate::state::Marker::new(snapped);
                                 let id = project.write().add_marker(marker);
                                 selection.write().select_marker(id);
+                                timeline_focused.set(true);
                             },
                             on_marker_move: move |(marker_id, time)| {
                                 let snapped = snap_time_to_frame(time, timeline_fps).clamp(0.0, duration);
                                 project.write().move_marker(marker_id, snapped);
+                                timeline_focused.set(true);
                             },
                             on_marker_delete: move |marker_id| {
                                 project.write().remove_marker(marker_id);
                                 selection.write().remove_marker(marker_id);
+                                timeline_focused.set(true);
                             },
                             selected_markers: selection.read().marker_ids.clone(),
                             on_marker_select: move |marker_id| {
                                 selection.write().select_marker(marker_id);
+                                timeline_focused.set(true);
                             },
                             snap_targets: timeline_snap_targets.clone(),
                             // Asset Drag & Drop
@@ -2227,6 +2242,10 @@ pub fn App() -> Element {
                             // Selection
                             on_deselect_all: move |_| {
                                 selection.write().clear();
+                                timeline_focused.set(true);
+                            },
+                            on_focus: move |_| {
+                                timeline_focused.set(true);
                             },
                         }
                 }

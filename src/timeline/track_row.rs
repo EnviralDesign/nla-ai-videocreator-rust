@@ -108,6 +108,7 @@ pub fn TrackRow(
                 // Click on empty track area deselects all clips
                 if let Some(btn) = e.trigger_button() {
                     if format!("{:?}", btn) == "Primary" {
+                        e.stop_propagation();
                         on_deselect_all.call(e);
                     }
                 }

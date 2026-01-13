@@ -22,6 +22,7 @@ pub fn TimelinePanel(
     collapsed: bool, 
     is_resizing: bool, 
     on_toggle: EventHandler<MouseEvent>,
+    on_focus: EventHandler<MouseEvent>,
     // Project data
     tracks: Vec<Track>,
     clips: Vec<crate::state::Clip>,
@@ -139,6 +140,10 @@ pub fn TimelinePanel(
                 transition: {transition};
                 overflow: hidden;
             ",
+            onmousedown: move |e| {
+                e.stop_propagation();
+                on_focus.call(e);
+            },
 
             // Header
             div {
