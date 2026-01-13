@@ -358,8 +358,10 @@ pub fn App() -> Element {
     // Timeline playback state
     let mut current_time = use_signal(|| 0.0_f64);        // Current time in seconds
     let mut zoom = use_signal(|| 100.0_f64);              // Pixels per second
-    let is_playing = use_signal(|| false);                // Playback state
+    let mut is_playing = use_signal(|| false);            // Playback state
     let mut scroll_offset = use_signal(|| 0.0_f64);       // Horizontal scroll position
+    let mut scrub_was_playing = use_signal(|| false);
+    let mut is_scrubbing = use_signal(|| false);
     
     // Derive duration from project
     let duration = project.read().duration();
@@ -1276,9 +1278,24 @@ pub fn App() -> Element {
                 }
             }
             },
-            onmouseup: move |_| {
-                dragging.set(None);
-                dragged_asset.set(None);
+            onmouseup: {
+                let audio_engine = audio_engine.clone();
+                move |_| {
+                    dragging.set(None);
+                    dragged_asset.set(None);
+                    if is_scrubbing() {
+                        is_scrubbing.set(false);
+                        if let Some(engine) = audio_engine.as_ref() {
+                            if scrub_was_playing() {
+                                engine.seek_seconds(current_time());
+                                engine.play();
+                                is_playing.set(true);
+                            } else {
+                                engine.pause();
+                            }
+                        }
+                    }
+                }
             },
             // Suppress the browser's default context menu - we'll use custom menus
             oncontextmenu: move |e| e.prevent_default(),
@@ -1693,10 +1710,23 @@ pub fn App() -> Element {
                                 }
                             },
                             on_scroll: move |offset: f64| scroll_offset.set(offset),
-                            on_seek_start: move |e: MouseEvent| {
-                                dragging.set(Some("playhead"));
-                                drag_start_pos.set(e.client_coordinates().x);
-                                drag_start_size.set(current_time());
+                            on_seek_start: {
+                                let audio_engine = audio_engine.clone();
+                                move |e: MouseEvent| {
+                                    let was_playing = is_playing();
+                                    scrub_was_playing.set(was_playing);
+                                    is_scrubbing.set(true);
+                                    if was_playing {
+                                        is_playing.set(false);
+                                    }
+                                    if let Some(engine) = audio_engine.as_ref() {
+                                        engine.seek_seconds(current_time());
+                                        engine.play();
+                                    }
+                                    dragging.set(Some("playhead"));
+                                    drag_start_pos.set(e.client_coordinates().x);
+                                    drag_start_size.set(current_time());
+                                }
                             },
                             on_seek_end: move |_| dragging.set(None),
                             is_seeking: dragging() == Some("playhead"),
