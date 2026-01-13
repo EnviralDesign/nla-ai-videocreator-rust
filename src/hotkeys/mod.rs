@@ -29,6 +29,8 @@ pub enum HotkeyAction {
     TimelineZoomIn,
     /// Zoom out on the timeline (decrease pixels per second)
     TimelineZoomOut,
+    /// Save the current project.
+    SaveProject,
 
     // ═══════════════════════════════════════════════════════════════
     // Playback (future)
@@ -91,9 +93,9 @@ pub enum HotkeyResult {
 pub fn handle_hotkey(
     key: &Key,
     _shift: bool,
-    _ctrl: bool,
+    ctrl: bool,
     _alt: bool,
-    _meta: bool,
+    meta: bool,
     context: &HotkeyContext,
 ) -> HotkeyResult {
     // Suppress hotkeys when typing in an input field
@@ -108,6 +110,9 @@ pub fn handle_hotkey(
     // Timeline zoom: Numpad +/- (produces "+" and "-" characters)
     // Also handles regular +/- for convenience
     match key {
+        Key::Character(c) if (ctrl || meta) && (c == "s" || c == "S") => {
+            return HotkeyResult::Action(HotkeyAction::SaveProject);
+        }
         Key::Character(c) if c == "+" => return HotkeyResult::Action(HotkeyAction::TimelineZoomIn),
         Key::Character(c) if c == "-" => return HotkeyResult::Action(HotkeyAction::TimelineZoomOut),
         _ => {}
@@ -145,6 +150,13 @@ mod tests {
         let ctx = HotkeyContext::default();
         let result = handle_hotkey(&Key::Character("-".to_string()), false, false, false, false, &ctx);
         assert!(matches!(result, HotkeyResult::Action(HotkeyAction::TimelineZoomOut)));
+    }
+
+    #[test]
+    fn test_ctrl_s_saves_project() {
+        let ctx = HotkeyContext::default();
+        let result = handle_hotkey(&Key::Character("s".to_string()), false, true, false, false, &ctx);
+        assert!(matches!(result, HotkeyResult::Action(HotkeyAction::SaveProject)));
     }
 
     #[test]

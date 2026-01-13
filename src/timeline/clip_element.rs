@@ -4,7 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::constants::{ACCENT_VIDEO, BG_ELEVATED, BORDER_ACCENT, BORDER_DEFAULT, BORDER_SUBTLE, TEXT_PRIMARY};
+use crate::constants::{
+    ACCENT_VIDEO,
+    BG_ELEVATED,
+    BORDER_ACCENT,
+    BORDER_DEFAULT,
+    BORDER_SUBTLE,
+    TEXT_PRIMARY,
+    TIMELINE_SNAP_THRESHOLD_PX,
+};
+use crate::core::timeline_snap::{best_snap_delta_frames, frames_from_seconds, seconds_from_frames, SnapTarget};
 use crate::core::audio::cache::{cache_matches_source, load_peak_cache, peak_cache_path, PeakCache};
 use crate::core::audio::waveform::{build_and_store_peak_cache, resolve_audio_source, PeakBuildConfig};
 
@@ -24,6 +33,7 @@ pub(crate) fn ClipElement(
     project_root: Option<std::path::PathBuf>,
     audio_waveform_cache_buster: Signal<u64>,
     zoom: f64,
+    fps: f64,
     clip_color: &'static str,
     on_delete: EventHandler<uuid::Uuid>,
     on_move: EventHandler<(uuid::Uuid, f64)>,
@@ -31,6 +41,8 @@ pub(crate) fn ClipElement(
     on_move_track: EventHandler<(uuid::Uuid, i32)>,
     is_selected: bool,
     on_select: EventHandler<uuid::Uuid>,
+    on_snap_preview: EventHandler<Option<f64>>,
+    snap_targets: std::sync::Arc<Vec<SnapTarget>>,
 ) -> Element {
     let mut show_menu = use_signal(|| false);
     let mut menu_pos = use_signal(|| (0.0, 0.0));
@@ -39,6 +51,8 @@ pub(crate) fn ClipElement(
     let mut drag_start_time = use_signal(|| 0.0);
     let mut drag_start_duration = use_signal(|| 0.0);
     let mut drag_start_end_time = use_signal(|| 0.0);
+    let mut drag_start_offset = use_signal(|| 0.0);
+    let fps = fps.max(1.0);
 
     let left = (clip.start_time * zoom) as i32;
     let min_clip_width = (zoom * MIN_CLIP_WIDTH_SCALE)
@@ -46,6 +60,11 @@ pub(crate) fn ClipElement(
     let clip_width = (clip.duration * zoom).max(min_clip_width) as i32;
     let clip_width_f = clip_width as f64;
     let clip_id = clip.id;
+    let filtered_snap_targets: Vec<SnapTarget> = snap_targets
+        .iter()
+        .copied()
+        .filter(|target| target.clip_id != Some(clip_id))
+        .collect();
     let cache_buckets = clip_cache_buckets
         .get(&clip.id)
         .cloned()
@@ -301,6 +320,7 @@ pub(crate) fn ClipElement(
         _ => "grab",
     };
     let z_index = if is_active { "100" } else { "1" };
+    let snap_targets = filtered_snap_targets.clone();
     
     rsx! {
         // Main clip element
@@ -552,6 +572,7 @@ pub(crate) fn ClipElement(
                             drag_mode.set(Some("move"));
                             drag_start_x.set(e.client_coordinates().x);
                             drag_start_time.set(current_start);
+                            drag_start_offset.set(e.element_coordinates().x);
                         }
                     }
                 },
@@ -637,48 +658,196 @@ pub(crate) fn ClipElement(
                 oncontextmenu: move |e| e.prevent_default(),
                 onmousemove: move |e| {
                     let delta_x = e.client_coordinates().x - drag_start_x();
-                    let delta_time = delta_x / zoom;
+                    let delta_frames = (delta_x / zoom) * fps;
+                    let snap_enabled = !e.modifiers().alt();
+                    let snap_threshold_frames = if zoom > 0.0 {
+                        (TIMELINE_SNAP_THRESHOLD_PX / zoom) * fps
+                    } else {
+                        0.0
+                    };
+                    let min_duration_frames = (0.1 * fps).ceil().max(1.0);
                     
                     match drag_mode() {
                         Some("move") => {
-                            let new_time = (drag_start_time() + delta_time).max(0.0);
-                            let snapped = (new_time * 60.0).round() / 60.0;
-                            on_move.call((clip_id, snapped));
+                            let start_frames = frames_from_seconds(drag_start_time(), fps).round();
+                            let duration_frames = frames_from_seconds(current_duration, fps).round();
+                            let mut new_start_frames = start_frames + delta_frames;
+                            let start_hit = if snap_enabled {
+                                best_snap_delta_frames(
+                                    &[new_start_frames],
+                                    &snap_targets,
+                                    snap_threshold_frames,
+                                )
+                            } else {
+                                None
+                            };
+                            let end_hit = if snap_enabled {
+                                best_snap_delta_frames(
+                                    &[new_start_frames + duration_frames],
+                                    &snap_targets,
+                                    snap_threshold_frames,
+                                )
+                            } else {
+                                None
+                            };
+                            let prefer_start = drag_start_offset() <= (clip_width_f / 2.0);
+                            let epsilon = 1e-4;
+                            let chosen_hit = match (start_hit, end_hit) {
+                                (Some(start_hit), Some(end_hit)) => {
+                                    let dist_start = start_hit.delta_frames.abs();
+                                    let dist_end = end_hit.delta_frames.abs();
+                                    let prio_start = start_hit.target.kind.priority();
+                                    let prio_end = end_hit.target.kind.priority();
+                                    if dist_start + epsilon < dist_end {
+                                        Some(start_hit)
+                                    } else if dist_end + epsilon < dist_start {
+                                        Some(end_hit)
+                                    } else if prio_start != prio_end {
+                                        if prio_start > prio_end {
+                                            Some(start_hit)
+                                        } else {
+                                            Some(end_hit)
+                                        }
+                                    } else if prefer_start {
+                                        Some(start_hit)
+                                    } else {
+                                        Some(end_hit)
+                                    }
+                                }
+                                (Some(hit), None) | (None, Some(hit)) => Some(hit),
+                                _ => None,
+                            };
+                            let mut snap_target_frame = None;
+                            if let Some(hit) = chosen_hit {
+                                new_start_frames += hit.delta_frames;
+                                snap_target_frame = Some(hit.target.frame);
+                            }
+                            new_start_frames = new_start_frames.max(0.0);
+                            let snapped_start_frames = new_start_frames.round().max(0.0);
+                            let snapped_start = seconds_from_frames(snapped_start_frames, fps);
+                            on_move.call((clip_id, snapped_start));
+                            let mut snap_preview = None;
+                            if snap_enabled {
+                                if let Some(target_frame) = snap_target_frame {
+                                    let matches_start =
+                                        (snapped_start_frames - target_frame).abs() <= 0.5;
+                                    let matches_end = (snapped_start_frames + duration_frames
+                                        - target_frame)
+                                        .abs()
+                                        <= 0.5;
+                                    if matches_start || matches_end {
+                                        snap_preview = Some(seconds_from_frames(target_frame, fps));
+                                    }
+                                }
+                            }
+                            if !snap_enabled {
+                                snap_preview = None;
+                            }
+                            on_snap_preview.call(snap_preview);
                         }
                         Some("resize-left") => {
                             // Moving left edge: keep right edge fixed while clamping to source duration
-                            let end_time = drag_start_end_time();
-                            let min_start = (current_start - trim_in_seconds).max(0.0);
-                            let mut new_start = (drag_start_time() + delta_time).max(min_start);
-                            let mut new_duration = end_time - new_start;
-                            if let Some(max_duration) = max_duration {
-                                if new_duration > max_duration {
-                                    new_duration = max_duration;
-                                    new_start = (end_time - new_duration).max(0.0);
+                            let end_frames = frames_from_seconds(drag_start_end_time(), fps).round();
+                            let min_start_frames = frames_from_seconds(
+                                (current_start - trim_in_seconds).max(0.0),
+                                fps,
+                            )
+                            .round();
+                            let mut new_start_frames =
+                                frames_from_seconds(drag_start_time(), fps).round() + delta_frames;
+                            let mut snap_target_frame = None;
+                            if snap_enabled {
+                                if let Some(hit) = best_snap_delta_frames(
+                                    &[new_start_frames],
+                                    &snap_targets,
+                                    snap_threshold_frames,
+                                ) {
+                                    new_start_frames += hit.delta_frames;
+                                    snap_target_frame = Some(hit.target.frame);
                                 }
                             }
-                            if new_duration < 0.1 {
-                                new_duration = 0.1;
-                                new_start = (end_time - new_duration).max(0.0);
+                            new_start_frames = new_start_frames.max(min_start_frames);
+                            let mut new_duration_frames = end_frames - new_start_frames;
+                            if let Some(max_duration) = max_duration {
+                                let max_duration_frames =
+                                    frames_from_seconds(max_duration, fps).round();
+                                if new_duration_frames > max_duration_frames {
+                                    new_duration_frames = max_duration_frames;
+                                    new_start_frames = end_frames - new_duration_frames;
+                                }
                             }
-                            let snapped_start = (new_start * 60.0).round() / 60.0;
-                            let snapped_dur = (end_time - snapped_start).max(0.1);
-                            on_resize.call((clip_id, snapped_start, snapped_dur));
+                            if new_duration_frames < min_duration_frames {
+                                new_duration_frames = min_duration_frames;
+                                new_start_frames = end_frames - new_duration_frames;
+                            }
+                            let snapped_start_frames = new_start_frames.round().max(0.0);
+                            let snapped_start = seconds_from_frames(snapped_start_frames, fps);
+                            let snapped_duration_frames =
+                                (end_frames - snapped_start_frames).max(min_duration_frames);
+                            let snapped_duration =
+                                seconds_from_frames(snapped_duration_frames, fps);
+                            on_resize.call((clip_id, snapped_start, snapped_duration));
+                            let mut snap_preview = None;
+                            if snap_enabled {
+                                if let Some(target_frame) = snap_target_frame {
+                                    if (snapped_start_frames - target_frame).abs() <= 0.5 {
+                                        snap_preview = Some(seconds_from_frames(target_frame, fps));
+                                    }
+                                }
+                            }
+                            on_snap_preview.call(snap_preview);
                         }
                         Some("resize-right") => {
                             // Moving right edge: only changes duration, clamped to source duration
-                            let mut new_duration = (drag_start_duration() + delta_time).max(0.1);
-                            if let Some(available_duration) = available_duration {
-                                new_duration = new_duration.min(available_duration);
+                            let start_frames = frames_from_seconds(drag_start_time(), fps).round();
+                            let mut new_end_frames = start_frames
+                                + frames_from_seconds(drag_start_duration(), fps).round()
+                                + delta_frames;
+                            let mut snap_target_frame = None;
+                            if snap_enabled {
+                                if let Some(hit) = best_snap_delta_frames(
+                                    &[new_end_frames],
+                                    &snap_targets,
+                                    snap_threshold_frames,
+                                ) {
+                                    new_end_frames += hit.delta_frames;
+                                    snap_target_frame = Some(hit.target.frame);
+                                }
                             }
-                            let snapped_dur = (new_duration * 60.0).round() / 60.0;
-                            on_resize.call((clip_id, current_start, snapped_dur));
+                            let mut new_duration_frames =
+                                (new_end_frames - start_frames).max(min_duration_frames);
+                            if let Some(available_duration) = available_duration {
+                                let available_frames =
+                                    frames_from_seconds(available_duration, fps).round();
+                                if new_duration_frames > available_frames {
+                                    new_duration_frames = available_frames;
+                                }
+                            }
+                            let snapped_duration_frames =
+                                new_duration_frames.round().max(min_duration_frames);
+                            let snapped_duration =
+                                seconds_from_frames(snapped_duration_frames, fps);
+                            let snapped_start = seconds_from_frames(start_frames, fps);
+                            on_resize.call((clip_id, snapped_start, snapped_duration));
+                            let mut snap_preview = None;
+                            if snap_enabled {
+                                if let Some(target_frame) = snap_target_frame {
+                                    let snapped_end_frames = start_frames + snapped_duration_frames;
+                                    if (snapped_end_frames - target_frame).abs() <= 0.5 {
+                                        snap_preview = Some(seconds_from_frames(target_frame, fps));
+                                    }
+                                }
+                            }
+                            on_snap_preview.call(snap_preview);
                         }
-                        _ => {}
+                        _ => {
+                            on_snap_preview.call(None);
+                        }
                     }
                 },
                 onmouseup: move |_| {
                     drag_mode.set(None);
+                    on_snap_preview.call(None);
                 },
             }
         }

@@ -42,6 +42,7 @@ pub const PREVIEW_IDLE_PREFETCH_BEHIND_SECONDS: f64 = 1.0;
 pub const SHOW_CACHE_TICKS: bool = false;
 pub const TIMELINE_MIN_ZOOM_FLOOR: f64 = 0.1;
 pub const TIMELINE_MAX_PX_PER_FRAME: f64 = 8.0;
+pub const TIMELINE_SNAP_THRESHOLD_PX: f64 = 6.0;
 
 pub const PREVIEW_CANVAS_SCRIPT: &str = r#"
 let canvas = null;
@@ -152,6 +153,7 @@ await new Promise(() => {});
 pub const TIMELINE_VIEWPORT_SCRIPT: &str = r#"
 const hostId = "timeline-scroll-host";
 let lastWidth = null;
+let lastScrollLeft = null;
 
 function sendWidth() {
     const host = document.getElementById(hostId);
@@ -159,11 +161,16 @@ function sendWidth() {
         return;
     }
     const width = host.clientWidth || 0;
-    if (lastWidth !== null && Math.abs(lastWidth - width) < 0.5) {
+    const scrollLeft = host.scrollLeft || 0;
+    if (lastWidth !== null &&
+        Math.abs(lastWidth - width) < 0.5 &&
+        lastScrollLeft !== null &&
+        Math.abs(lastScrollLeft - scrollLeft) < 0.5) {
         return;
     }
     lastWidth = width;
-    dioxus.send(width);
+    lastScrollLeft = scrollLeft;
+    dioxus.send({ width: width, scroll_left: scrollLeft });
 }
 
 function attach() {
@@ -174,6 +181,7 @@ function attach() {
     }
     const observer = new ResizeObserver(() => sendWidth());
     observer.observe(host);
+    host.addEventListener("scroll", sendWidth, { passive: true });
     window.addEventListener("resize", sendWidth, { passive: true });
     sendWidth();
 }

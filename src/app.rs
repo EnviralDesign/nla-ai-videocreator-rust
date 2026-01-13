@@ -6,7 +6,7 @@ use dioxus::desktop::{use_window, use_wry_event_handler};
 use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent as TaoWindowEvent};
 use dioxus::prelude::*;
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -24,6 +24,14 @@ use crate::core::preview_gpu::{PreviewBounds, PreviewGpuSurface};
 use crate::core::provider_store::{
     list_global_provider_files,
     load_global_provider_entries_or_empty,
+};
+use crate::core::timeline_snap::{
+    best_snap_delta_frames,
+    frames_from_seconds,
+    seconds_from_frames,
+    snap_time_to_frame,
+    SnapTarget,
+    SnapTargetKind,
 };
 use crate::state::{
     GenerationJob, GenerationJobStatus, ProviderConnection, ProviderEntry, ProviderOutputType,
@@ -47,6 +55,12 @@ use crate::components::attributes::AttributesPanelContent;
 enum PreviewCanvasMessage {
     Frame { version: u64, width: u32, height: u32 },
     Clear,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+struct TimelineViewportState {
+    width: f64,
+    scroll_left: f64,
 }
 
 enum GenerationFailure {
@@ -488,8 +502,57 @@ pub fn App() -> Element {
     let mut scrub_was_playing = use_signal(|| false);
     let mut is_scrubbing = use_signal(|| false);
     
-    // Derive duration from project
-    let duration = project.read().duration();
+    // Derive duration/snap targets from project
+    let (duration, timeline_fps, timeline_snap_targets) = {
+        let project_read = project.read();
+        let duration = project_read.duration();
+        let fps = project_read.settings.fps.max(1.0);
+        let zoom_value = zoom();
+        let visible_range = timeline_viewport_width().and_then(|width| {
+            if zoom_value <= 0.0 {
+                return None;
+            }
+            let pad = TIMELINE_SNAP_THRESHOLD_PX / zoom_value;
+            let start = (scroll_offset() / zoom_value) - pad;
+            let end = ((scroll_offset() + width) / zoom_value) + pad;
+            Some((start.max(0.0), end.max(0.0)))
+        });
+        let in_view = |time: f64| -> bool {
+            if let Some((start, end)) = visible_range {
+                time >= start && time <= end
+            } else {
+                true
+            }
+        };
+        let mut targets = Vec::new();
+
+        for clip in project_read.clips.iter() {
+            if in_view(clip.start_time) {
+                let start_frame = frames_from_seconds(clip.start_time, fps).round();
+                targets.push(SnapTarget::clip_edge(start_frame, clip.id));
+            }
+            let clip_end = clip.end_time();
+            if in_view(clip_end) {
+                let end_frame = frames_from_seconds(clip_end, fps).round();
+                targets.push(SnapTarget::clip_edge(end_frame, clip.id));
+            }
+        }
+
+        let playhead_time = current_time();
+        if in_view(playhead_time) {
+            let playhead_frame = frames_from_seconds(playhead_time, fps).round();
+            targets.push(SnapTarget::playhead(playhead_frame));
+        }
+
+        for marker in project_read.markers.iter() {
+            if in_view(marker.time) {
+                let marker_frame = frames_from_seconds(marker.time, fps).round();
+                targets.push(SnapTarget::marker(marker_frame));
+            }
+        }
+
+        (duration, fps, Arc::new(targets))
+    };
 
     use_effect(move || {
         let current_path = project.read().project_path.clone();
@@ -707,9 +770,10 @@ pub fn App() -> Element {
                 }
 
                 let duration = project.read().duration();
+                let fps = project.read().settings.fps.max(1.0);
                 if let Some(engine) = audio_engine.as_ref() {
                     let time = engine.playhead_seconds();
-                    let snapped = (time.min(duration) * 60.0).round() / 60.0;
+                    let snapped = snap_time_to_frame(time.min(duration), fps);
                     current_time.set(snapped);
                     if time >= duration {
                         engine.pause();
@@ -722,7 +786,7 @@ pub fn App() -> Element {
                 let delta = now.saturating_duration_since(last_tick);
                 last_tick = now;
                 let next_time = (current_time() + delta.as_secs_f64()).min(duration);
-                let snapped = (next_time * 60.0).round() / 60.0;
+                let snapped = snap_time_to_frame(next_time, fps);
                 current_time.set(snapped);
 
                 if next_time >= duration {
@@ -993,6 +1057,7 @@ pub fn App() -> Element {
 
     use_future(move || {
         let mut timeline_viewport_width = timeline_viewport_width.clone();
+        let mut scroll_offset = scroll_offset.clone();
         let timeline_viewport_eval = timeline_viewport_eval.clone();
         async move {
             loop {
@@ -1002,11 +1067,15 @@ pub fn App() -> Element {
                 };
                 let mut eval = eval;
                 loop {
-                    match eval.recv::<f64>().await {
-                        Ok(width) => {
-                            let width = width.max(0.0);
+                    match eval.recv::<TimelineViewportState>().await {
+                        Ok(state) => {
+                            let width = state.width.max(0.0);
+                            let scroll_left = state.scroll_left.max(0.0);
                             if timeline_viewport_width() != Some(width) {
                                 timeline_viewport_width.set(Some(width));
+                            }
+                            if (scroll_offset() - scroll_left).abs() > 0.5 {
+                                scroll_offset.set(scroll_left);
                             }
                         }
                         Err(_) => break,
@@ -1389,10 +1458,33 @@ pub fn App() -> Element {
                         "playhead" => {
                             // Convert mouse x delta to time delta using zoom factor
                             let delta_px = e.client_coordinates().x - drag_start_pos();
-                            let delta_time = delta_px / zoom();
-                            let raw_time = (drag_start_size() + delta_time).clamp(0.0, duration);
-                            // Snap to frame boundary (60fps)
-                            let snapped_time = (raw_time * 60.0).round() / 60.0;
+                            let delta_frames = (delta_px / zoom()) * timeline_fps;
+                            let start_frames =
+                                frames_from_seconds(drag_start_size(), timeline_fps).round();
+                            let mut new_frames = start_frames + delta_frames;
+                            let snap_enabled = !e.modifiers().alt();
+                            let snap_threshold_frames = if zoom() > 0.0 {
+                                (TIMELINE_SNAP_THRESHOLD_PX / zoom()) * timeline_fps
+                            } else {
+                                0.0
+                            };
+                            if snap_enabled {
+                                let snap_targets: Vec<SnapTarget> = timeline_snap_targets
+                                    .iter()
+                                    .copied()
+                                    .filter(|target| target.kind != SnapTargetKind::Playhead)
+                                    .collect();
+                                if let Some(hit) = best_snap_delta_frames(
+                                    &[new_frames],
+                                    &snap_targets,
+                                    snap_threshold_frames,
+                                ) {
+                                    new_frames += hit.delta_frames;
+                                }
+                            }
+                            let max_frames = frames_from_seconds(duration, timeline_fps).round();
+                            let snapped_frames = new_frames.round().clamp(0.0, max_frames);
+                            let snapped_time = seconds_from_frames(snapped_frames, timeline_fps);
                             current_time.set(snapped_time);
                             if let Some(engine) = audio_engine.as_ref() {
                                 engine.seek_seconds(snapped_time);
@@ -1455,7 +1547,7 @@ pub fn App() -> Element {
                                 let (min_zoom, max_zoom) = timeline_zoom_bounds(
                                     duration,
                                     timeline_viewport_width(),
-                                    project.read().settings.fps,
+                                    timeline_fps,
                                 );
                                 let new_zoom = (zoom() * 1.25).clamp(min_zoom, max_zoom);
                                 zoom.set(new_zoom);
@@ -1464,10 +1556,17 @@ pub fn App() -> Element {
                                 let (min_zoom, max_zoom) = timeline_zoom_bounds(
                                     duration,
                                     timeline_viewport_width(),
-                                    project.read().settings.fps,
+                                    timeline_fps,
                                 );
                                 let new_zoom = (zoom() * 0.8).clamp(min_zoom, max_zoom);
                                 zoom.set(new_zoom);
+                            }
+                            HotkeyAction::SaveProject => {
+                                if let Err(err) = project.read().save() {
+                                    println!("[PROJECT SAVE] Failed: {}", err);
+                                } else {
+                                    println!("[PROJECT SAVE] Saved.");
+                                }
                             }
                         }
                     }
@@ -1768,17 +1867,18 @@ pub fn App() -> Element {
                             // Timeline state
                             current_time: current_time(),
                             duration: duration,
+                            fps: timeline_fps,
                             zoom: zoom(),
                             min_zoom: timeline_zoom_bounds(
                                 duration,
                                 timeline_viewport_width(),
-                                project.read().settings.fps,
+                                timeline_fps,
                             )
                             .0,
                             max_zoom: timeline_zoom_bounds(
                                 duration,
                                 timeline_viewport_width(),
-                                project.read().settings.fps,
+                                timeline_fps,
                             )
                             .1,
                             is_playing: is_playing(),
@@ -1789,7 +1889,7 @@ pub fn App() -> Element {
                                 move |t: f64| {
                                     // Snap to frame boundary (60fps) and clamp to duration
                                     let snapped =
-                                        ((t * 60.0).round() / 60.0).clamp(0.0, duration);
+                                        snap_time_to_frame(t, timeline_fps).clamp(0.0, duration);
                                     current_time.set(snapped);
                                     if let Some(engine) = audio_engine.as_ref() {
                                         engine.seek_seconds(snapped);
@@ -1800,7 +1900,7 @@ pub fn App() -> Element {
                                 let (min_zoom, max_zoom) = timeline_zoom_bounds(
                                     duration,
                                     timeline_viewport_width(),
-                                    project.read().settings.fps,
+                                    timeline_fps,
                                 );
                                 zoom.set(z.clamp(min_zoom, max_zoom));
                             },
@@ -1980,6 +2080,7 @@ pub fn App() -> Element {
                             on_clip_select: move |clip_id| {
                                 selection.write().select_clip(clip_id);
                             },
+                            snap_targets: timeline_snap_targets.clone(),
                             // Asset Drag & Drop
                             dragged_asset: dragged_asset(),
                             on_asset_drop: {

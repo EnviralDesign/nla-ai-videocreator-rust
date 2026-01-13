@@ -4,8 +4,10 @@ use crate::constants::{BORDER_STRONG, BORDER_SUBTLE, TEXT_DIM};
 /// Time ruler with tick marks and labels
 /// All elements here use pointer-events: none so clicks pass through to parent
 #[component]
-pub(crate) fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element {
+pub(crate) fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64, fps: f64) -> Element {
     let _ = scroll_offset;
+    let fps = fps.max(1.0);
+    let fps_i = fps.round().max(1.0) as i32;
     // Calculate tick spacing based on zoom level
     let seconds_per_major_tick = if zoom < 30.0 {
         10.0
@@ -16,9 +18,6 @@ pub(crate) fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element
     } else {
         1.0
     };
-    
-    // Frame rate for frame ticks
-    const FPS: f64 = 60.0;
     
     // Show frame ticks only at high zoom levels (when there's enough space)
     // At 100px/s zoom, each frame is ~1.67px apart - too dense
@@ -41,16 +40,16 @@ pub(crate) fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64) -> Element
             // Frame ticks (subtle, only at high zoom)
             if show_frame_ticks {
                 {
-                    let start_frame = (visible_start_time * FPS).floor() as i32;
-                    let end_frame = (visible_end_time * FPS).ceil() as i32;
+                    let start_frame = (visible_start_time * fps).floor() as i32;
+                    let end_frame = (visible_end_time * fps).ceil() as i32;
                     
                     rsx! {
                         for frame in start_frame..=end_frame {
                             {
-                                let frame_time = frame as f64 / FPS;
+                                let frame_time = frame as f64 / fps;
                                 let x = frame_time * zoom;
                                 // Skip frame ticks that land on second boundaries
-                                let is_on_second = frame % 60 == 0;
+                                let is_on_second = frame % fps_i == 0;
                                 
                                 if !is_on_second && x <= content_width + 10.0 {
                                     rsx! {

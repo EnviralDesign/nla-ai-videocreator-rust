@@ -8,6 +8,7 @@ use crate::constants::{
     ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO,
 };
 use crate::state::{Track, TrackType};
+use crate::core::timeline_snap::{snap_time_to_frame, SnapTarget};
 
 use super::playback_controls::PlaybackBtn;
 use super::ruler::TimeRuler;
@@ -34,6 +35,7 @@ pub fn TimelinePanel(
     // Timeline state
     current_time: f64,
     duration: f64,
+    fps: f64,
     zoom: f64,
     min_zoom: f64,
     max_zoom: f64,
@@ -60,6 +62,7 @@ pub fn TimelinePanel(
     on_clip_move_track: EventHandler<(uuid::Uuid, i32)>, // (clip_id, direction)
     selected_clips: Vec<uuid::Uuid>,
     on_clip_select: EventHandler<uuid::Uuid>,
+    snap_targets: std::sync::Arc<Vec<SnapTarget>>,
     // Asset Drag & Drop
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>, // (track_id, time, asset_id)
@@ -67,6 +70,9 @@ pub fn TimelinePanel(
     on_deselect_all: EventHandler<MouseEvent>,
 ) -> Element {
     let _ = thumbnail_refresh_tick;
+    let fps = fps.max(1.0);
+    let fps_i = fps.round().max(1.0) as u64;
+    let mut snap_indicator_time = use_signal(|| None::<f64>);
     let icon = if collapsed { "▲" } else { "▼" };
     let play_icon = if is_playing { "⏸" } else { "▶" };
     
@@ -77,14 +83,11 @@ pub fn TimelinePanel(
     let header_cursor = if collapsed { "pointer" } else { "default" };
     let header_class = if collapsed { "collapsed-rail" } else { "" };
     
-    // Frame rate constant
-    const FPS: f64 = 60.0;
-    
-    // Format time as HH:MM:SS:FF (assuming 60 fps for now)
+    // Format time as HH:MM:SS:FF using project fps.
     let format_time = |t: f64| -> String {
-        let total_frames = (t * FPS) as u32;
-        let frames = total_frames % 60;
-        let total_seconds = total_frames / 60;
+        let total_frames = (t * fps).round().max(0.0) as u64;
+        let frames = total_frames % fps_i.max(1);
+        let total_seconds = total_frames / fps_i.max(1);
         let seconds = total_seconds % 60;
         let total_minutes = total_seconds / 60;
         let minutes = total_minutes % 60;
@@ -107,7 +110,12 @@ pub fn TimelinePanel(
     // Calculate playhead position in scroll space (snapped to frame for visual alignment)
     // Clamp to content_width - 1 so playhead line/triangle don't extend past content and cause scroll expansion
     let content_width_f = content_width as f64;
-    let playhead_pos = (((current_time * FPS).round() / FPS) * zoom).min(content_width_f - 1.0).max(0.0);
+    let playhead_time = snap_time_to_frame(current_time, fps);
+    let playhead_pos = (playhead_time * zoom).min(content_width_f - 1.0).max(0.0);
+    let snap_indicator_pos = snap_indicator_time().map(|snap_time| {
+        let snap_time = snap_time_to_frame(snap_time, fps);
+        (snap_time * zoom).min(content_width_f - 1.0).max(0.0)
+    });
     
     // Constants
     let ruler_height = 24;
@@ -382,7 +390,7 @@ pub fn TimelinePanel(
                                     let x = e.element_coordinates().x;
                                     let t = (x / zoom).clamp(0.0, duration);
                                     // Snap to frame and seek immediately
-                                    let snapped = ((t * 60.0).round() / 60.0).clamp(0.0, duration);
+                                    let snapped = snap_time_to_frame(t, fps).clamp(0.0, duration);
                                     on_seek.call(snapped);
                                     // Start drag mode so continued mouse movement continues seeking
                                     on_seek_start.call(e);
@@ -393,6 +401,7 @@ pub fn TimelinePanel(
                                     duration: duration,
                                     zoom: zoom,
                                     scroll_offset: 0.0,  // No offset - we're in scroll space
+                                    fps: fps,
                                 }
                                 
                                 // Playhead indicator on ruler (in scroll space)
@@ -406,6 +415,19 @@ pub fn TimelinePanel(
                                         background-color: #ef4444;
                                         pointer-events: none;
                                     ",
+                                }
+                                if let Some(snap_pos) = snap_indicator_pos {
+                                    div {
+                                        style: "
+                                            position: absolute;
+                                            left: {snap_pos}px;
+                                            top: 0;
+                                            width: 1px;
+                                            height: 100%;
+                                            background-color: rgba(250, 204, 21, 0.5);
+                                            pointer-events: none;
+                                        ",
+                                    }
                                 }
                                 // Playhead handle (triangle) - purely visual
                                 div {
@@ -445,18 +467,36 @@ pub fn TimelinePanel(
                                         project_root: project_root.clone(),
                                         audio_waveform_cache_buster: audio_waveform_cache_buster,
                                         zoom: zoom,
+                                        fps: fps,
                                         on_clip_delete: move |id| on_clip_delete.call(id),
                                         on_clip_move: move |(id, time)| on_clip_move.call((id, time)),
                                         on_clip_resize: move |(id, start, dur)| on_clip_resize.call((id, start, dur)),
                                         on_clip_move_track: move |(id, direction)| on_clip_move_track.call((id, direction)),
                                         selected_clips: selected_clips.clone(),
                                         on_clip_select: move |id| on_clip_select.call(id),
+                                        on_snap_preview: move |time| snap_indicator_time.set(time),
+                                        snap_targets: snap_targets.clone(),
                                         dragged_asset: dragged_asset,
                                         on_asset_drop: move |(tid, t, aid)| on_asset_drop.call((tid, t, aid)),
                                         on_deselect_all: move |e| on_deselect_all.call(e),
                                     }
                                 }
                                 
+                                if let Some(snap_pos) = snap_indicator_pos {
+                                    div {
+                                        style: "
+                                            position: absolute;
+                                            left: {snap_pos}px;
+                                            top: 0;
+                                            width: 1px;
+                                            height: 100%;
+                                            background-color: rgba(250, 204, 21, 0.5);
+                                            pointer-events: none;
+                                            z-index: 9;
+                                        ",
+                                    }
+                                }
+
                                 // Playhead line overlaying tracks (in scroll space)
                                 div {
                                     style: "

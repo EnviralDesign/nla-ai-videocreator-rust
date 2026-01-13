@@ -381,7 +381,7 @@ workflows/
   - [x] Horizontal scrolling timeline (robust hierarchical structure)
   - [x] Zoom in/out (pixel-based scaling)
   - [x] Multiple track lanes (synced w/ headers)
-  - [x] Frame-snapped playhead (60fps visual alignment)
+  - [x] Frame-snapped playhead (project fps alignment)
   - [x] Click-to-scrub interaction (click/drag anywhere on ruler to seek)
   - [x] Playback/Seek controls (Play, Pause, Step Frame)
   - [x] Frame ticks on ruler (subtle, at high zoom levels)
@@ -406,7 +406,7 @@ workflows/
     - [x] Resize clips (drag left/right edges, min duration 0.1s)
     - [x] Delete clips (right-click custom context menu, native menu suppressed)
     - [x] Move clips between compatible tracks (context menu up/down)
-    - [ ] Clip snapping (drag/move/trim to edges, markers, playhead)
+    - [x] Clip snapping (drag/move/trim to edges, markers, playhead)
   - [x] Clip Creation:
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
@@ -684,7 +684,12 @@ This allows:
 | Scroll-synced Track Labels | CSS sticky positioning for rock-solid sync vs JS event listeners | ✅ Decided |
 | Draggable Playhead | Real-time updating during drag for immediate feedback | ✅ Decided |
 | 1-Second Step Buttons | Frame-stepping felt too slow; 1s steps preferred for navigating | ✅ Decided |
-| Frame-snapped Playhead | All seeking snaps to 60fps frame boundaries for accurate positioning | ✅ Decided |
+| Frame-snapped Playhead | All seeking snaps to project fps frame boundaries for accurate positioning | ✅ Decided |
+| Timeline snapping targets | Snap to clip edges first, then playhead, then markers; snap in frame units to avoid gaps | ? Decided |
+| Snap preview indicator | Show a 50% opacity snap line at the active target while dragging | ? Decided |
+| Snap disable modifier | Hold Alt while dragging to temporarily disable snapping | ? Decided |
+| Playhead snapping | Playhead drags snap to clip edges and markers; Alt disables | ? Decided |
+| Ctrl+S save hotkey | Ctrl/Cmd+S triggers a project save | ? Decided |
 | Click-to-scrub Interaction | Click anywhere on ruler to seek; playhead follows cursor, not grabbed | ✅ Decided |
 | Hierarchical Timeline Layout | Fixed left column + scrollable right column; no JS scroll sync needed | ✅ Decided |
 | Playhead as Visual Indicator | Triangle handle is purely visual; interaction is on ruler bar | ✅ Decided |

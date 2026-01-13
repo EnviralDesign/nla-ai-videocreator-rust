@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use std::collections::HashMap;
 
 use crate::constants::{ACCENT_AUDIO, ACCENT_MARKER, ACCENT_VIDEO, BG_BASE, BG_HOVER, BORDER_SUBTLE};
+use crate::core::timeline_snap::{snap_time_to_frame, SnapTarget};
 use crate::state::TrackType;
 
 use super::clip_element::ClipElement;
@@ -20,16 +21,20 @@ pub fn TrackRow(
     project_root: Option<std::path::PathBuf>,
     audio_waveform_cache_buster: Signal<u64>,
     zoom: f64,  // pixels per second
+    fps: f64,
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
     on_clip_resize: EventHandler<(uuid::Uuid, f64, f64)>,  // (clip_id, new_start, new_duration)
     on_clip_move_track: EventHandler<(uuid::Uuid, i32)>,
     selected_clips: Vec<uuid::Uuid>,
     on_clip_select: EventHandler<uuid::Uuid>,
+    on_snap_preview: EventHandler<Option<f64>>,
+    snap_targets: std::sync::Arc<Vec<SnapTarget>>,
     dragged_asset: Option<uuid::Uuid>,
     on_asset_drop: EventHandler<(uuid::Uuid, f64, uuid::Uuid)>,
     on_deselect_all: EventHandler<MouseEvent>,
 ) -> Element {
+    let fps = fps.max(1.0);
     // Filter clips for this track
     let track_clips: Vec<_> = clips.iter()
         .filter(|c| c.track_id == track_id)
@@ -80,7 +85,7 @@ pub fn TrackRow(
                         // Calculate time from drop position
                         let x = e.element_coordinates().x;
                         let time = (x / zoom).max(0.0);
-                        let snapped = (time * 60.0).round() / 60.0;
+                        let snapped = snap_time_to_frame(time, fps);
                         on_asset_drop.call((track_id, snapped, asset_id));
                     }
                 }
@@ -98,6 +103,7 @@ pub fn TrackRow(
                     project_root: project_root.clone(),
                     audio_waveform_cache_buster: audio_waveform_cache_buster,
                     zoom: zoom,
+                    fps: fps,
                     clip_color: clip_color,
                     on_delete: move |id| on_clip_delete.call(id),
                     on_move: move |(id, time)| on_clip_move.call((id, time)),
@@ -105,6 +111,8 @@ pub fn TrackRow(
                     on_move_track: move |(id, direction)| on_clip_move_track.call((id, direction)),
                     is_selected: selected_clips.contains(&clip.id),
                     on_select: move |id| on_clip_select.call(id),
+                    on_snap_preview: move |time| on_snap_preview.call(time),
+                    snap_targets: snap_targets.clone(),
                 }
             }
         }
