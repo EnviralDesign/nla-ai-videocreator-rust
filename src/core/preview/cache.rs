@@ -24,15 +24,6 @@ pub struct FrameCache {
     pub(crate) asset_index: HashMap<PathBuf, HashSet<i64>>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FrameCacheStats {
-    pub entries: usize,
-    pub total_bytes: usize,
-    pub max_bytes: usize,
-    pub asset_count: usize,
-    pub lru_len: usize,
-}
-
 impl FrameCache {
     pub fn new(max_bytes: usize) -> Self {
         Self {
@@ -45,15 +36,6 @@ impl FrameCache {
         }
     }
 
-    pub fn stats(&self) -> FrameCacheStats {
-        FrameCacheStats {
-            entries: self.entries.len(),
-            total_bytes: self.total_bytes,
-            max_bytes: self.max_bytes,
-            asset_count: self.asset_index.len(),
-            lru_len: self.lru_order.len(),
-        }
-    }
 
     pub(crate) fn get(&mut self, key: &FrameKey) -> Option<CachedFrame> {
         let (image, source_width, source_height) = {

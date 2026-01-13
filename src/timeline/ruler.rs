@@ -8,16 +8,19 @@ pub(crate) fn TimeRuler(duration: f64, zoom: f64, scroll_offset: f64, fps: f64) 
     let _ = scroll_offset;
     let fps = fps.max(1.0);
     let fps_i = fps.round().max(1.0) as i32;
-    // Calculate tick spacing based on zoom level
-    let seconds_per_major_tick = if zoom < 30.0 {
-        10.0
-    } else if zoom < 60.0 {
-        5.0
-    } else if zoom < 120.0 {
-        2.0
-    } else {
-        1.0
-    };
+    // Calculate tick spacing based on zoom level.
+    let target_px_per_tick = 90.0;
+    let target_seconds = (target_px_per_tick / zoom.max(0.1)).max(0.5);
+    let nice_ticks = [
+        0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0,
+    ];
+    let mut seconds_per_major_tick = *nice_ticks.last().unwrap_or(&10.0);
+    for tick in nice_ticks {
+        if tick >= target_seconds {
+            seconds_per_major_tick = tick;
+            break;
+        }
+    }
     
     // Show frame ticks only at high zoom levels (when there's enough space)
     // At 100px/s zoom, each frame is ~1.67px apart - too dense
