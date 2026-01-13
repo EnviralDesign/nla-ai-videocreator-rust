@@ -24,6 +24,7 @@ use crate::state::{
     ProviderInputType,
     ProviderOutputType,
     SeedStrategy,
+    TrackType,
 };
 
 const MAX_BATCH_COUNT: u32 = 50;
@@ -35,6 +36,7 @@ pub fn AttributesPanelContent(
     preview_dirty: Signal<bool>,
     providers: Signal<Vec<ProviderEntry>>,
     on_enqueue_generation: EventHandler<GenerationJob>,
+    on_audio_items_refresh: EventHandler<()>,
     previewer: Signal<std::sync::Arc<crate::core::preview::PreviewRenderer>>,
     thumbnailer: std::sync::Arc<crate::core::thumbnailer::Thumbnailer>,
     thumbnail_cache_buster: Signal<u64>,
@@ -43,8 +45,10 @@ pub fn AttributesPanelContent(
     let mut last_clip_id = use_signal(|| None::<uuid::Uuid>);
 
     let selection_state = selection.read();
-    let selected_count = selection_state.clip_ids.len();
+    let selected_clip_count = selection_state.clip_ids.len();
+    let selected_track_count = selection_state.track_ids.len();
     let selected_clip_id = selection_state.primary_clip();
+    let selected_track_id = selection_state.primary_track();
     drop(selection_state);
 
     use_effect(move || {
@@ -54,7 +58,7 @@ pub fn AttributesPanelContent(
         }
     });
 
-    if selected_count == 0 {
+    if selected_clip_count == 0 && selected_track_count == 0 {
         return rsx! {
             div {
                 style: "padding: 12px;",
@@ -70,7 +74,8 @@ pub fn AttributesPanelContent(
         };
     }
 
-    if selected_count > 1 {
+    let total_selected = selected_clip_count + selected_track_count;
+    if total_selected > 1 {
         return rsx! {
             div {
                 style: "padding: 12px;",
@@ -80,13 +85,95 @@ pub fn AttributesPanelContent(
                         height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
                         color: {TEXT_DIM}; font-size: 12px;
                     ",
-                    "{selected_count} items selected"
+                    "{total_selected} items selected"
                 }
             }
         };
     }
 
     let Some(clip_id) = selected_clip_id else {
+        if let Some(track_id) = selected_track_id {
+            let project_read = project.read();
+            let track = match project_read.tracks.iter().find(|track| track.id == track_id) {
+                Some(track) => track.clone(),
+                None => {
+                    drop(project_read);
+                    return rsx! {
+                        div {
+                            style: "padding: 12px;",
+                            div {
+                                style: "
+                                    display: flex; align-items: center; justify-content: center;
+                                    height: 80px; border: 1px dashed {BORDER_DEFAULT}; border-radius: 6px;
+                                    color: {TEXT_DIM}; font-size: 12px;
+                                ",
+                                "Selection missing"
+                            }
+                        }
+                    };
+                }
+            };
+            drop(project_read);
+
+            let track_id = track.id;
+            let track_label = match track.track_type {
+                crate::state::TrackType::Audio => "Audio Track",
+                crate::state::TrackType::Video => "Video Track",
+                crate::state::TrackType::Marker => "Marker Track",
+            };
+            let track_type_label = match track.track_type {
+                crate::state::TrackType::Audio => "Audio",
+                crate::state::TrackType::Video => "Video",
+                crate::state::TrackType::Marker => "Markers",
+            };
+
+            return rsx! {
+                div {
+                    style: "padding: 12px; display: flex; flex-direction: column; gap: 12px;",
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px;",
+                        span { style: "font-size: 11px; color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.5px;", "{track_label}" }
+                        div {
+                            style: "display: flex; flex-direction: column; gap: 4px;",
+                            span { style: "font-size: 10px; color: {TEXT_MUTED};", "Name" }
+                            span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "{track.name}" }
+                        }
+                        div {
+                            style: "display: flex; flex-direction: column; gap: 4px;",
+                            span { style: "font-size: 10px; color: {TEXT_MUTED};", "Type" }
+                            span { style: "font-size: 12px; color: {TEXT_PRIMARY};", "{track_type_label}" }
+                        }
+                    }
+                    if track.track_type != crate::state::TrackType::Marker {
+                        div {
+                            style: "
+                                display: flex; flex-direction: column; gap: 10px;
+                                padding: 10px; background-color: {BG_SURFACE};
+                                border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                            ",
+                            div {
+                                style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                                "Audio"
+                            }
+                            NumericField {
+                                key: "{track_id}-volume",
+                                label: "Track Volume",
+                                value: track.volume,
+                                step: "0.05",
+                                clamp_min: Some(0.0),
+                                clamp_max: Some(2.0),
+                                on_commit: move |value: f32| {
+                                    if let Some(track) = project.write().tracks.iter_mut().find(|track| track.id == track_id) {
+                                        track.volume = value.max(0.0);
+                                    }
+                                    on_audio_items_refresh.call(());
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+        }
         return rsx! {
             div {
                 style: "padding: 12px;",
@@ -136,6 +223,10 @@ pub fn AttributesPanelContent(
         .as_ref()
         .map(|asset| asset.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
+    let clip_has_audio = asset
+        .as_ref()
+        .map(|asset| asset.is_audio() || asset.is_video())
+        .unwrap_or(false);
     let project_root = project_read.project_path.clone();
     let generative_info = asset.as_ref().and_then(|asset| match &asset.kind {
         crate::state::AssetKind::GenerativeVideo { folder, .. } => {
@@ -841,6 +932,9 @@ pub fn AttributesPanelContent(
     let transform = clip.transform;
     let clip_id = clip.id;
     let clip_label = clip.label.clone().unwrap_or_default();
+    let clip_track_type = project.read().find_track(clip.track_id).map(|track| track.track_type);
+    let allow_clip_gain = clip_track_type == Some(TrackType::Audio)
+        || clip_track_type == Some(TrackType::Video);
     let generate_label = if batch_count > 1 {
         format!("Generate x{}", batch_count)
     } else {
@@ -968,6 +1062,34 @@ pub fn AttributesPanelContent(
                                 transform.opacity = value;
                             });
                             preview_dirty.set(true);
+                        }
+                    }
+                }
+            }
+
+            if clip_has_audio && allow_clip_gain {
+                div {
+                    style: "
+                        display: flex; flex-direction: column; gap: 10px;
+                        padding: 10px; background-color: {BG_SURFACE};
+                        border: 1px solid {BORDER_SUBTLE}; border-radius: 6px;
+                    ",
+                    div {
+                        style: "font-size: 10px; color: {TEXT_DIM}; text-transform: uppercase; letter-spacing: 0.5px;",
+                        "Audio"
+                    }
+                    NumericField {
+                        key: "{clip_id}-volume",
+                        label: "Clip Volume",
+                        value: clip.volume,
+                        step: "0.05",
+                        clamp_min: Some(0.0),
+                        clamp_max: Some(2.0),
+                        on_commit: move |value: f32| {
+                            if let Some(clip) = project.write().clips.iter_mut().find(|clip| clip.id == clip_id) {
+                                clip.volume = value.max(0.0);
+                            }
+                            on_audio_items_refresh.call(());
                         }
                     }
                 }

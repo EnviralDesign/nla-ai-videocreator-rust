@@ -17,6 +17,7 @@ pub struct PlaybackItem {
     pub sample_offset_frames: u64,
     pub frame_count: u64,
     pub channels: u16,
+    pub gain: f32,
 }
 
 impl PlaybackItem {
@@ -325,7 +326,8 @@ where
                         }
 
                         for i in 0..(overlap_frames * channels as usize) {
-                            mix_buffer[buffer_offset + i] += item.samples[item_offset + i];
+                            mix_buffer[buffer_offset + i] +=
+                                item.samples[item_offset + i] * item.gain;
                         }
                     }
                 }

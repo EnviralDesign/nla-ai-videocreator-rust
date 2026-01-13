@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::constants::{BORDER_SUBTLE, TEXT_SECONDARY};
+use crate::constants::{BG_HOVER, BORDER_SUBTLE, TEXT_SECONDARY};
 
 /// Track label in the sidebar
 #[component]
@@ -7,15 +7,20 @@ pub fn TrackLabel(
     name: String, 
     color: &'static str,
     track_id: uuid::Uuid,
+    selected: bool,
+    on_select: EventHandler<uuid::Uuid>,
     on_context_menu: EventHandler<(f64, f64, uuid::Uuid)>,
 ) -> Element {
+    let bg = if selected { BG_HOVER } else { "transparent" };
     rsx! {
         div {
             style: "
                 display: flex; align-items: center; gap: 10px; height: 36px; 
                 padding: 0 12px; border-bottom: 1px solid {BORDER_SUBTLE}; 
-                font-size: 12px; color: {TEXT_SECONDARY}; cursor: context-menu;
+                font-size: 12px; color: {TEXT_SECONDARY}; cursor: pointer;
+                background-color: {bg};
             ",
+            onclick: move |_| on_select.call(track_id),
             oncontextmenu: move |e| {
                 e.prevent_default();
                 let coords = e.client_coordinates();

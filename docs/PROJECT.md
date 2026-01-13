@@ -396,6 +396,7 @@ workflows/
   - [x] Marker track — point-in-time markers (single, non-duplicatable)
   - [x] Default new project: Video 1, Audio 1, Markers
   - [x] User can add additional Video/Audio tracks
+  - [x] Track selection now drives Attributes panel for track-level controls
 
 - [x] **Clip System**
   - [x] Render clips on timeline tracks (positioned by start_time, sized by duration)
@@ -410,6 +411,7 @@ workflows/
     - [x] "Add to Timeline" (context menu) — renders at playhead
     - [x] Drag & Drop from Asset Panel — renders at drop position
   - [x] Clip labels (per-instance display name) editable in Attributes panel
+  - [x] Clip volume control (audio + video clips) in Attributes panel
   - [ ] Clip thumbnail/waveform preview
     - [x] **Thumbnailer Service**: Background FFmpeg task to generate cache images
     - [x] **Timeline Rendering**: UI logic to display cached thumbnails on clips
@@ -924,6 +926,8 @@ src/
 - **2026-01-12:** Scrubbing now holds the audio playhead until the cursor moves (prevents runaway audio while dragging).
 - **2026-01-12:** Video clips now contribute their embedded audio during playback.
 - **2026-01-12:** Fixed packed f32 decode slicing to avoid padding noise in multi-channel output.
+- **2026-01-12:** Added clip + track volume controls (Attributes panel) and applied gains in the mixer.
+- **2026-01-12:** Defaulted clip/track volumes to 1.0 on load for older projects.
 - **2026-01-12:** Removed obsolete Provider UI v1 modal/builder components and scrubbed stale debug logging
 - **2026-01-08:** Added generative version selector in Attributes panel; changing active version refreshes thumbnails and preview
 - **2026-01-08:** Added per-clip labels in Attributes panel; timeline labels now respect clip names and show active generative version

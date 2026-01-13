@@ -54,7 +54,7 @@ enum GenerationFailure {
     Error(String),
 }
 
-fn build_audio_playback_items(
+pub(crate) fn build_audio_playback_items(
     project: &crate::state::Project,
     project_root: &std::path::Path,
     engine: &AudioPlaybackEngine,
@@ -62,8 +62,10 @@ fn build_audio_playback_items(
     allow_decode: bool,
 ) -> (Vec<PlaybackItem>, Vec<uuid::Uuid>) {
     let mut track_types = HashMap::new();
+    let mut track_volumes = HashMap::new();
     for track in project.tracks.iter() {
         track_types.insert(track.id, track.track_type.clone());
+        track_volumes.insert(track.id, track.volume);
     }
 
     let sample_rate = engine.sample_rate() as f64;
@@ -137,16 +139,20 @@ fn build_audio_playback_items(
             continue;
         }
         let start_frame = (clip.start_time.max(0.0) * sample_rate).round() as u64;
+        let track_volume = track_volumes.get(&clip.track_id).copied().unwrap_or(1.0);
+        let clip_volume = clip.volume;
+        let gain = (track_volume * clip_volume).max(0.0);
 
         println!(
-            "[AUDIO DEBUG] Playback item: clip_id={} asset_id={} start={}s duration={}s trim_in={}s frames={} offset_frames={}",
+            "[AUDIO DEBUG] Playback item: clip_id={} asset_id={} start={}s duration={}s trim_in={}s frames={} offset_frames={} gain={}",
             clip.id,
             asset.id,
             clip.start_time,
             clip.duration,
             clip.trim_in_seconds,
             frame_count,
-            trim_frames
+            trim_frames,
+            gain
         );
 
         items.push(PlaybackItem {
@@ -155,6 +161,7 @@ fn build_audio_playback_items(
             sample_offset_frames: trim_frames,
             frame_count,
             channels,
+            gain,
         });
     }
 
@@ -1946,6 +1953,10 @@ pub fn App() -> Element {
                             on_track_context_menu: move |(x, y, track_id)| {
                                 context_menu.set(Some((x, y, track_id)));
                             },
+                            selected_tracks: selection.read().track_ids.clone(),
+                            on_track_select: move |track_id| {
+                                selection.write().select_track(track_id);
+                            },
                             // Clip operations
                             on_clip_delete: move |clip_id| {
                                 project.write().remove_clip(clip_id);
@@ -2070,6 +2081,38 @@ pub fn App() -> Element {
                             selection: selection,
                             preview_dirty: preview_dirty,
                             providers: provider_entries,
+                            on_audio_items_refresh: {
+                                let audio_engine = audio_engine.clone();
+                                let audio_sample_cache = audio_sample_cache.clone();
+                                let project = project.clone();
+                                move |_| {
+                                    if let Some(engine) = audio_engine.as_ref() {
+                                        if let Some(project_root) =
+                                            project.read().project_path.clone()
+                                        {
+                                            let project_snapshot = project.read().clone();
+                                            let (items, missing) = build_audio_playback_items(
+                                                &project_snapshot,
+                                                &project_root,
+                                                engine,
+                                                &audio_sample_cache,
+                                                false,
+                                            );
+                                            if missing.is_empty() {
+                                                engine.set_items(items);
+                                                engine.trigger_scrub_preview(
+                                                    (engine.sample_rate() as f64 * 0.03).round() as u64,
+                                                );
+                                            } else {
+                                                println!(
+                                                    "[AUDIO DEBUG] Volume update pending decode: missing={}",
+                                                    missing.len()
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                             previewer: previewer,
                             thumbnailer: thumbnailer.read().clone(),
                             thumbnail_cache_buster: thumbnail_cache_buster,

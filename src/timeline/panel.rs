@@ -51,6 +51,8 @@ pub fn TimelinePanel(
     on_add_video_track: EventHandler<MouseEvent>,
     on_add_audio_track: EventHandler<MouseEvent>,
     on_track_context_menu: EventHandler<(f64, f64, uuid::Uuid)>,  // (x, y, track_id)
+    selected_tracks: Vec<uuid::Uuid>,
+    on_track_select: EventHandler<uuid::Uuid>,
     // Clip operations
     on_clip_delete: EventHandler<uuid::Uuid>,
     on_clip_move: EventHandler<(uuid::Uuid, f64)>,  // (clip_id, new_start_time)
@@ -292,6 +294,8 @@ pub fn TimelinePanel(
                                                 name: track.name.clone(), 
                                                 color: color,
                                                 track_id: tid,
+                                                selected: selected_tracks.contains(&tid),
+                                                on_select: move |id| on_track_select.call(id),
                                                 on_context_menu: move |data| on_track_context_menu.call(data),
                                             }
                                         }

@@ -38,4 +38,17 @@ impl SelectionState {
     pub fn primary_clip(&self) -> Option<Uuid> {
         self.clip_ids.first().copied()
     }
+
+    /// Replace the selection with a single track.
+    pub fn select_track(&mut self, track_id: Uuid) {
+        self.clip_ids.clear();
+        self.asset_ids.clear();
+        self.track_ids.clear();
+        self.track_ids.push(track_id);
+    }
+
+    /// Return the primary selected track, if any.
+    pub fn primary_track(&self) -> Option<Uuid> {
+        self.track_ids.first().copied()
+    }
 }

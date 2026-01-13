@@ -47,6 +47,9 @@ pub struct Clip {
     /// Trim-in time in seconds (offset into source media)
     #[serde(default)]
     pub trim_in_seconds: f64,
+    /// Volume multiplier for this clip.
+    #[serde(default = "default_volume")]
+    pub volume: f32,
     /// Optional user-facing label for this clip instance.
     #[serde(default)]
     pub label: Option<String>,
@@ -66,6 +69,7 @@ impl Clip {
             start_time,
             duration,
             trim_in_seconds: 0.0,
+            volume: 1.0,
             label: None,
             transform: ClipTransform::default(),
         }
@@ -81,4 +85,8 @@ impl Clip {
     pub fn overlaps(&self, start: f64, end: f64) -> bool {
         self.start_time < end && self.end_time() > start
     }
+}
+
+fn default_volume() -> f32 {
+    1.0
 }

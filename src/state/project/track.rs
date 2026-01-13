@@ -21,6 +21,9 @@ pub struct Track {
     pub name: String,
     /// Type of track
     pub track_type: TrackType,
+    /// Track volume (applies to audio playback for audio/video clips).
+    #[serde(default = "default_volume")]
+    pub volume: f32,
 }
 
 impl Track {
@@ -30,6 +33,7 @@ impl Track {
             id: Uuid::new_v4(),
             name: name.into(),
             track_type,
+            volume: 1.0,
         }
     }
 
@@ -47,4 +51,8 @@ impl Track {
     pub fn markers() -> Self {
         Self::new("Markers", TrackType::Marker)
     }
+}
+
+fn default_volume() -> f32 {
+    1.0
 }
