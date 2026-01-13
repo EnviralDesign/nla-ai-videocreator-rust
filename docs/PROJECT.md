@@ -828,6 +828,7 @@ src/
 ```
 
 ### Recent Changes (Session Log)
+- **2026-01-13:** Added ComfyUI queue support for video outputs, including output selection fallback by file type.
 - **2026-01-12:** Removed Stats/HW quick toggles from the title bar (menus remain).
 - **2026-01-12:** Strengthened dimming backdrops and added subtle blur for queue popover and title-bar menus.
 - **2026-01-12:** Queue popover now closes on outside click.
@@ -1065,7 +1066,7 @@ We start with the UI shell, dial in the look and feel, then layer in functionali
 
 ---
 
-*Last updated: 2026-01-12*
+*Last updated: 2026-01-13*
 
 
 

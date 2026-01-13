@@ -363,9 +363,9 @@ async fn execute_generation_job(
     thumbnail_cache_buster: Signal<u64>,
     progress_tx: Option<tokio::sync::mpsc::UnboundedSender<comfyui::ComfyUiProgress>>,
 ) -> Result<String, GenerationFailure> {
-    if job.output_type != ProviderOutputType::Image {
+    if job.output_type == ProviderOutputType::Audio {
         return Err(GenerationFailure::Error(
-            "Only image outputs are supported in the queue right now.".to_string(),
+            "Audio outputs are not supported in the queue yet.".to_string(),
         ));
     }
 
@@ -377,7 +377,7 @@ async fn execute_generation_job(
         .unwrap_or_default();
     let version = next_version_label(&config_snapshot);
 
-    let image = match job.provider.connection.clone() {
+    let output = match job.provider.connection.clone() {
         ProviderConnection::ComfyUi {
             base_url,
             workflow_path,
@@ -389,11 +389,12 @@ async fn execute_generation_job(
             if let Err(err) = comfyui::check_health(&base_url).await {
                 return Err(GenerationFailure::Offline(err));
             }
-            comfyui::generate_image(
+            comfyui::generate_output(
                 &base_url,
                 &workflow_path,
                 &job.inputs,
                 manifest_path.as_deref(),
+                job.output_type,
                 progress_tx.clone(),
             )
             .await
@@ -404,8 +405,8 @@ async fn execute_generation_job(
         )),
     };
 
-    let image = match image {
-        Ok(image) => image,
+    let output = match output {
+        Ok(output) => output,
         Err(GenerationFailure::Error(err)) => {
             if let ProviderConnection::ComfyUi { base_url, .. } = job.provider.connection.clone()
             {
@@ -422,8 +423,8 @@ async fn execute_generation_job(
         .map_err(|err| {
             GenerationFailure::Error(format!("Failed to create output folder: {}", err))
         })?;
-    let output_path = folder_path.join(format!("{}.{}", version, image.extension));
-    std::fs::write(&output_path, &image.bytes)
+    let output_path = folder_path.join(format!("{}.{}", version, output.extension));
+    std::fs::write(&output_path, &output.bytes)
         .map_err(|err| GenerationFailure::Error(format!("Failed to save output: {}", err)))?;
     previewer.read().invalidate_folder(&folder_path);
 

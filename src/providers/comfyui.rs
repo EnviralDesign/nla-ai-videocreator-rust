@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::core::paths;
 use crate::state::{
     input_value_as_bool, input_value_as_f64, input_value_as_i64, BindingTransform, ManifestInput,
-    NodeSelector, ProviderInputType, ProviderManifest,
+    NodeSelector, ProviderInputType, ProviderManifest, ProviderOutputType,
 };
 
 const DEFAULT_WORKFLOW_PATH: &str = "workflows/sdxl_simple_example_API.json";
@@ -15,7 +15,7 @@ const OUTPUT_NODE_ID: &str = "53";
 const DEFAULT_OUTPUT_KEY: &str = "images";
 
 #[derive(Debug, Clone)]
-pub struct ComfyUiImage {
+pub struct ComfyUiOutput {
     pub bytes: Vec<u8>,
     pub extension: String,
 }
@@ -156,14 +156,15 @@ pub async fn check_health(base_url: &str) -> Result<(), String> {
     }
 }
 
-/// Submits a ComfyUI workflow and downloads the first image output.
-pub async fn generate_image(
+/// Submits a ComfyUI workflow and downloads the first output matching the output type.
+pub async fn generate_output(
     base_url: &str,
     workflow_path: &Path,
     inputs: &HashMap<String, Value>,
     manifest_path: Option<&Path>,
+    output_type: ProviderOutputType,
     progress_tx: Option<tokio::sync::mpsc::UnboundedSender<ComfyUiProgress>>,
-) -> Result<ComfyUiImage, String> {
+) -> Result<ComfyUiOutput, String> {
     let mut workflow = load_workflow(workflow_path)?;
     let total_nodes = workflow.as_object().map(|map| map.len()).unwrap_or(0);
     let (output_node_id, output_key, output_index) = if let Some(path) = manifest_path {
@@ -178,7 +179,7 @@ pub async fn generate_image(
             }
         };
         apply_manifest_inputs(&mut workflow, inputs, &manifest_inputs)?;
-        let node_id = resolve_node_id(&workflow, &output_selector.selector)?;
+        let node_id = resolve_output_node_id(&workflow, &output_selector.selector)?;
         (
             Some(node_id),
             Some(output_selector.selector.input_key.clone()),
@@ -186,11 +187,15 @@ pub async fn generate_image(
         )
     } else {
         apply_inputs(&mut workflow, inputs)?;
-        (
-            Some(OUTPUT_NODE_ID.to_string()),
-            Some(DEFAULT_OUTPUT_KEY.to_string()),
-            None,
-        )
+        if output_type == ProviderOutputType::Image {
+            (
+                Some(OUTPUT_NODE_ID.to_string()),
+                Some(DEFAULT_OUTPUT_KEY.to_string()),
+                None,
+            )
+        } else {
+            (None, None, None)
+        }
     };
 
     let client = reqwest::Client::new();
@@ -207,26 +212,29 @@ pub async fn generate_image(
     if let Some(task) = ws_task {
         task.abort();
     }
-    let image_ref = find_image_output(
+    let output_ref = find_output_ref(
         &outputs,
         output_node_id.as_deref(),
         output_key.as_deref(),
         output_index,
+        output_type,
     )
-        .ok_or_else(|| {
-            "ComfyUI history did not include image outputs. This can happen when cached \
-results are returned for identical inputs; try changing the seed or using batch seed offsets."
-                .to_string()
-        })?;
-    let bytes = download_image(&client, base_url, &image_ref).await?;
+    .ok_or_else(|| {
+        format!(
+            "ComfyUI history did not include {} outputs. This can happen when cached \
+results are returned for identical inputs; try changing the seed or using batch seed offsets.",
+            output_type_label(output_type)
+        )
+    })?;
+    let bytes = download_output(&client, base_url, &output_ref).await?;
 
-    let extension = Path::new(&image_ref.filename)
+    let extension = Path::new(&output_ref.filename)
         .extension()
         .and_then(|ext| ext.to_str())
-        .unwrap_or("png")
+        .unwrap_or_else(|| default_extension_for_output(output_type))
         .to_string();
 
-    Ok(ComfyUiImage { bytes, extension })
+    Ok(ComfyUiOutput { bytes, extension })
 }
 
 fn load_workflow(path: &Path) -> Result<Value, String> {
@@ -278,11 +286,24 @@ fn apply_manifest_inputs(
 }
 
 fn resolve_node_id(workflow: &Value, selector: &NodeSelector) -> Result<String, String> {
+    resolve_node_id_internal(workflow, selector, true)
+}
+
+fn resolve_output_node_id(workflow: &Value, selector: &NodeSelector) -> Result<String, String> {
+    resolve_node_id_internal(workflow, selector, false)
+}
+
+fn resolve_node_id_internal(
+    workflow: &Value,
+    selector: &NodeSelector,
+    require_input_key: bool,
+) -> Result<String, String> {
     let Some(map) = workflow.as_object() else {
         return Err("Workflow JSON must be an object.".to_string());
     };
 
     let mut candidates = Vec::new();
+    let mut preferred = Vec::new();
     for (node_id, node_value) in map.iter() {
         let Some(node_obj) = node_value.as_object() else {
             continue;
@@ -292,14 +313,6 @@ fn resolve_node_id(workflow: &Value, selector: &NodeSelector) -> Result<String, 
             .and_then(|value| value.as_str())
             .unwrap_or("");
         if class_type != selector.class_type {
-            continue;
-        }
-
-        let inputs = node_obj.get("inputs").and_then(|value| value.as_object());
-        if inputs
-            .map(|map| map.contains_key(&selector.input_key))
-            != Some(true)
-        {
             continue;
         }
 
@@ -313,12 +326,24 @@ fn resolve_node_id(workflow: &Value, selector: &NodeSelector) -> Result<String, 
             }
         }
 
+        let inputs = node_obj.get("inputs").and_then(|value| value.as_object());
+        let has_input_key = inputs
+            .map(|map| map.contains_key(&selector.input_key))
+            .unwrap_or(false);
+
+        if require_input_key && !has_input_key {
+            continue;
+        }
+
         let title = node_obj
             .get("_meta")
             .and_then(|meta| meta.get("title"))
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
 
+        if has_input_key {
+            preferred.push((node_id.clone(), title.clone()));
+        }
         candidates.push((node_id.clone(), title));
     }
 
@@ -327,6 +352,10 @@ fn resolve_node_id(workflow: &Value, selector: &NodeSelector) -> Result<String, 
             "No workflow node matched selector ({})",
             selector_label(selector)
         ));
+    }
+
+    if !preferred.is_empty() {
+        candidates = preferred;
     }
 
     if let Some(title) = selector.title.as_ref() {
@@ -701,87 +730,197 @@ fn extract_outputs<'a>(payload: &'a Value, prompt_id: &str) -> Option<&'a Value>
     payload.get(prompt_id)?.get("outputs")
 }
 
-struct ImageRef {
+struct OutputRef {
     filename: String,
     subfolder: String,
     kind: String,
 }
 
-fn find_image_output(
+fn find_output_ref(
     outputs: &Value,
     output_node_id: Option<&str>,
     output_key: Option<&str>,
     index: Option<u32>,
-) -> Option<ImageRef> {
+    output_type: ProviderOutputType,
+) -> Option<OutputRef> {
     if let Some(node_id) = output_node_id {
         if let Some(output) = outputs.get(node_id) {
-            if let Some(image) = extract_image_output(output, output_key, index) {
-                return Some(image);
+            if let Some(key) = output_key {
+                if let Some(item) = extract_output_ref(output, key, index, Some(output_type)) {
+                    return Some(item);
+                }
+            }
+            if let Some(item) = extract_output_ref_any(output, output_type, index) {
+                return Some(item);
             }
         }
     } else if let Some(output) = outputs.get(OUTPUT_NODE_ID) {
-        if let Some(image) = extract_image_output(output, output_key, index) {
-            return Some(image);
+        if let Some(key) = output_key {
+            if let Some(item) = extract_output_ref(output, key, index, Some(output_type)) {
+                return Some(item);
+            }
+        }
+        if let Some(item) = extract_output_ref_any(output, output_type, index) {
+            return Some(item);
         }
     }
 
+    if let Some(key) = output_key {
+        if let Some(item) = find_output_by_key(outputs, key, index, output_type) {
+            return Some(item);
+        }
+    }
+
+    find_output_any(outputs, output_type, index)
+}
+
+fn find_output_by_key(
+    outputs: &Value,
+    output_key: &str,
+    index: Option<u32>,
+    output_type: ProviderOutputType,
+) -> Option<OutputRef> {
     outputs.as_object().and_then(|map| {
         map.values()
-            .find_map(|value| extract_image_output(value, output_key, index))
+            .find_map(|value| extract_output_ref(value, output_key, index, Some(output_type)))
     })
 }
 
-fn extract_image_output(
-    output: &Value,
-    output_key: Option<&str>,
+fn find_output_any(
+    outputs: &Value,
+    output_type: ProviderOutputType,
     index: Option<u32>,
-) -> Option<ImageRef> {
-    let key = output_key.unwrap_or(DEFAULT_OUTPUT_KEY);
-    let images = output.get(key)?.as_array()?;
+) -> Option<OutputRef> {
+    outputs
+        .as_object()
+        .and_then(|map| map.values().find_map(|value| {
+            extract_output_ref_any(value, output_type, index)
+        }))
+}
+
+fn extract_output_ref(
+    output: &Value,
+    output_key: &str,
+    index: Option<u32>,
+    output_type: Option<ProviderOutputType>,
+) -> Option<OutputRef> {
+    let items = output.get(output_key)?.as_array()?;
+    let item = extract_output_item(items, index)?;
+    if let Some(output_type) = output_type {
+        if !output_matches_type(&item.filename, output_type) {
+            return None;
+        }
+    }
+    Some(item)
+}
+
+fn extract_output_ref_any(
+    output: &Value,
+    output_type: ProviderOutputType,
+    index: Option<u32>,
+) -> Option<OutputRef> {
+    let output_obj = output.as_object()?;
+    for value in output_obj.values() {
+        let Some(items) = value.as_array() else {
+            continue;
+        };
+        let Some(item) = extract_output_item(items, index) else {
+            continue;
+        };
+        if output_matches_type(&item.filename, output_type) {
+            return Some(item);
+        }
+    }
+    None
+}
+
+fn extract_output_item(items: &[Value], index: Option<u32>) -> Option<OutputRef> {
     let idx = index.unwrap_or(0) as usize;
-    let first = images.get(idx)?;
-    let filename = first.get("filename")?.as_str()?.to_string();
-    let subfolder = first
+    let item = items.get(idx)?;
+    let filename = item.get("filename")?.as_str()?.to_string();
+    let subfolder = item
         .get("subfolder")
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
-    let kind = first
+    let kind = item
         .get("type")
         .and_then(|value| value.as_str())
         .unwrap_or("output")
         .to_string();
-    Some(ImageRef {
+    Some(OutputRef {
         filename,
         subfolder,
         kind,
     })
 }
 
-async fn download_image(
+fn output_matches_type(filename: &str, output_type: ProviderOutputType) -> bool {
+    let Some(ext) = output_extension(filename) else {
+        return false;
+    };
+    output_extensions(output_type)
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(&ext))
+}
+
+fn output_extension(filename: &str) -> Option<String> {
+    let ext = Path::new(filename).extension()?.to_str()?.to_string();
+    if ext.is_empty() {
+        None
+    } else {
+        Some(ext)
+    }
+}
+
+fn output_type_label(output_type: ProviderOutputType) -> &'static str {
+    match output_type {
+        ProviderOutputType::Image => "image",
+        ProviderOutputType::Video => "video",
+        ProviderOutputType::Audio => "audio",
+    }
+}
+
+fn default_extension_for_output(output_type: ProviderOutputType) -> &'static str {
+    match output_type {
+        ProviderOutputType::Image => "png",
+        ProviderOutputType::Video => "mp4",
+        ProviderOutputType::Audio => "wav",
+    }
+}
+
+fn output_extensions(output_type: ProviderOutputType) -> &'static [&'static str] {
+    match output_type {
+        ProviderOutputType::Image => &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"],
+        ProviderOutputType::Video => &["mp4", "mov", "mkv", "webm", "avi", "m4v", "gif"],
+        ProviderOutputType::Audio => &["wav", "mp3", "flac", "ogg", "aac", "m4a"],
+    }
+}
+
+async fn download_output(
     client: &reqwest::Client,
     base_url: &str,
-    image: &ImageRef,
+    output: &OutputRef,
 ) -> Result<Vec<u8>, String> {
     let url = format!(
         "{}/view?filename={}&subfolder={}&type={}",
         base_url.trim_end_matches('/'),
-        urlencoding::encode(&image.filename),
-        urlencoding::encode(&image.subfolder),
-        urlencoding::encode(&image.kind),
+        urlencoding::encode(&output.filename),
+        urlencoding::encode(&output.subfolder),
+        urlencoding::encode(&output.kind),
     );
     let response = client
         .get(url)
         .send()
         .await
-        .map_err(|err| format!("Failed to download image: {}", err))?;
+        .map_err(|err| format!("Failed to download output: {}", err))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(format!("ComfyUI image download failed: {}", status));
+        return Err(format!("ComfyUI output download failed: {}", status));
     }
     response
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
-        .map_err(|err| format!("Failed to read image bytes: {}", err))
+        .map_err(|err| format!("Failed to read output bytes: {}", err))
 }
